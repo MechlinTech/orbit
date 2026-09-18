@@ -1,0 +1,12 @@
+# Run Caddy on the host. Replace with the DNS name reachable over your VPN/LAN.
+# Restrict inbound network access using your firewall/VPN.
+ats.example.com {
+    encode gzip
+    reverse_proxy 127.0.0.1:3000
+    # For internal PKI instead of public certificates, configure tls with your
+    # certificate/key paths or use tls internal and distribute the root CA.
+    log {
+        output file /var/log/caddy/talentos-access.log
+        format json
+    }
+}

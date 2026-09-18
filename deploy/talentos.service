@@ -1,0 +1,21 @@
+[Unit]
+Description=Mechlin TalentOS
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=simple
+User=talentos
+Group=talentos
+WorkingDirectory=/opt/talentos
+EnvironmentFile=/etc/talentos.env
+ExecStart=/usr/bin/node /opt/talentos/src/server.js
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/talentos
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,21 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      HOST: 0.0.0.0
+      DATABASE_PATH: /app/data/talentos.sqlite
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - talentos-data:/app/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+volumes:
+  talentos-data:
