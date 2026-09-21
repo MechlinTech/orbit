@@ -1,0 +1,39 @@
+services:
+  app:
+    container_name: mechlin-orbit-dev
+
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+
+    image: ${DOCKERHUB_USERNAME}/mechlin-orbit:dev
+
+    restart: unless-stopped
+
+    environment:
+      NODE_ENV: ${NODE_ENV}
+      HOST: ${HOST}
+      PORT: ${PORT}
+      APP_ORIGIN: ${APP_ORIGIN}
+      ALLOWED_DOMAINS: ${ALLOWED_DOMAINS}
+      DATABASE_PATH: ${DATABASE_PATH}
+      SESSION_SECONDS: ${SESSION_SECONDS}
+
+    ports:
+      - "${PORT}:${PORT}"
+
+    volumes:
+      - mechlin_orbit_data:/app/data
+      - mechlin_orbit_backups:/app/backups
+
+    networks:
+      - mechlin-orbit
+
+networks:
+  mechlin-orbit:
+    driver: bridge
+
+volumes:
+  mechlin_orbit_data:
+  mechlin_orbit_backups:

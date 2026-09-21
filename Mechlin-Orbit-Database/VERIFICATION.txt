@@ -1,0 +1,11 @@
+2026-09-17T20:29:51.714Z
+Node v22.17.1
+8 checks passed; 0 failed
+PASS: Binary backup restore: integrity_check = ok
+PASS: Binary backup restore: zero foreign-key violations
+PASS: All 14 application tables restored
+PASS: All restored rows match initialized source
+PASS: Full SQL export restores identical rows
+PASS: Standalone schema restores all tables and triggers
+PASS: Both append-only audit triggers enforced after SQL restore
+PASS: No users, candidates, sessions or OAuth secrets in backup
