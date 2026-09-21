@@ -18,7 +18,8 @@ COPY package*.json ./
 
 # Install exactly what's in package-lock.json
 RUN npm ci --omit=dev && \
-    npm cache clean --force
+    npm cache clean --force && \
+    mkdir -p /app/node_modules
 
 # --------------------------------------------------------------------
 # Development image
