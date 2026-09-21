@@ -14,14 +14,14 @@ services:
     environment:
       NODE_ENV: ${NODE_ENV}
       HOST: ${HOST}
-      PORT: ${PORT}
+      PORT: 3000
       APP_ORIGIN: ${APP_ORIGIN}
       ALLOWED_DOMAINS: ${ALLOWED_DOMAINS}
       DATABASE_PATH: ${DATABASE_PATH}
       SESSION_SECONDS: ${SESSION_SECONDS}
 
     ports:
-      - "${PORT}:${PORT}"
+      - "60155:3000"
 
     volumes:
       - mechlin_orbit_data:/app/data

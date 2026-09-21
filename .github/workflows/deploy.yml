@@ -67,7 +67,6 @@ jobs:
           @"
           NODE_ENV=development
           HOST=${{ secrets.HOST }}
-          PORT=${{ secrets.PORT }}
           APP_ORIGIN=${{ secrets.APP_ORIGIN }}
           ALLOWED_DOMAINS=${{ secrets.ALLOWED_DOMAINS }}
           DATABASE_PATH=${{ secrets.DATABASE_PATH }}
