@@ -66,7 +66,7 @@ jobs:
         run: |
           @"
           NODE_ENV=development
-          HOST=${{ secrets.HOST }}
+          HOST=0.0.0.0
           APP_ORIGIN=${{ secrets.APP_ORIGIN }}
           ALLOWED_DOMAINS=${{ secrets.ALLOWED_DOMAINS }}
           DATABASE_PATH=${{ secrets.DATABASE_PATH }}
