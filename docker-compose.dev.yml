@@ -5,7 +5,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      target: production
+      target: development
 
     image: ${DOCKERHUB_USERNAME}/mechlin-orbit:dev
 

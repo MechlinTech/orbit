@@ -51,7 +51,7 @@ jobs:
       - name: Build Docker image
         run: |
           docker build `
-            --target production `
+            --target development `
             --tag "${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}" `
             --tag "${{ env.IMAGE_NAME }}:${{ github.sha }}" `
             .
@@ -65,7 +65,7 @@ jobs:
         shell: powershell
         run: |
           @"
-          NODE_ENV=${{ secrets.NODE_ENV }}
+          NODE_ENV=development
           HOST=${{ secrets.HOST }}
           PORT=${{ secrets.PORT }}
           APP_ORIGIN=${{ secrets.APP_ORIGIN }}
