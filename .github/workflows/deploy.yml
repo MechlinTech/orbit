@@ -72,7 +72,6 @@ jobs:
           ENTRA_CLIENT_ID=${{ secrets.ENTRA_CLIENT_ID }}
           ENTRA_CLIENT_SECRET=${{ secrets.ENTRA_CLIENT_SECRET }}
           ALLOWED_DOMAINS=${{ secrets.ALLOWED_DOMAINS }}
-          ALLOWED_GROUP_IDS=${{ secrets.ALLOWED_GROUP_IDS }}
           DATABASE_PATH=${{ secrets.DATABASE_PATH }}
           SESSION_SECONDS=${{ secrets.SESSION_SECONDS }}
           DOCKERHUB_USERNAME=${{ secrets.DOCKERHUB_USERNAME }}
