@@ -28,9 +28,32 @@ export function email(value) {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(result)) throw new HttpError(400, 'Enter a valid email address.');
   return result;
 }
+export function phone(value, optional = true) {
+  const result = text(value ?? '', 'Phone', 50, optional);
+  if (!result) return '';
+  const digits = result.replace(/\D/g, '');
+  if ((!/^\+?[0-9\s\-().–—]+$/.test(result) && !/^\([+]?[0-9]+\)[\s0-9\-().–—]+$/.test(result)) || digits.length < 7 || digits.length > 15) throw new HttpError(400, 'Enter a valid phone number.');
+  return result;
+}
+export const currencies = ['USD','EUR','GBP','CAD','AUD','INR','JPY','CHF','SGD','NZD','AED','HKD','SEK','NOK','DKK','BRL','MXN','ZAR'];
+export function currency(value) {
+  const result = text(value, 'Currency', 10).toUpperCase();
+  if (!/^[A-Z]{3}$/.test(result) || !currencies.includes(result)) throw new HttpError(400, 'Enter a supported three-letter currency code.');
+  return result;
+}
 export function list(value, label, max = 30) {
   if (!Array.isArray(value) || value.length > max) throw new HttpError(400, `${label} must be a list with at most ${max} items.`);
   return [...new Set(value.map(v => text(v, label, 100)))];
+}
+export function validateSkills(value) {
+  const rawList = Array.isArray(value) ? value : typeof value === 'string' ? value.split(',').map(s => s.trim()).filter(Boolean) : [];
+  const items = list(rawList, 'Skills');
+  for (const s of items) {
+    if (/[*:&;|~^$%@!=<>?`"\\]/.test(s) || !/^[\p{L}\p{N}\s.\-/+#()']{1,100}$/u.test(s)) {
+      throw new HttpError(400, 'Enter skills only in the expected comma-separated format, for example: Manual Testing, Automation Testing');
+    }
+  }
+  return items;
 }
 export function integer(value, label, min = 0, max = 100000000) {
   if (!Number.isSafeInteger(value) || value < min || value > max) throw new HttpError(400, `${label} must be between ${min} and ${max}.`);
