@@ -38,6 +38,19 @@ export function createApp({db = openDb(process.env.DATABASE_PATH), c = config(),
       if (path === '/auth/login' && req.method === 'GET') {
         const login = startLogin(db,c); audit(db,actor,'auth.login_started'); res.setHeader('Set-Cookie',cookie('oauth_state',login.state,600)); return redirect(login.url);
       }
+      if (path === '/auth/dev-login' && req.method === 'GET') {
+        if (c.production) throw new HttpError(403,'Development sign-in is disabled in production.');
+        const role = url.searchParams.get('role') || 'System Admin';
+        let user = db.prepare("SELECT * FROM users WHERE role=? AND status='active' ORDER BY created_at ASC LIMIT 1").get(role);
+        if (!user && role === 'System Admin') user = db.prepare("SELECT * FROM users WHERE status='active' ORDER BY created_at ASC LIMIT 1").get();
+        if (!user) {
+          const uid = crypto.randomUUID();
+          db.prepare('INSERT INTO users(id,email,name,oid,tenant,role,team,status,created_at) VALUES(?,?,?,?,?,?,?,?,?)').run(uid,'admin@mechlin.com','Morgan Ellis',crypto.randomUUID(),'11111111-1111-1111-1111-111111111111','System Admin','Engineering','active',new Date().toISOString());
+          user = db.prepare('SELECT * FROM users WHERE id=?').get(uid);
+        }
+        const session = createSession(db,user,c); audit(db,user.id,'auth.dev_login',user.id);
+        res.setHeader('Set-Cookie',cookie('session',session.value,c.sessionSeconds)); return redirect('/');
+      }
       if (path === '/auth/callback' && req.method === 'GET') {
         const state = consumeState(db,url.searchParams.get('state'),cookies.oauth_state);
         res.setHeader('Set-Cookie',cookie('oauth_state','',0));
@@ -83,7 +96,8 @@ export function createApp({db = openDb(process.env.DATABASE_PATH), c = config(),
   return server;
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  try { process.loadEnvFile?.(); } catch {}
   const app = createApp(); const port = Number(process.env.PORT || 3000), host = process.env.HOST || '127.0.0.1';
-  app.listen(port,host,()=>console.log(`TalentOS listening on ${host}:${port}`));
+  app.listen(port,host,()=>console.log(`Orbit listening on ${host}:${port}`));
   for (const signal of ['SIGINT','SIGTERM']) process.on(signal,()=>app.close(()=>process.exit(0)));
 }

@@ -13,20 +13,23 @@ All `/api/*` endpoints require an approved session. Mutations require `Content-T
 | GET | admin/audit?before=ID&limit=N | Newest first; max 500 records; paginate using last returned ID |
 | GET/PUT | pipeline | Read / update ordered `stages` list |
 | GET/POST | requisitions | Scoped list / create draft |
+| GET/PUT | requisitions/:id | Get single requisition / update requisition details (`title`, `team`, `headcount`, `salary_min`, `salary_max`, `currency`, `description`, `skills`) |
 | POST | requisitions/:id/submit,approve,reject | One action segment; optional decision `note` |
 | GET/POST | candidates | Search with `?q=`, or create |
+| GET/PUT/POST | candidates/:id | Get single candidate / update candidate details (`name`, `email`, `skills`, `experience` / `resume_text`, `phone`, `team`, `source`) |
 | POST | resume/parse | `{text}` plain-text extraction |
 | POST | jd/draft | `{title,skills:[]}` template generation |
 | GET/POST | applications | Scoped list / `{candidate_id,requisition_id}` |
 | GET | applications/:id/match | Explained deterministic skill overlap |
 | POST | applications/:id/stage | `{stage}` next stage or rejection |
-| GET/POST | interviews | List / `{application_id,interviewer_id,scheduled_at,competencies:[]}` |
+| GET/POST | interviews | List / plan new interview `{application_id,interviewer_id,scheduled_at,competencies:[]}` |
+| GET/PUT | interviews/:id | Get single interview / update scheduled interview date and time, interviewer or competencies |
 | GET/POST | interviews/:id/scorecards | Blinded application feedback / submit own `{ratings,recommendation,notes}` |
 | GET | interviewers | Assignable users visible to recruiter |
 | GET/POST | referrals | Own referrals / `{name,email,requisition_id,note}` |
 | GET | analytics | Team-scoped counts |
 | GET | integrations | Explicit unavailable later modules |
 
-Requisition create body: `{title,team,headcount,salary_min,salary_max,currency,description,skills:[]}`. Candidate create body: `{name,email,phone,team,skills:[],resume_text,source}`. User provisioning body: `{name,email,oid,tenant,role,team}`. Role assignment is a single role string from `GET /api/me`; Agency cannot be assigned in this phase.
+Requisition create/update body: `{title,team,headcount,salary_min,salary_max,currency,description,skills:[]}`. Candidate create/update body: `{name,email,phone,team,skills:[],resume_text,experience,source}`. User provisioning body: `{name,email,oid,tenant,role,team}`. Role assignment is a single role string from `GET /api/me`; Agency cannot be assigned in this phase.
 
 Public routes: `/health` is a database liveness check, `/auth/login` starts OIDC, `/auth/callback` validates callback, `/` serves a non-sensitive application shell. APIs do not expose anonymous candidate intake or public registration.
