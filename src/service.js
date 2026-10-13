@@ -1,5 +1,5 @@
 import { audit, id, now, transaction } from './db.js';
-import { HttpError, roles, requirePermission as permit, requireTeam, inTeam, can, text, email, list, integer } from './policy.js';
+import { HttpError, roles, requirePermission as permit, requireTeam, inTeam, can, text, email, phone as validatePhone, currency as validateCurrency, list, validateSkills, integer } from './policy.js';
 import { getAppearance, setAppearance } from './appearance.js';
 
 const get = (db, table, key) => {
@@ -10,7 +10,9 @@ const get = (db, table, key) => {
 const publicUser = u => ({ id:u.id, name:u.name, email:u.email, role:u.role, team:u.team, status:u.status, oid:u.oid, tenant:u.tenant, created_at:u.created_at, last_login:u.last_login });
 export const pipeline = db => JSON.parse(db.prepare("SELECT value FROM settings WHERE key='pipeline'").get().value);
 export function matchSkills(candidate, requisition) {
-  const required = JSON.parse(requisition.skills), present = new Set(JSON.parse(candidate.skills).map(s => s.toLowerCase()));
+  const required = Array.isArray(requisition.skills) ? requisition.skills : JSON.parse(requisition.skills);
+  const candSkills = Array.isArray(candidate.skills) ? candidate.skills : JSON.parse(candidate.skills);
+  const present = new Set(candSkills.map(s => s.toLowerCase()));
   const matched = required.filter(s => present.has(s.toLowerCase())), missing = required.filter(s => !present.has(s.toLowerCase()));
   return { method:'Deterministic skill overlap; not AI', score: required.length ? Math.round(100 * matched.length / required.length) : null,
     matched, missing, explanation: required.length ? `${matched.length} of ${required.length} explicitly required skills found. Human review required.` : 'No required skills defined. No score calculated.' };
@@ -82,6 +84,15 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
   if (parts[0] === 'requisitions') {
     if (method === 'GET') {
       permit(user,'jobs');
+      if (key) {
+        const r = get(db, 'requisitions', key);
+        if (!inTeam(user, r.team) || (['Employee/Referral', 'Interviewer'].includes(user.role) && r.status !== 'open')) {
+          throw new HttpError(404, 'Requisition not found.');
+        }
+        const output = { ...r, skills: JSON.parse(r.skills) };
+        if (['Employee/Referral', 'Interviewer'].includes(user.role)) { delete output.salary_min; delete output.salary_max; }
+        return output;
+      }
       return db.prepare('SELECT * FROM requisitions ORDER BY created_at DESC').all().filter(r => inTeam(user,r.team) && (!['Employee/Referral','Interviewer'].includes(user.role) || r.status === 'open')).map(r => {
         const output = {...r,skills:JSON.parse(r.skills)};
         if (['Employee/Referral','Interviewer'].includes(user.role)) { delete output.salary_min; delete output.salary_max; }
@@ -92,14 +103,51 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       permit(user,'recruit','requisition'); const team = text(body.team,'Team',100); requireTeam(user,team);
       const title = text(body.title,'Title',200), headcount = integer(body.headcount,'Headcount',1,1000), min = integer(body.salary_min,'Minimum salary'), max = integer(body.salary_max,'Maximum salary');
       if (min > max) throw new HttpError(400,'Minimum salary exceeds maximum.');
-      const currency = text(body.currency,'Currency',3).toUpperCase(); if (!/^[A-Z]{3}$/.test(currency)) throw new HttpError(400,'Use a three-letter currency code.');
-      const description = text(body.description,'Job description',15000), skills = list(body.skills,'Skills'), rid = id();
+      const currency = validateCurrency(body.currency);
+      const description = text(body.description,'Job description',15000), skills = validateSkills(body.skills), rid = id();
       return transaction(db, () => {
         db.prepare('INSERT INTO requisitions VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run(rid,title,team,headcount,min,max,currency,description,JSON.stringify(skills),'draft',user.id,now());
         audit(db,user.id,'requisition.created',rid); return get(db,'requisitions',rid);
       });
     }
-    if (method === 'POST' && key) {
+    if ((method === 'PUT' || (method === 'POST' && !action)) && key) {
+      permit(user,'recruit','requisition');
+      const req = get(db,'requisitions',key);
+      requireTeam(user,req.team);
+      if (!['draft','open'].includes(req.status)) {
+        if (['pending_manager','pending_finance'].includes(req.status)) {
+          throw new HttpError(409,'Cannot edit requisition awaiting approval.');
+        }
+        throw new HttpError(409,`Cannot edit a requisition with status ${req.status}.`);
+      }
+      const team = text(body.team ?? req.team,'Team',100);
+      requireTeam(user,team);
+      if (team !== req.team && db.prepare('SELECT id FROM applications WHERE requisition_id=?').get(key)) {
+        throw new HttpError(409,'Cannot change team of a requisition with existing applications.');
+      }
+      const title = text(body.title ?? req.title,'Title',200);
+      const headcount = integer(body.headcount !== undefined ? Number(body.headcount) : req.headcount,'Headcount',1,1000);
+      if (req.status === 'open') {
+        const hired = db.prepare("SELECT count(*) n FROM applications WHERE requisition_id=? AND stage='Hired'").get(key).n;
+        if (headcount < hired) throw new HttpError(409,`Headcount cannot be less than the number of hired candidates (${hired}).`);
+      }
+      const min = integer(body.salary_min !== undefined ? Number(body.salary_min) : req.salary_min,'Minimum salary');
+      const max = integer(body.salary_max !== undefined ? Number(body.salary_max) : req.salary_max,'Maximum salary');
+      if (min > max) throw new HttpError(400,'Minimum salary exceeds maximum.');
+      const currency = validateCurrency(body.currency ?? req.currency);
+      const description = text(body.description ?? req.description,'Job description',15000);
+      const rawSkills = body.skills !== undefined ? (Array.isArray(body.skills) ? body.skills : typeof body.skills === 'string' ? body.skills.split(',').map(s=>s.trim()).filter(Boolean) : JSON.parse(req.skills)) : JSON.parse(req.skills);
+      const skills = validateSkills(rawSkills);
+      return transaction(db, () => {
+        db.prepare('UPDATE requisitions SET title=?, team=?, headcount=?, salary_min=?, salary_max=?, currency=?, description=?, skills=? WHERE id=?').run(
+          title,team,headcount,min,max,currency,description,JSON.stringify(skills),key
+        );
+        audit(db,user.id,'requisition.updated',key,{title,team,headcount});
+        const updated = get(db,'requisitions',key);
+        return {...updated,skills:JSON.parse(updated.skills)};
+      });
+    }
+    if (method === 'POST' && key && action) {
       const req = get(db,'requisitions',key); requireTeam(user,req.team);
       let status;
       if (action === 'submit') {
@@ -122,15 +170,48 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
   if (parts[0] === 'candidates') {
     permit(user,'recruit','review');
     if (method === 'GET') {
+      if (key) {
+        const c = get(db, 'candidates', key);
+        requireTeam(user, c.team);
+        return { ...c, skills: JSON.parse(c.skills), experience: c.resume_text };
+      }
       const search = (query.get('q') || '').toLowerCase();
-      return db.prepare('SELECT * FROM candidates ORDER BY created_at DESC').all().filter(c => inTeam(user,c.team) && `${c.name} ${c.email} ${c.skills} ${c.resume_text}`.toLowerCase().includes(search)).map(c => ({...c,skills:JSON.parse(c.skills)}));
+      return db.prepare('SELECT * FROM candidates ORDER BY created_at DESC').all().filter(c => inTeam(user,c.team) && `${c.name} ${c.email} ${c.skills} ${c.resume_text}`.toLowerCase().includes(search)).map(c => ({...c,skills:JSON.parse(c.skills),experience:c.resume_text}));
     }
     if (method === 'POST' && !key) {
       permit(user,'recruit'); const team = text(body.team,'Team',100); requireTeam(user,team);
-      const address = email(body.email), name = text(body.name,'Name',200), phone = text(body.phone ?? '', 'Phone',50,true), resume = text(body.resume_text ?? '', 'Resume text',50000,true);
-      const skills = list(body.skills,'Skills'), source = text(body.source || 'Direct','Source',100), cid = id();
+      const address = email(body.email), name = text(body.name,'Name',200), phone = validatePhone(body.phone ?? '', true);
+      const resumeVal = body.resume_text !== undefined ? body.resume_text : body.experience !== undefined ? body.experience : '';
+      const resume = text(resumeVal, 'Resume text', 50000, true);
+      const skills = validateSkills(body.skills), source = text(body.source || 'Direct','Source',100), cid = id();
       if (db.prepare('SELECT id FROM candidates WHERE email=?').get(address)) throw new HttpError(409,'A candidate with this email already exists. Ask TA operations to resolve the duplicate.');
-      return transaction(db, () => { db.prepare('INSERT INTO candidates VALUES(?,?,?,?,?,?,?,?,?,?)').run(cid,name,address,phone,JSON.stringify(skills),resume,source,team,user.id,now()); audit(db,user.id,'candidate.created',cid); return get(db,'candidates',cid); });
+      return transaction(db, () => {
+        db.prepare('INSERT INTO candidates VALUES(?,?,?,?,?,?,?,?,?,?)').run(cid,name,address,phone,JSON.stringify(skills),resume,source,team,user.id,now());
+        audit(db,user.id,'candidate.created',cid);
+        const created = get(db,'candidates',cid);
+        return {...created,skills:JSON.parse(created.skills),experience:created.resume_text};
+      });
+    }
+    if ((method === 'PUT' || method === 'POST') && key) {
+      permit(user,'recruit');
+      const candidate = get(db,'candidates',key);
+      requireTeam(user,candidate.team);
+      const team = text(body.team || candidate.team,'Team',100); requireTeam(user,team);
+      const address = email(body.email ?? candidate.email), name = text(body.name ?? candidate.name,'Name',200);
+      const phone = validatePhone(body.phone ?? candidate.phone ?? '', true);
+      const resumeVal = body.resume_text !== undefined ? body.resume_text : body.experience !== undefined ? body.experience : candidate.resume_text;
+      const resume = text(resumeVal ?? '','Resume text',50000,true);
+      const rawSkills = Array.isArray(body.skills) ? body.skills : typeof body.skills === 'string' ? body.skills.split(',').map(s=>s.trim()).filter(Boolean) : JSON.parse(candidate.skills);
+      const skills = validateSkills(rawSkills);
+      const source = text(body.source || candidate.source || 'Direct','Source',100);
+      const duplicate = db.prepare('SELECT id FROM candidates WHERE email=? AND id!=?').get(address,key);
+      if (duplicate) throw new HttpError(409,'A candidate with this email already exists. Ask TA operations to resolve the duplicate.');
+      return transaction(db, () => {
+        db.prepare('UPDATE candidates SET name=?,email=?,phone=?,skills=?,resume_text=?,source=?,team=? WHERE id=?').run(name,address,phone,JSON.stringify(skills),resume,source,team,key);
+        audit(db,user.id,'candidate.updated',key,{name,email:address,team});
+        const updated = get(db,'candidates',key);
+        return {...updated,skills:JSON.parse(updated.skills),experience:updated.resume_text};
+      });
     }
   }
   if (path === 'resume/parse' && method === 'POST') {
@@ -139,7 +220,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       warning:'Plain-text extraction only. Confirm every field; PDF/DOCX parsing is a later adapter.'};
   }
   if (path === 'jd/draft' && method === 'POST') {
-    permit(user,'recruit','requisition'); const title = text(body.title,'Title',200), skills = list(body.skills,'Skills');
+    permit(user,'recruit','requisition'); const title = text(body.title,'Title',200), skills = validateSkills(body.skills);
     return {method:'Template assistant; not generative AI', draft:`${title}\n\nPurpose\nDescribe the outcomes this role will own.\n\nRequired skills\n${skills.map(s=>`• ${s}`).join('\n')}\n\nResponsibilities\nAdd measurable responsibilities and expected impact.\n\nInterview process\nStructured, job-related assessment with consistent evaluation criteria.\n\nAccessibility\nContact your recruiter to request an interview accommodation.`};
   }
   if (parts[0] === 'applications') {
@@ -170,6 +251,12 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
     permit(user,'recruit','review','interview');
     if (method === 'GET' && !key) return db.prepare(`SELECT i.*,c.name,r.title,r.team,u.name interviewer FROM interviews i
       JOIN applications a ON a.id=i.application_id JOIN candidates c ON c.id=a.candidate_id JOIN requisitions r ON r.id=a.requisition_id JOIN users u ON u.id=i.interviewer_id`).all().filter(i => user.role === 'Interviewer' ? i.interviewer_id === user.id : inTeam(user,i.team));
+    if (method === 'GET' && key && !action) {
+      const interview = get(db, 'interviews', key);
+      appContext(db, user, interview.application_id, true);
+      return db.prepare(`SELECT i.*,c.name,r.title,r.team,u.name interviewer FROM interviews i
+        JOIN applications a ON a.id=i.application_id JOIN candidates c ON c.id=a.candidate_id JOIN requisitions r ON r.id=a.requisition_id JOIN users u ON u.id=i.interviewer_id WHERE i.id=?`).get(key);
+    }
     if (method === 'POST' && !key) {
       permit(user,'recruit'); const {app,req} = appContext(db,user,body.application_id), interviewer = get(db,'users',body.interviewer_id);
       if (['Hired','Rejected'].includes(app.stage)) throw new HttpError(409,'Cannot interview a closed application.');
@@ -177,6 +264,43 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       const scheduled = new Date(body.scheduled_at); if (!Number.isFinite(scheduled.getTime()) || scheduled.getTime() < Date.now()) throw new HttpError(400,'Enter a future interview date.');
       const competencies = list(body.competencies,'Competencies',10); if (!competencies.length) throw new HttpError(400,'At least one competency is required.');
       const iid = id(); return transaction(db, () => { db.prepare('INSERT INTO interviews(id,application_id,interviewer_id,scheduled_at,competencies,created_at) VALUES(?,?,?,?,?,?)').run(iid,app.id,interviewer.id,scheduled.toISOString(),JSON.stringify(competencies),now()); audit(db,user.id,'interview.planned',iid); return {...get(db,'interviews',iid),calendar_status:'Not synced; provider adapter required'}; });
+    }
+    if (method === 'PUT' && key && !action) {
+      const interview = get(db, 'interviews', key);
+      const {app, req} = appContext(db, user, interview.application_id, true);
+      if (!can(user, 'recruit') && interview.interviewer_id !== user.id) {
+        throw new HttpError(403, 'Your role cannot perform this action.');
+      }
+      if (interview.status === 'completed') {
+        throw new HttpError(409, 'Completed interviews cannot be edited.');
+      }
+      if (['Hired', 'Rejected'].includes(app.stage)) {
+        throw new HttpError(409, 'Cannot edit an interview for a closed application.');
+      }
+      let interviewerId = interview.interviewer_id;
+      if (body.interviewer_id && body.interviewer_id !== interview.interviewer_id) {
+        permit(user, 'recruit');
+        const interviewer = get(db, 'users', body.interviewer_id);
+        if (interviewer.status !== 'active' || !['Interviewer','Hiring Manager','Recruiter','TA Manager','TA Director','System Admin'].includes(interviewer.role) || !inTeam(interviewer, req.team)) {
+          throw new HttpError(400, 'Choose an active interviewer who can access this team.');
+        }
+        interviewerId = interviewer.id;
+      }
+      const scheduled = new Date(body.scheduled_at);
+      if (!Number.isFinite(scheduled.getTime()) || scheduled.getTime() < Date.now()) {
+        throw new HttpError(400, 'Enter a future interview date.');
+      }
+      let competencies = JSON.parse(interview.competencies);
+      if (body.competencies !== undefined) {
+        permit(user, 'recruit');
+        competencies = list(body.competencies, 'Competencies', 10);
+        if (!competencies.length) throw new HttpError(400, 'At least one competency is required.');
+      }
+      return transaction(db, () => {
+        db.prepare('UPDATE interviews SET scheduled_at=?, interviewer_id=?, competencies=? WHERE id=?').run(scheduled.toISOString(), interviewerId, JSON.stringify(competencies), key);
+        audit(db, user.id, 'interview.updated', key, { scheduled_at: scheduled.toISOString(), interviewer_id: interviewerId });
+        return { ...get(db, 'interviews', key), calendar_status: 'Not synced; provider adapter required' };
+      });
     }
     if (key && action === 'scorecards') {
       const interview = get(db,'interviews',key); appContext(db,user,interview.application_id,true);
