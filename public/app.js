@@ -83,6 +83,16 @@ const table = (headers,rows,cls='') => rows.length?`<div class="table-wrap ${cls
 const field = (label,name,type='text',value='',required=true) => `<label>${label}<input name="${name}" type="${type}" value="${escape(value)}" ${required?'required':''}><span class="field-error error" id="${name}-error" role="alert"></span></label>`;
 const area = (label,name,value='',required=false) => `<label class="full">${label}<textarea name="${name}" ${required?'required':''}>${escape(value)}</textarea></label>`;
 const select = (label,name,values,selected='') => `<label>${label}<select name="${name}" required>${values.map(v=>{const [id,title]=Array.isArray(v)?v:[v,v];return `<option value="${escape(id)}" ${id===selected?'selected':''}>${escape(title)}</option>`;}).join('')}</select></label>`;
+const standardTeams = ['Dev','QA','BD','DevOps','HR','Product','Design','Operations','Sales','Other','PM','TL'];
+const teamSelect = (label,name,selected='',allowOrg=false) => {
+  const options = [];
+  if (allowOrg) options.push(['', 'Organization (No specific team)']);
+  for (const t of standardTeams) options.push([t, t]);
+  if (selected && selected !== '' && !standardTeams.includes(selected) && selected !== 'Engineering') {
+    options.push([selected, selected]);
+  }
+  return `<label>${label}<select name="${name}" ${allowOrg ? '' : 'required'}>${options.map(([id, title]) => `<option value="${escape(id)}" ${id === selected ? 'selected' : ''}>${escape(title)}</option>`).join('')}</select></label>`;
+};
 const skills = v => v.split(',').map(s=>s.trim()).filter(Boolean);
 const checkSkills = v => {
   const s = String(v ?? '').trim();
@@ -207,14 +217,14 @@ async function render() {
       const {paged,page,totalPages,total,start}=paginate(interviews,pageState.Interviews||1,10);
       pageState.Interviews=page;
       const pag=renderPagination('Interviews',page,totalPages,total,start,10);
-      html=heading('Structured interviews, independent feedback.',allows('recruit')?button('+ Plan interview','new-interview'):'')+`<div class="notice-inline">Interview plans are stored here. Calendar invitations and Teams/Meet links require a calendar adapter.</div><section class="panel">${table(['Candidate / role','Interviewer','Scheduled','Status','Feedback'],paged.map(i=>`<tr><td><strong>${escape(i.name)}</strong>${escape(i.title)}</td><td>${escape(i.interviewer)}</td><td>${escape(new Date(i.scheduled_at).toLocaleString())}</td><td>${badge(i.status)}</td><td><div class="actions">${i.interviewer_id===me.id&&i.status!=='completed'?button('Submit scorecard','scorecard',i.id):''}${i.status!=='completed'&&(allows('recruit')||i.interviewer_id===me.id)?button('Edit','edit-interview',i.id,'class="secondary"'):''}${button('View feedback','feedback',i.id,'class="secondary"')}</div></td></tr>`))}${pag}</section>`;
+      html=heading('Structured interviews, independent feedback.',allows('recruit')?button('+ Plan interview','new-interview'):'')+`<div class="notice-inline">Interview plans are stored here. Calendar invitations and Teams/Meet links require a calendar adapter.</div><section class="panel">${table(['Candidate / role','Interviewer','Scheduled','Status','Feedback'],paged.map(i=>`<tr><td><strong>${escape(i.name)}</strong>${escape(i.title)}</td><td>${escape(i.interviewer)}</td><td>${escape(new Date(i.scheduled_at).toLocaleString())}</td><td>${badge(i.status)}</td><td><div class="actions">${i.interviewer_id===me.id&&i.status!=='completed'?button('Submit scorecard','scorecard',i.id):''}${allows('admin')&&i.interviewer_id!==me.id&&i.status!=='completed'?button('Proxy scorecard','scorecard-proxy',i.id,'class="secondary"'):''}${i.status!=='completed'&&(allows('recruit')||i.interviewer_id===me.id)?button('Edit','edit-interview',i.id,'class="secondary"'):''}${button('View feedback','feedback',i.id,'class="secondary"')}</div></td></tr>`))}${pag}</section>`;
     }
     if(current==='Referrals') {
       const refs=await api('referrals');
       const {paged,page,totalPages,total,start}=paginate(refs,pageState.Referrals||1,10);
       pageState.Referrals=page;
       const pag=renderPagination('Referrals',page,totalPages,total,start,10);
-      html=heading('Recommend a colleague for an open position.',button('+ Make referral','new-referral'))+`<section class="panel"><h2>Your referrals</h2>${table(['Candidate','Email','Referred'],paged.map(r=>`<tr><td>${escape(r.name)}</td><td>${escape(r.email)}</td><td>${escape(new Date(r.at).toLocaleDateString())}</td></tr>`))}${pag}</section>`;
+      html=heading(allows('admin')?'Organization employee referrals.':'Recommend a colleague for an open position.',button('+ Make referral','new-referral'))+`<section class="panel"><h2>${allows('admin')?'All referrals':'Your referrals'}</h2>${table(allows('admin')?['Candidate','Email','Referred','Referrer']:['Candidate','Email','Referred'],paged.map(r=>`<tr><td>${escape(r.name)}</td><td>${escape(r.email)}</td><td>${escape(new Date(r.at).toLocaleDateString())}</td>${allows('admin')?`<td>${escape(r.referrer_name||'You')}</td>`:''}</tr>`))}${pag}</section>`;
     }
     if(current==='Administration') {
       const users=await api('admin/users');window.currentUsers=users;
@@ -273,7 +283,7 @@ document.addEventListener('click',async event=>{
     }
     if(a==='refresh'){await render();return;}
     if(a==='new-req'){
-      modal('New requisition',`<div class="form-grid">${field('Position title','title')}${field('Team','team','text',me.team)}${field('Headcount','headcount','number','1')}${field('Currency','currency','text','USD')}${field('Minimum annual salary','salary_min','number','0')}${field('Maximum annual salary','salary_max','number','0')}${field('Required skills, comma separated','skills','text','',false)}${area('Job description','description','',true)}</div>${button('Draft description from title & skills','draft-jd','','class="secondary"')}`,v=>{
+      modal('New requisition',`<div class="form-grid">${field('Position title','title')}${teamSelect('Team','team',me.team||'Dev',false)}${field('Headcount','headcount','number','1')}${field('Currency','currency','text','USD')}${field('Minimum annual salary','salary_min','number','0')}${field('Maximum annual salary','salary_max','number','0')}${field('Required skills, comma separated','skills','text','',false)}${area('Job description','description','',true)}</div>${button('Draft description from title & skills','draft-jd','','class="secondary"')}`,v=>{
         const cErr=checkCurrency(v.currency);
         if(cErr){
           const el=$('#currency-error');if(el)el.textContent=cErr;
@@ -303,14 +313,51 @@ document.addEventListener('click',async event=>{
       form.elements.description.value=result.draft;notice(result.method);
     }
     if(a==='submit-req'){await api(`requisitions/${id}/submit`,'POST',{});notice('Submitted for manager approval.');await render();}
-    if(a==='approve-req')modal('Review requisition',select('Decision','decision',['approve','reject'])+area('Decision note','note'),v=>api(`requisitions/${id}/${v.decision}`,'POST',{note:v.note}));
-    if(a==='req-details'){const r=(await api('requisitions')).find(r=>r.id===id)||await api(`requisitions/${id}`);modal(r.title,`<p>${badge(r.status)} · ${escape(r.team)} · ${r.headcount} opening(s)</p>${r.salary_min!==undefined?`<p>${r.salary_min}–${r.salary_max} ${escape(r.currency)}</p>`:''}<p class="score-note">${escape(r.description)}</p>${['draft','open'].includes(r.status)&&(allows('recruit')||allows('requisition'))?`<div class="actions" style="margin-top:16px">${button('Edit','edit-req',r.id)}</div>`:''}`);}
+    if(a==='approve-req'){
+      const isAdmin = allows('admin');
+      const reqs = await api('requisitions');
+      const r = reqs.find(item => item.id === id) || await api(`requisitions/${id}`);
+      const summaryCard = r ? `
+        <div style="background:var(--surface-alt);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:16px;">
+          <div style="font-weight:600;font-size:1.05rem;color:var(--ink);">${escape(r.title)}</div>
+          <div style="display:flex;gap:12px;margin-top:6px;font-size:0.82rem;color:var(--muted);align-items:center;flex-wrap:wrap;">
+            <span>Team: <strong>${escape(r.team)}</strong></span>
+            <span>·</span>
+            <span>Headcount: <strong>${r.headcount}</strong></span>
+            <span>·</span>
+            <span>Stage: ${badge(r.status)}</span>
+          </div>
+        </div>` : '';
+
+      const adminNotice = isAdmin ? `
+        <div style="display:flex;align-items:flex-start;gap:10px;padding:12px 14px;background:var(--tint);border:1px solid #7cdbef40;border-radius:8px;color:var(--accent);font-size:0.83rem;margin-bottom:16px;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;margin-top:1px;"><path d="M12 3l8 4v6c0 4-4 7-8 9-4-2-8-5-8-9V7z"/><path d="M9 12l2 2 4-4"/></svg>
+          <div><strong>System Admin:</strong> Direct override authority is active. You can approve or reject this requisition directly.</div>
+        </div>` : '';
+
+      modal('Review requisition',
+        summaryCard +
+        adminNotice +
+        select('Decision', 'decision', [['approve', '✓ Approve requisition'], ['reject', '✕ Reject requisition']], 'approve') +
+        area('Decision note (optional)', 'note', ''),
+        v => {
+          const payload = { note: v.note };
+          if (isAdmin) {
+            payload.admin_override = true;
+            payload.emergency_override = true;
+            payload.override_reason = v.note || 'System Admin direct approval override';
+          }
+          return api(`requisitions/${id}/${v.decision}`, 'POST', payload);
+        }
+      );
+    }
+    if(a==='req-details'){const r=(await api('requisitions')).find(r=>r.id===id)||await api(`requisitions/${id}`);modal(r.title,`<p>${badge(r.status)} · ${escape(r.team)} · ${r.headcount} opening(s)</p>${r.salary_min!==undefined?`<p>${r.salary_min}–${r.salary_max} ${escape(r.currency)}</p>`:''}<p class="score-note">${escape(r.description)}</p>${((['draft','open'].includes(r.status)||(allows('admin')&&['pending_manager','pending_finance'].includes(r.status)))&&(allows('recruit')||allows('requisition')))?`<div class="actions" style="margin-top:16px">${button('Edit','edit-req',r.id)}</div>`:''}`);}
     if(a==='edit-req'){
       const reqs=await api('requisitions');
       const r=reqs.find(item=>item.id===id)||await api(`requisitions/${id}`);
       if(!r)throw new Error('Requisition not found.');
-      if(!['draft','open'].includes(r.status))throw new Error(`Cannot edit requisition with status ${r.status}.`);
-      modal('Edit requisition',`<div class="form-grid">${field('Position title','title','text',r.title)}${field('Team','team','text',r.team)}${field('Headcount','headcount','number',String(r.headcount))}${field('Currency','currency','text',r.currency)}${field('Minimum annual salary','salary_min','number',String(r.salary_min??0))}${field('Maximum annual salary','salary_max','number',String(r.salary_max??0))}${field('Required skills, comma separated','skills','text',(r.skills||[]).join(', '),false)}${area('Job description','description',r.description,true)}</div>${button('Draft description from title & skills','draft-jd','','class="secondary"')}`,v=>{
+      if(!['draft','open'].includes(r.status)&&!(allows('admin')&&['pending_manager','pending_finance'].includes(r.status)))throw new Error(`Cannot edit requisition with status ${r.status}.`);
+      modal('Edit requisition',`<div class="form-grid">${field('Position title','title','text',r.title)}${teamSelect('Team','team',r.team||'Dev',false)}${field('Headcount','headcount','number',String(r.headcount))}${field('Currency','currency','text',r.currency)}${field('Minimum annual salary','salary_min','number',String(r.salary_min??0))}${field('Maximum annual salary','salary_max','number',String(r.salary_max??0))}${field('Required skills, comma separated','skills','text',(r.skills||[]).join(', '),false)}${area('Job description','description',r.description,true)}</div>${button('Draft description from title & skills','draft-jd','','class="secondary"')}`,v=>{
         const cErr=checkCurrency(v.currency);
         if(cErr){
           const el=$('#currency-error');if(el)el.textContent=cErr;
@@ -323,13 +370,15 @@ document.addEventListener('click',async event=>{
           const inp=$('#edit-form [name="skills"]');if(inp){inp.setCustomValidity(sErr);inp.reportValidity();}
           throw new Error(sErr);
         }
-        return api(`requisitions/${id}`,'PUT',{...v,currency:v.currency.trim().toUpperCase(),headcount:Number(v.headcount),salary_min:Number(v.salary_min),salary_max:Number(v.salary_max),skills:skills(v.skills)});
+        const payload = {...v,currency:v.currency.trim().toUpperCase(),headcount:Number(v.headcount),salary_min:Number(v.salary_min),salary_max:Number(v.salary_max),skills:skills(v.skills)};
+        if(allows('admin')) payload.admin_override = true;
+        return api(`requisitions/${id}`,'PUT',payload);
       });
       bindValidation('currency',checkCurrency);
       bindValidation('skills',checkSkills);
     }
     if(a==='new-candidate'){
-      modal('Add candidate',`<div class="form-grid">${field('Full name','name')}${field('Email','email','email')}${field('Phone','phone','tel','',false)}${field('Team','team','text',me.team)}${field('Skills, comma separated','skills','text','',false)}${field('Source','source','text','Direct')}${area('Experience / Resume text','resume_text')}</div>${button('Extract email and phone','parse-resume','','class="secondary"')}`,v=>{
+      modal('Add candidate',`<div class="form-grid">${field('Full name','name')}${field('Email','email','email')}${field('Phone','phone','tel','',false)}${teamSelect('Team','team',me.team||'Dev',false)}${field('Skills, comma separated','skills','text','',false)}${field('Source','source','text','Direct')}${area('Experience / Resume text','resume_text')}</div>${button('Extract email and phone','parse-resume','','class="secondary"')}`,v=>{
         const err=checkPhone(v.phone);
         if(err){
           const el=$('#phone-error');if(el)el.textContent=err;
@@ -350,7 +399,7 @@ document.addEventListener('click',async event=>{
     if(a==='edit-candidate'){
       const c=(await api('candidates')).find(c=>c.id===id)||await api(`candidates/${id}`);
       if(!c)throw new Error('Candidate not found.');
-      modal('Edit candidate',`<div class="form-grid">${field('Full name','name','text',c.name)}${field('Email','email','email',c.email)}${field('Phone','phone','tel',c.phone||'',false)}${field('Team','team','text',c.team||me.team)}${field('Skills, comma separated','skills','text',(c.skills||[]).join(', '),false)}${field('Source','source','text',c.source||'Direct')}${area('Experience / Resume text','resume_text',c.resume_text||c.experience||'')}</div>${button('Extract email and phone','parse-resume','','class="secondary"')}`,v=>{
+      modal('Edit candidate',`<div class="form-grid">${field('Full name','name','text',c.name)}${field('Email','email','email',c.email)}${field('Phone','phone','tel',c.phone||'',false)}${teamSelect('Team','team',c.team||me.team||'Dev',false)}${field('Skills, comma separated','skills','text',(c.skills||[]).join(', '),false)}${field('Source','source','text',c.source||'Direct')}${area('Experience / Resume text','resume_text',c.resume_text||c.experience||'')}</div>${button('Extract email and phone','parse-resume','','class="secondary"')}`,v=>{
         const err=checkPhone(v.phone);
         if(err){
           const el=$('#phone-error');if(el)el.textContent=err;
@@ -401,10 +450,21 @@ document.addEventListener('click',async event=>{
       });
     }
     if(a==='scorecard'){const i=(await api('interviews')).find(i=>i.id===id), comps=JSON.parse(i.competencies);modal('Submit independent feedback',comps.map((c,n)=>select(`${escape(c)} (1 low – 5 high)`,`rating${n}`,['1','2','3','4','5'],'3')).join('')+select('Recommendation','recommendation',['Strong yes','Yes','No','Strong no'])+area('Job-related evidence','notes','',true)+'<p class="muted">Submitted feedback is final in this phase. Other feedback stays hidden until you submit your assigned scorecards.</p>',v=>api(`interviews/${id}/scorecards`,'POST',{ratings:Object.fromEntries(comps.map((c,n)=>[c,Number(v[`rating${n}`])])),recommendation:v.recommendation,notes:v.notes}));}
-    if(a==='feedback'){const r=await api(`interviews/${id}/scorecards`);modal('Interview feedback',`${r.blinded?'<div class="notice-inline">Other reviewers’ feedback is hidden until you submit all your assigned scorecards for this application.</div>':''}${r.scorecards.map(s=>`<article class="panel"><h3>${escape(s.recommendation)}</h3><p>${escape(Object.entries(JSON.parse(s.ratings)).map(([k,v])=>`${k}: ${v}/5`).join(' · '))}</p><p class="score-note">${escape(s.notes)}</p></article>`).join('')||empty('No feedback is available to you yet.')}`);}
+    if(a==='scorecard-proxy'){
+      const i=(await api('interviews')).find(i=>i.id===id)||await api(`interviews/${id}`);
+      const comps=JSON.parse(i.competencies);
+      modal(`Submit proxy scorecard on behalf of ${escape(i.interviewer)}`,`<div class="notice-inline"><strong>Administrative Proxy Submission:</strong> You are submitting this scorecard on behalf of the assigned interviewer (${escape(i.interviewer)}). An audit log entry will record your action and reason.</div>`+comps.map((c,n)=>select(`${escape(c)} (1 low – 5 high)`,`rating${n}`,['1','2','3','4','5'],'3')).join('')+select('Recommendation','recommendation',['Strong yes','Yes','No','Strong no'])+area('Job-related evidence','notes','',true)+area('Reason for proxy submission (required)','proxy_reason','',true),v=>{
+        if(!v.proxy_reason||!v.proxy_reason.trim())throw new Error('A reason for proxy submission is required.');
+        return api(`interviews/${id}/scorecards`,'POST',{ratings:Object.fromEntries(comps.map((c,n)=>[c,Number(v[`rating${n}`])])),recommendation:v.recommendation,notes:v.notes,proxy_reason:v.proxy_reason});
+      });
+    }
+    if(a==='feedback'){
+      const r=await api(`interviews/${id}/scorecards`);
+      modal('Interview feedback',`${r.blinded?'<div class="notice-inline">Other reviewers’ feedback is hidden until you submit all your assigned scorecards for this application.</div>':''}${r.scorecards.map(s=>`<article class="panel"><h3>${escape(s.recommendation)}</h3>${s.proxy_for?`<p class="muted" style="margin-bottom:6px"><strong>Proxy Submission:</strong> Submitted by ${escape(s.author_name||'Administrator')} on behalf of ${escape(s.proxy_for_name||'Interviewer')}${s.proxy_reason?` · Reason: ${escape(s.proxy_reason)}`:''}</p>`:(s.author_name?`<p class="muted" style="margin-bottom:6px">By: ${escape(s.author_name)}</p>`:'')}<p>${escape(Object.entries(JSON.parse(s.ratings)).map(([k,v])=>`${k}: ${v}/5`).join(' · '))}</p><p class="score-note">${escape(s.notes)}</p></article>`).join('')||empty('No feedback is available to you yet.')}`);
+    }
     if(a==='new-referral'){const rs=(await api('requisitions')).filter(r=>r.status==='open');if(!rs.length)throw new Error('No open requisitions in your team.');modal('Make a referral',field('Candidate name','name')+field('Candidate email','email','email')+select('Open position','requisition_id',rs.map(r=>[r.id,r.title]))+area('Referral note','note'),v=>api('referrals','POST',v));}
-    if(a==='new-user'){const roles=(await api('me')).roles.filter(r=>r!=='Agency');modal('Add Microsoft 365 user',field('Full name','name')+field('Microsoft email','email','email')+field('Entra object ID','oid')+field('Entra tenant ID','tenant')+select('Role','role',roles,'Employee/Referral')+field('Team','team','text','',false)+'<p class="muted">This grants approved access to the exact Entra identity. It does not create a Microsoft account or an ATS password.</p>',v=>api('admin/users','POST',v));}
-    if(a==='manage-user'){const u=window.currentUsers.find(u=>u.id===id);const roles=(await api('me')).roles.filter(r=>r!=='Agency');const actions=u.status==='pending'?['approve','reject']:u.status==='active'?['update','disable','force-logout']:['reactivate','update'];modal(`Manage ${u.name}`,`<p>${escape(u.email)} · ${badge(u.status)}</p><p class="mono">Entra object: ${escape(u.oid)}</p>`+select('Action','action',actions)+select('Role','role',roles,u.role)+field('Team','team','text',u.team,false)+'<p class="muted">Access changes revoke all current ATS sessions.</p>',v=>api(`admin/users/${id}/${v.action}`,'POST',v));}
+    if(a==='new-user'){const roles=(await api('me')).roles.filter(r=>r!=='Agency');modal('Add Microsoft 365 user',field('Full name','name')+field('Microsoft email','email','email')+field('Entra object ID','oid')+field('Entra tenant ID','tenant')+select('Role','role',roles,'Employee/Referral')+teamSelect('Team','team','',true)+'<p class="muted">This grants approved access to the exact Entra identity. It does not create a Microsoft account or an ATS password.</p>',v=>api('admin/users','POST',v));}
+    if(a==='manage-user'){const u=window.currentUsers.find(u=>u.id===id);const roles=(await api('me')).roles.filter(r=>r!=='Agency');const actions=u.status==='pending'?['approve','reject']:u.status==='active'?['update','disable','force-logout']:['reactivate','update'];modal(`Manage ${u.name}`,`<p>${escape(u.email)} · ${badge(u.status)}</p><p class="mono">Entra object: ${escape(u.oid)}</p>`+select('Action','action',actions)+select('Role','role',roles,u.role)+teamSelect('Team','team',u.team||'',true)+'<p class="muted">Access changes revoke all current ATS sessions.</p>',v=>api(`admin/users/${id}/${v.action}`,'POST',v));}
     if(a==='edit-pipeline'){const stages=await api('pipeline');modal('Edit pipeline',area('Stages, one per line','stages',stages.join('\n'),true),v=>api('pipeline','PUT',{stages:v.stages.split('\n').map(s=>s.trim()).filter(Boolean)}));}
   }catch(e){notice(e.message);}
 });
