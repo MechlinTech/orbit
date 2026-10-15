@@ -59,7 +59,7 @@ try{
   await click(`document.querySelector('[data-nav="Candidates"]')`);await waitFor(`document.querySelector('[data-action="new-candidate"]')!==null`);
   await click(`document.querySelector('[data-action="new-candidate"]')`);await waitFor("document.querySelector('dialog').open");
   check('candidate form fields have labels',await evaluate("[...document.querySelectorAll('#edit-form input,#edit-form textarea')].every(e=>e.closest('label'))"));
-  await evaluate(`{const f=document.querySelector('#edit-form');for(const [k,v] of Object.entries({name:'Browser Test <b>Candidate</b>',email:'browser-test@example.com',phone:'',team:'Engineering',skills:'SQL, JavaScript',source:'Referral',resume_text:'Experience with SQL and JavaScript.'}))f.elements[k].value=v;f.requestSubmit();}`);
+  await evaluate(`{const f=document.querySelector('#edit-form');for(const [k,v] of Object.entries({name:'Browser Test <b>Candidate</b>',email:'browser-test@example.com',phone:'',team:'Dev',skills:'SQL, JavaScript',source:'Referral',resume_text:'Experience with SQL and JavaScript.'}))f.elements[k].value=v;f.requestSubmit();}`);
   await waitFor("!document.querySelector('dialog').open && document.querySelector('#main').innerText.includes('browser-test@example.com')");
   check('candidate form saves and refreshes directory',true);
   check('candidate content is escaped against markup injection',await evaluate("document.querySelector('#candidate-table').innerHTML.includes('&lt;b&gt;Candidate&lt;/b&gt;') && !document.querySelector('#candidate-table b')"));
@@ -78,7 +78,7 @@ try{
   check('candidate details modal displays updated profile and Edit option',await evaluate("document.querySelector('dialog').innerText.includes('10 years experience') && Boolean(document.querySelector('dialog [data-action=\"edit-candidate\"]'))"));
   await click(`document.querySelector('#close-modal')`);
   await click(`document.querySelector('[data-action="new-candidate"]')`);
-  await evaluate(`{const f=document.querySelector('#edit-form');for(const [k,v] of Object.entries({name:'Duplicate',email:'browser-test@example.com',team:'Engineering',source:'Direct',skills:''}))f.elements[k].value=v;f.requestSubmit();}`);
+  await evaluate(`{const f=document.querySelector('#edit-form');for(const [k,v] of Object.entries({name:'Duplicate',email:'browser-test@example.com',team:'Dev',source:'Direct',skills:''}))f.elements[k].value=v;f.requestSubmit();}`);
   await waitFor("document.querySelector('#form-error').textContent.includes('already exists')");
   check('duplicate error preserves form and user input',await evaluate("document.querySelector('dialog').open && document.querySelector('[name=name]').value==='Duplicate'"));
   await click(`document.querySelector('#close-modal')`);
@@ -110,7 +110,7 @@ try{
 
   await evaluate(`(async ()=>{
     for(let i=1;i<=4;i++){
-      const r=await api('requisitions','POST',{title:'Attention Role '+i,team:'Engineering',headcount:1,salary_min:90000,salary_max:120000,currency:'USD',description:'Test requisition',skills:['JavaScript']});
+      const r=await api('requisitions','POST',{title:'Attention Role '+i,team:'Dev',headcount:1,salary_min:90000,salary_max:120000,currency:'USD',description:'Test requisition',skills:['JavaScript']});
       await api('requisitions/'+r.id+'/submit','POST');
     }
   })()`);
@@ -129,7 +129,7 @@ try{
     const approved=reqs.find(r=>r.status==='open');
     if(!approved)return;
     for(let i=1;i<=6;i++){
-      const c=await api('candidates','POST',{name:'Terminal Test Candidate '+i,email:'terminal'+i+'@example.com',team:'Engineering',source:'Direct',skills:['SQL']});
+      const c=await api('candidates','POST',{name:'Terminal Test Candidate '+i,email:'terminal'+i+'@example.com',team:'Dev',source:'Direct',skills:['SQL']});
       const a=await api('applications','POST',{candidate_id:c.id,requisition_id:approved.id});
       await api('applications/'+a.id+'/stage','POST',{stage:'Rejected'});
     }
