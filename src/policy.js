@@ -2,8 +2,9 @@ export class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status; }
 }
 export const roles = ['System Admin','TA Director','TA Manager','Recruiter','Hiring Manager','Interviewer','Finance Approver','Employee/Referral','Agency'];
+export const teams = ['Dev','QA','BD','DevOps','HR','Product','Design','Operations','Sales','Other','PM','TL'];
 const grants = {
-  'System Admin': ['admin','recruit','approve_manager','approve_finance','review','analytics','refer','jobs'],
+  'System Admin': ['admin','recruit','requisition','approve_manager','approve_finance','review','analytics','refer','jobs','interview'],
   'TA Director': ['recruit','approve_manager','review','analytics','refer','jobs'],
   'TA Manager': ['recruit','approve_manager','review','analytics','refer','jobs'],
   'Recruiter': ['recruit','review','analytics','refer','jobs'],
