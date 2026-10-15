@@ -303,4 +303,228 @@ test('requisition editing updates requisition details and enforces approval stat
   hf.db.close();
 });
 
+test('System Admin permission enhancements, overrides, proxy scorecard, and team dropdowns', () => {
+  const f = fixture();
+  const call = (u, m, p, b) => service(f.db, u, m, p, b);
+
+  // 1. Policy grants in /api/me: System Admin has all 10 grants, including requisition and interview
+  const meAdmin = call(f.admin, 'GET', 'me');
+  assert.ok(meAdmin.permissions.includes('requisition'), 'Admin must have requisition grant');
+  assert.ok(meAdmin.permissions.includes('interview'), 'Admin must have interview grant');
+  assert.equal(meAdmin.permissions.length, 10);
+  assert.ok(Array.isArray(meAdmin.teams) && meAdmin.teams.includes('Dev') && meAdmin.teams.includes('TL'));
+
+  // Non-admin roles retain boundaries
+  const meInterviewer = call(f.interviewer, 'GET', 'me');
+  assert.ok(!meInterviewer.permissions.includes('requisition'));
+  assert.ok(!meInterviewer.permissions.includes('admin'));
+
+  // 2. Organization-wide referral visibility:
+  const employeeSales = user(f.db, 'Employee/Referral', 'Sales');
+  const reqSales = call(f.admin, 'POST', 'requisitions', { ...reqBody, team: 'Sales' });
+  call(f.admin, 'POST', `requisitions/${reqSales.id}/submit`);
+  call(f.admin, 'POST', `requisitions/${reqSales.id}/approve`, { emergency_override: true, override_reason: 'Testing approval manager' });
+  call(f.admin, 'POST', `requisitions/${reqSales.id}/approve`, { emergency_override: true, override_reason: 'Testing approval finance' });
+  const ref1 = call(employeeSales, 'POST', 'referrals', { name: 'Ref Candidate', email: 'ref@example.com', requisition_id: reqSales.id, note: 'Great candidate' });
+
+  const employeeEng = user(f.db, 'Employee/Referral', 'Engineering');
+  const reqEng = call(f.recruiter, 'POST', 'requisitions', reqBody);
+  call(f.recruiter, 'POST', `requisitions/${reqEng.id}/submit`);
+  call(f.manager, 'POST', `requisitions/${reqEng.id}/approve`, {});
+  call(f.finance, 'POST', `requisitions/${reqEng.id}/approve`, {});
+  const ref2 = call(employeeEng, 'POST', 'referrals', { name: 'Eng Ref', email: 'engref@example.com', requisition_id: reqEng.id, note: 'Engineer' });
+
+  // Non-admin employeeEng only sees their own referral
+  const engRefs = call(employeeEng, 'GET', 'referrals');
+  assert.equal(engRefs.length, 1);
+  assert.equal(engRefs[0].id, ref2.id);
+
+  // System Admin sees all referrals across teams
+  const allRefs = call(f.admin, 'GET', 'referrals');
+  assert.ok(allRefs.length >= 2);
+  assert.ok(allRefs.some(r => r.id === ref1.id));
+  assert.ok(allRefs.some(r => r.id === ref2.id));
+
+  // 3. Requisition editing in pending approval states
+  const pendingReq = call(f.recruiter, 'POST', 'requisitions', { ...reqBody, title: 'Pending Dev Lead' });
+  call(f.recruiter, 'POST', `requisitions/${pendingReq.id}/submit`);
+  // Non-admin cannot edit pending requisition
+  assert.throws(
+    () => call(f.recruiter, 'PUT', `requisitions/${pendingReq.id}`, { title: 'New Title' }),
+    e => e.status === 409
+  );
+  // System Admin CAN edit pending requisition
+  const adminEdited = call(f.admin, 'PUT', `requisitions/${pendingReq.id}`, { title: 'Pending Dev Lead (Admin Correction)' });
+  assert.equal(adminEdited.title, 'Pending Dev Lead (Admin Correction)');
+
+  // 4. Team reassignment with existing applications
+  const cand = call(f.recruiter, 'POST', 'candidates', candidateBody);
+  const app = call(f.recruiter, 'POST', 'applications', { candidate_id: cand.id, requisition_id: reqEng.id });
+  // Without admin_override, throws 409
+  assert.throws(
+    () => call(f.admin, 'PUT', `requisitions/${reqEng.id}`, { team: 'QA' }),
+    e => e.status === 409 && e.message.includes('existing applications')
+  );
+  // Non-admin with admin_override still throws 409
+  assert.throws(
+    () => call(f.recruiter, 'PUT', `requisitions/${reqEng.id}`, { team: 'QA', admin_override: true }),
+    e => e.status === 403 || e.status === 409
+  );
+  // System Admin with admin_override succeeds
+  const reteamed = call(f.admin, 'PUT', `requisitions/${reqEng.id}`, { team: 'QA', admin_override: true });
+  assert.equal(reteamed.team, 'QA');
+  const reteamAudit = f.db.prepare("SELECT * FROM audit WHERE event='requisition.updated' AND target=?").get(reqEng.id);
+  assert.ok(reteamAudit);
+  assert.equal(JSON.parse(reteamAudit.detail).admin_team_reassignment, true);
+
+  // 5. Emergency approval override
+  const reqOverride = call(f.admin, 'POST', 'requisitions', { ...reqBody, team: 'Dev' });
+  call(f.admin, 'POST', `requisitions/${reqOverride.id}/submit`);
+  // Requester cannot approve normally
+  assert.throws(
+    () => call(f.admin, 'POST', `requisitions/${reqOverride.id}/approve`, {}),
+    e => e.status === 403 && e.message.includes('Requester and each approver must be different people')
+  );
+  // Non-admin cannot invoke emergency override
+  assert.throws(
+    () => call(f.recruiter, 'POST', `requisitions/${reqOverride.id}/approve`, { emergency_override: true, override_reason: 'Bypass' }),
+    e => e.status === 403
+  );
+  // Emergency override without reason fails
+  assert.throws(
+    () => call(f.admin, 'POST', `requisitions/${reqOverride.id}/approve`, { emergency_override: true, override_reason: '' }),
+    e => e.status === 400 && e.message.includes('reason')
+  );
+  // Emergency override with reason succeeds
+  const approvedManager = call(f.admin, 'POST', `requisitions/${reqOverride.id}/approve`, {
+    emergency_override: true,
+    override_reason: 'Executive exception for immediate engineering hiring need'
+  });
+  assert.equal(approvedManager.status, 'pending_finance');
+  const emAudit1 = f.db.prepare("SELECT * FROM audit WHERE event='admin.emergency_approval_override' AND target=?").get(reqOverride.id);
+  assert.ok(emAudit1);
+  const detail1 = JSON.parse(emAudit1.detail);
+  assert.equal(detail1.step, 'manager');
+  assert.equal(detail1.bypassed_rule, 'requester_self_approval');
+
+  // Same admin approving finance stage (normal approval would be forbidden)
+  assert.throws(
+    () => call(f.admin, 'POST', `requisitions/${reqOverride.id}/approve`, {}),
+    e => e.status === 403
+  );
+  // Emergency override succeeds for finance stage
+  const approvedFinance = call(f.admin, 'POST', `requisitions/${reqOverride.id}/approve`, {
+    emergency_override: true,
+    override_reason: 'Finance Director on medical leave, overriding per authorized procedure'
+  });
+  assert.equal(approvedFinance.status, 'open');
+
+  // 6. Proxy scorecard submission & feedback unblinding
+  const cand2 = call(f.admin, 'POST', 'candidates', { ...candidateBody, email: 'cand2@example.com', team: 'Dev' });
+  const app2 = call(f.admin, 'POST', 'applications', { candidate_id: cand2.id, requisition_id: reqOverride.id });
+  call(f.admin, 'POST', `applications/${app2.id}/stage`, { stage: 'Screening' });
+  call(f.admin, 'POST', `applications/${app2.id}/stage`, { stage: 'Interview' });
+  const scheduledTime = new Date(Date.now() + 86400000).toISOString();
+  const assignedInterviewer = user(f.db, 'Interviewer', 'Dev');
+  const interview2 = call(f.admin, 'POST', 'interviews', {
+    application_id: app2.id,
+    interviewer_id: assignedInterviewer.id,
+    scheduled_at: scheduledTime,
+    competencies: ['JavaScript', 'SQL']
+  });
+
+  // Non-assigned non-admin user cannot submit scorecard
+  const otherInterviewer = user(f.db, 'Interviewer', 'Dev');
+  assert.throws(
+    () => call(otherInterviewer, 'POST', `interviews/${interview2.id}/scorecards`, {
+      ratings: { JavaScript: 4, SQL: 4 },
+      recommendation: 'Yes',
+      notes: 'Good'
+    }),
+    e => e.status === 403
+  );
+
+  // Admin proxy submission without reason fails
+  assert.throws(
+    () => call(f.admin, 'POST', `interviews/${interview2.id}/scorecards`, {
+      ratings: { JavaScript: 5, SQL: 4 },
+      recommendation: 'Strong yes',
+      notes: 'Submitted via proxy'
+    }),
+    e => e.status === 400 && e.message.includes('reason')
+  );
+
+  // Admin proxy submission with reason succeeds
+  const proxyResult = call(f.admin, 'POST', `interviews/${interview2.id}/scorecards`, {
+    ratings: { JavaScript: 5, SQL: 4 },
+    recommendation: 'Strong yes',
+    notes: 'Interviewer provided verbal scorecard due to network outage.',
+    proxy_reason: 'Interviewer network outage during travel'
+  });
+  assert.equal(proxyResult.proxy_for, assignedInterviewer.id);
+
+  // Verify scorecard persisted in DB with proxy_for and proxy_reason
+  const scRecord = f.db.prepare('SELECT * FROM scorecards WHERE id=?').get(proxyResult.id);
+  assert.equal(scRecord.author, f.admin.id);
+  assert.equal(scRecord.proxy_for, assignedInterviewer.id);
+  assert.equal(scRecord.proxy_reason, 'Interviewer network outage during travel');
+
+  // Verify audit log for proxy scorecard
+  const proxyAudit = f.db.prepare("SELECT * FROM audit WHERE event='admin.scorecard_proxy_submitted' AND target=?").get(proxyResult.id);
+  assert.ok(proxyAudit);
+  const proxyAuditDetail = JSON.parse(proxyAudit.detail);
+  assert.equal(proxyAuditDetail.proxy_for, assignedInterviewer.id);
+  assert.equal(proxyAuditDetail.proxy_reason, 'Interviewer network outage during travel');
+
+  // Feedback visibility: System Admin is unblinded
+  const adminFb = call(f.admin, 'GET', `interviews/${interview2.id}/scorecards`);
+  assert.equal(adminFb.blinded, false);
+  assert.equal(adminFb.scorecards.length, 1);
+  assert.equal(adminFb.scorecards[0].proxy_for, assignedInterviewer.id);
+
+  // 7. Cross-team candidate application
+  const candQA = call(f.admin, 'POST', 'candidates', { ...candidateBody, email: 'qa.cand@example.com', team: 'QA' });
+  const recruiterQA = user(f.db, 'Recruiter', 'QA');
+  assert.throws(
+    () => call(recruiterQA, 'POST', 'applications', { candidate_id: candQA.id, requisition_id: reqOverride.id }),
+    e => e.status === 403 || e.status === 409
+  );
+  const crossApp = call(f.admin, 'POST', 'applications', { candidate_id: candQA.id, requisition_id: reqOverride.id });
+  assert.ok(crossApp.id);
+  const crossAudit = f.db.prepare("SELECT * FROM audit WHERE event='application.created' AND target=?").get(crossApp.id);
+  assert.ok(crossAudit);
+  assert.equal(JSON.parse(crossAudit.detail).cross_team_override, true);
+
+  // 8. Pipeline admin override
+  // Move candidate2 to Offer, then to Hired
+  call(f.admin, 'POST', `applications/${app2.id}/stage`, { stage: 'Offer' });
+  call(f.admin, 'POST', `applications/${app2.id}/stage`, { stage: 'Hired' });
+  // Candidate2 is now in terminal stage Hired
+  // Non-admin cannot move terminal candidate
+  const recruiterDev = user(f.db, 'Recruiter', 'Dev');
+  assert.throws(
+    () => call(recruiterDev, 'POST', `applications/${app2.id}/stage`, { stage: 'Offer' }),
+    e => e.status === 409 && e.message.includes('Terminal')
+  );
+  // Admin without override flag cannot move terminal candidate
+  assert.throws(
+    () => call(f.admin, 'POST', `applications/${app2.id}/stage`, { stage: 'Offer' }),
+    e => e.status === 409 && e.message.includes('override')
+  );
+  // Admin with admin_override can move terminal candidate
+  const stageOverridden = call(f.admin, 'POST', `applications/${app2.id}/stage`, {
+    stage: 'Offer',
+    admin_override: true,
+    override_reason: 'Administrative correction after candidate rescinded acceptance'
+  });
+  assert.equal(stageOverridden.stage, 'Offer');
+  const stageAudit = f.db.prepare("SELECT * FROM audit WHERE event='admin.application_stage_override' AND target=?").get(app2.id);
+  assert.ok(stageAudit);
+  const stageDetail = JSON.parse(stageAudit.detail);
+  assert.equal(stageDetail.admin_override, true);
+  assert.equal(stageDetail.bypassed_rule, 'terminal_stage, non_sequential_transition');
+
+  f.db.close();
+});
+
 

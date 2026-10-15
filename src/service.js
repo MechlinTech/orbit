@@ -1,5 +1,5 @@
 import { audit, id, now, transaction } from './db.js';
-import { HttpError, roles, requirePermission as permit, requireTeam, inTeam, can, text, email, phone as validatePhone, currency as validateCurrency, list, validateSkills, integer } from './policy.js';
+import { HttpError, roles, teams, requirePermission as permit, requireTeam, inTeam, can, text, email, phone as validatePhone, currency as validateCurrency, list, validateSkills, integer } from './policy.js';
 import { getAppearance, setAppearance } from './appearance.js';
 
 const get = (db, table, key) => {
@@ -28,7 +28,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
   const parts = path.split('/').filter(Boolean), key = parts[1], action = parts[2];
   if (path === 'appearance' && method === 'GET') return getAppearance(db);
   if (path === 'admin/appearance' && method === 'PUT') return setAppearance(db,user,body);
-  if (method === 'GET' && path === 'me') return { user:publicUser(user), csrf:user.csrf, roles, permissions:['admin','recruit','requisition','approve_manager','approve_finance','review','analytics','refer','jobs','interview'].filter(p => can(user,p)) };
+  if (method === 'GET' && path === 'me') return { user:publicUser(user), csrf:user.csrf, roles, teams, permissions:['admin','recruit','requisition','approve_manager','approve_finance','review','analytics','refer','jobs','interview'].filter(p => can(user,p)) };
   if (parts[0] === 'admin') {
     permit(user,'admin');
     if (method === 'GET' && key === 'users') return db.prepare('SELECT * FROM users ORDER BY created_at DESC').all().map(publicUser);
@@ -114,7 +114,8 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       permit(user,'recruit','requisition');
       const req = get(db,'requisitions',key);
       requireTeam(user,req.team);
-      if (!['draft','open'].includes(req.status)) {
+      const isAdmin = can(user, 'admin');
+      if (!isAdmin && !['draft','open'].includes(req.status)) {
         if (['pending_manager','pending_finance'].includes(req.status)) {
           throw new HttpError(409,'Cannot edit requisition awaiting approval.');
         }
@@ -122,8 +123,11 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       }
       const team = text(body.team ?? req.team,'Team',100);
       requireTeam(user,team);
-      if (team !== req.team && db.prepare('SELECT id FROM applications WHERE requisition_id=?').get(key)) {
-        throw new HttpError(409,'Cannot change team of a requisition with existing applications.');
+      const hasApps = Boolean(db.prepare('SELECT id FROM applications WHERE requisition_id=?').get(key));
+      if (team !== req.team && hasApps) {
+        if (!isAdmin || (!body.admin_override && !body.override)) {
+          throw new HttpError(409,'Cannot change team of a requisition with existing applications.');
+        }
       }
       const title = text(body.title ?? req.title,'Title',200);
       const headcount = integer(body.headcount !== undefined ? Number(body.headcount) : req.headcount,'Headcount',1,1000);
@@ -142,7 +146,16 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
         db.prepare('UPDATE requisitions SET title=?, team=?, headcount=?, salary_min=?, salary_max=?, currency=?, description=?, skills=? WHERE id=?').run(
           title,team,headcount,min,max,currency,description,JSON.stringify(skills),key
         );
-        audit(db,user.id,'requisition.updated',key,{title,team,headcount});
+        const auditDetail = {title,team,headcount};
+        if (isAdmin && ['pending_manager','pending_finance'].includes(req.status)) {
+          auditDetail.admin_pending_edit = true;
+          auditDetail.previous_status = req.status;
+        }
+        if (isAdmin && team !== req.team && hasApps) {
+          auditDetail.admin_team_reassignment = true;
+          auditDetail.previous_team = req.team;
+        }
+        audit(db,user.id,'requisition.updated',key,auditDetail);
         const updated = get(db,'requisitions',key);
         return {...updated,skills:JSON.parse(updated.skills)};
       });
@@ -156,12 +169,64 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
         const step = req.status === 'pending_manager' ? 'manager' : req.status === 'pending_finance' ? 'finance' : null;
         if (!step) throw new HttpError(409,'Requisition is not awaiting approval.');
         permit(user,`approve_${step}`);
-        if (req.created_by === user.id || db.prepare('SELECT id FROM approvals WHERE requisition_id=? AND actor=?').get(key,user.id)) throw new HttpError(403,'Requester and each approver must be different people.');
+        const isCreator = req.created_by === user.id;
+        const priorApproval = db.prepare('SELECT id FROM approvals WHERE requisition_id=? AND actor=?').get(key,user.id);
+        const separationViolated = isCreator || Boolean(priorApproval);
+        const isEmergency = Boolean(body.emergency_override || body.admin_override || body.override);
+
+        let overrideReason = '';
+        let bypassedRule = '';
+
+        if (separationViolated) {
+          if (!isEmergency) {
+            throw new HttpError(403,'Requester and each approver must be different people.');
+          }
+          if (!can(user, 'admin')) {
+            throw new HttpError(403,'Only a System Admin can perform an emergency approval override.');
+          }
+          if (body.override_reason !== undefined) {
+            overrideReason = text(body.override_reason, 'Emergency override reason', 2000, false);
+            if (!overrideReason || !overrideReason.trim()) {
+              throw new HttpError(400, 'A meaningful reason is required for an emergency approval override.');
+            }
+          } else {
+            overrideReason = text(body.reason || body.note || 'System Admin direct approval override', 'Emergency override reason', 2000, true) || 'System Admin direct approval override';
+          }
+          bypassedRule = isCreator && priorApproval ? 'requester_and_prior_approver' : isCreator ? 'requester_self_approval' : 'same_approver_both_steps';
+        } else if (isEmergency) {
+          if (!can(user, 'admin')) {
+            throw new HttpError(403,'Only a System Admin can perform an emergency approval override.');
+          }
+          if (body.override_reason !== undefined) {
+            overrideReason = text(body.override_reason, 'Emergency override reason', 2000, false);
+            if (!overrideReason || !overrideReason.trim()) {
+              throw new HttpError(400, 'A meaningful reason is required for an emergency approval override.');
+            }
+          } else {
+            overrideReason = text(body.reason || body.note || 'System Admin direct approval override', 'Emergency override reason', 2000, true) || 'System Admin direct approval override';
+          }
+          bypassedRule = 'explicit_administrative_override';
+        }
+
         status = action === 'reject' ? 'rejected' : step === 'manager' ? 'pending_finance' : 'open';
         const note = text(body.note ?? '', 'Approval note',2000,true);
         return transaction(db, () => {
           db.prepare('INSERT INTO approvals VALUES(?,?,?,?,?,?,?)').run(id(),key,user.id,step,action,note,now());
-          db.prepare('UPDATE requisitions SET status=? WHERE id=?').run(status,key); audit(db,user.id,`requisition.${action}`,key,{step,note}); return get(db,'requisitions',key);
+          db.prepare('UPDATE requisitions SET status=? WHERE id=?').run(status,key);
+          audit(db,user.id,`requisition.${action}`,key,{step,note});
+          if (isEmergency) {
+            audit(db,user.id,'admin.emergency_approval_override',key,{
+              step,
+              action,
+              bypassed_rule: bypassedRule,
+              override_reason: overrideReason,
+              previous_status: req.status,
+              new_status: status,
+              requisition_title: req.title,
+              created_by: req.created_by
+            });
+          }
+          return get(db,'requisitions',key);
         });
       } else throw new HttpError(404,'Unknown requisition action.');
       return transaction(db, () => { db.prepare('UPDATE requisitions SET status=? WHERE id=?').run(status,key); audit(db,user.id,`requisition.${action}`,key); return get(db,'requisitions',key); });
@@ -229,21 +294,68 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
     if (method === 'POST' && !key) {
       permit(user,'recruit'); const candidate = get(db,'candidates',body.candidate_id), req = get(db,'requisitions',body.requisition_id);
       requireTeam(user,candidate.team); requireTeam(user,req.team);
-      if (candidate.team !== req.team) throw new HttpError(409,'Candidate and requisition must belong to the same team.');
+      const isAdmin = can(user, 'admin');
+      if (!isAdmin && candidate.team !== req.team) throw new HttpError(409,'Candidate and requisition must belong to the same team.');
       if (req.status !== 'open') throw new HttpError(409,'Requisition must be approved and open.');
-      const aid = id(); return transaction(db, () => { db.prepare('INSERT INTO applications VALUES(?,?,?,?,?)').run(aid,candidate.id,req.id,'Applied',now()); audit(db,user.id,'application.created',aid); return get(db,'applications',aid); });
+      const aid = id();
+      return transaction(db, () => {
+        db.prepare('INSERT INTO applications VALUES(?,?,?,?,?)').run(aid,candidate.id,req.id,'Applied',now());
+        const auditDetail = { candidate_id: candidate.id, requisition_id: req.id };
+        if (candidate.team !== req.team) {
+          auditDetail.cross_team_override = true;
+          auditDetail.candidate_team = candidate.team;
+          auditDetail.requisition_team = req.team;
+        }
+        audit(db,user.id,'application.created',aid,auditDetail);
+        return get(db,'applications',aid);
+      });
     }
     if (method === 'GET' && key && action === 'match') { const {app,req} = appContext(db,user,key); return matchSkills(get(db,'candidates',app.candidate_id),req); }
     if (method === 'POST' && action === 'stage') {
       permit(user,'recruit'); const {app,req} = appContext(db,user,key), stages = pipeline(db);
       if (!stages.includes(body.stage)) throw new HttpError(400,'Unknown pipeline stage.');
-      if (['Hired','Rejected'].includes(app.stage)) throw new HttpError(409,'Terminal applications cannot be moved.');
-      if (body.stage !== 'Rejected' && stages.indexOf(body.stage) !== stages.indexOf(app.stage)+1) throw new HttpError(409,'Move to the next stage or reject the application.');
-      if (body.stage === 'Hired' && db.prepare("SELECT count(*) n FROM applications WHERE requisition_id=? AND stage='Hired'").get(req.id).n >= req.headcount) throw new HttpError(409,'Approved headcount is filled.');
+      const isAdmin = can(user, 'admin');
+      const isTerminal = ['Hired','Rejected'].includes(app.stage);
+      const isSequential = body.stage === 'Rejected' || stages.indexOf(body.stage) === stages.indexOf(app.stage)+1;
+      const hiredCount = db.prepare("SELECT count(*) n FROM applications WHERE requisition_id=? AND stage='Hired'").get(req.id).n;
+      const isOverHeadcount = body.stage === 'Hired' && hiredCount >= req.headcount;
+
+      const hasRuleViolation = isTerminal || !isSequential || isOverHeadcount;
+      let isOverride = false;
+      let overrideReason = '';
+      let bypassedRule = '';
+
+      if (hasRuleViolation) {
+        if (!isAdmin) {
+          if (isTerminal) throw new HttpError(409,'Terminal applications cannot be moved.');
+          if (!isSequential) throw new HttpError(409,'Move to the next stage or reject the application.');
+          if (isOverHeadcount) throw new HttpError(409,'Approved headcount is filled.');
+        }
+        if (!body.admin_override && !body.override && !body.override_reason && !body.reason) {
+          if (isTerminal) throw new HttpError(409,'Terminal applications cannot be moved without administrative override.');
+          if (!isSequential) throw new HttpError(409,'Non-sequential stage transition requires administrative override.');
+          if (isOverHeadcount) throw new HttpError(409,'Hiring beyond approved headcount requires administrative override.');
+        }
+        isOverride = true;
+        overrideReason = text(body.override_reason || body.reason || 'Administrative pipeline correction', 'Override reason', 2000, true);
+        bypassedRule = [
+          isTerminal ? 'terminal_stage' : '',
+          !isSequential ? 'non_sequential_transition' : '',
+          isOverHeadcount ? 'headcount_limit' : ''
+        ].filter(Boolean).join(', ');
+      }
+
       return transaction(db, () => {
         db.prepare('UPDATE applications SET stage=? WHERE id=?').run(body.stage,key);
         db.prepare('INSERT INTO stage_events VALUES(?,?,?,?,?,?)').run(id(),key,app.stage,body.stage,user.id,now());
-        audit(db,user.id,'application.stage_changed',key,{from:app.stage,to:body.stage}); return get(db,'applications',key);
+        const auditDetail = {from:app.stage,to:body.stage};
+        if (isOverride) {
+          auditDetail.admin_override = true;
+          auditDetail.bypassed_rule = bypassedRule;
+          auditDetail.override_reason = overrideReason;
+        }
+        audit(db,user.id,isOverride ? 'admin.application_stage_override' : 'application.stage_changed',key,auditDetail);
+        return get(db,'applications',key);
       });
     }
   }
@@ -305,19 +417,56 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
     if (key && action === 'scorecards') {
       const interview = get(db,'interviews',key); appContext(db,user,interview.application_id,true);
       if (method === 'POST') {
-        if (interview.interviewer_id !== user.id) throw new HttpError(403,'Only the assigned interviewer can submit this scorecard.');
+        const isAdmin = can(user, 'admin');
+        const isAssigned = interview.interviewer_id === user.id;
+        if (!isAssigned && !isAdmin) {
+          throw new HttpError(403,'Only the assigned interviewer can submit this scorecard.');
+        }
+        let isProxy = false;
+        let proxyReason = null;
+        if (!isAssigned && isAdmin) {
+          isProxy = true;
+          proxyReason = text(body.proxy_reason || body.reason || '', 'Proxy submission reason', 2000, false);
+          if (!proxyReason || !proxyReason.trim()) {
+            throw new HttpError(400, 'A meaningful reason is required for proxy scorecard submission.');
+          }
+        }
         const comps = JSON.parse(interview.competencies);
         if (!body.ratings || typeof body.ratings !== 'object' || Array.isArray(body.ratings) || Object.keys(body.ratings).length !== comps.length) throw new HttpError(400,'Rate every planned competency.');
         for (const comp of comps) integer(body.ratings[comp],comp,1,5);
         if (!['Strong yes','Yes','No','Strong no'].includes(body.recommendation)) throw new HttpError(400,'Choose a recommendation.');
         const notes = text(body.notes,'Evidence notes',10000), sid = id();
-        return transaction(db, () => { db.prepare('INSERT INTO scorecards VALUES(?,?,?,?,?,?,?)').run(sid,key,user.id,JSON.stringify(body.ratings),body.recommendation,notes,now()); db.prepare("UPDATE interviews SET status='completed' WHERE id=?").run(key); audit(db,user.id,'scorecard.submitted',sid); return {id:sid}; });
+        const proxyFor = isProxy ? interview.interviewer_id : null;
+        return transaction(db, () => {
+          db.prepare('INSERT INTO scorecards(id,interview_id,author,ratings,recommendation,notes,submitted_at,proxy_for,proxy_reason) VALUES(?,?,?,?,?,?,?,?,?)').run(
+            sid,key,user.id,JSON.stringify(body.ratings),body.recommendation,notes,now(),proxyFor,proxyReason
+          );
+          db.prepare("UPDATE interviews SET status='completed' WHERE id=?").run(key);
+          const auditDetail = {
+            interview_id: key,
+            application_id: interview.application_id,
+            recommendation: body.recommendation
+          };
+          if (isProxy) {
+            auditDetail.proxy_for = interview.interviewer_id;
+            auditDetail.proxy_reason = proxyReason;
+            auditDetail.submitting_admin = user.id;
+          }
+          audit(db,user.id,isProxy ? 'admin.scorecard_proxy_submitted' : 'scorecard.submitted',sid,auditDetail);
+          return {id:sid, proxy_for: proxyFor};
+        });
       }
       if (method === 'GET') {
-        // Any assigned reviewer remains blinded until all their feedback for this application is submitted.
+        const isAdmin = can(user, 'admin');
+        // Non-admin assigned reviewers remain blinded until all their feedback for this application is submitted.
         const assigned = db.prepare('SELECT i.id,s.id submitted FROM interviews i LEFT JOIN scorecards s ON s.interview_id=i.id WHERE i.application_id=? AND i.interviewer_id=?').all(interview.application_id,user.id);
-        const blinded = assigned.some(i => !i.submitted);
-        const rows = db.prepare('SELECT s.* FROM scorecards s JOIN interviews i ON i.id=s.interview_id WHERE i.application_id=?').all(interview.application_id);
+        const blinded = !isAdmin && assigned.some(i => !i.submitted);
+        const rows = db.prepare(`SELECT s.*, u.name author_name, pi.name proxy_for_name 
+          FROM scorecards s 
+          JOIN interviews i ON i.id=s.interview_id 
+          LEFT JOIN users u ON u.id=s.author 
+          LEFT JOIN users pi ON pi.id=s.proxy_for 
+          WHERE i.application_id=?`).all(interview.application_id);
         return {blinded,scorecards: rows.filter(s => blinded ? s.author === user.id : true)};
       }
     }
@@ -327,7 +476,13 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
   }
   if (path === 'referrals') {
     permit(user,'refer');
-    if (method === 'GET') return db.prepare('SELECT * FROM referrals ORDER BY at DESC').all().filter(r => r.created_by === user.id);
+    if (method === 'GET') {
+      const all = db.prepare(`SELECT r.*, u.name referrer_name, u.email referrer_email 
+        FROM referrals r 
+        LEFT JOIN users u ON u.id=r.created_by 
+        ORDER BY r.at DESC`).all();
+      return can(user, 'admin') ? all : all.filter(r => r.created_by === user.id);
+    }
     if (method === 'POST') {
       const req = get(db,'requisitions',body.requisition_id); requireTeam(user,req.team);
       if (req.status !== 'open') throw new HttpError(409,'Choose an open requisition.');
