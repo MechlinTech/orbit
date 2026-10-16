@@ -316,7 +316,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       if (!stages.includes(body.stage)) throw new HttpError(400,'Unknown pipeline stage.');
       const isAdmin = can(user, 'admin');
       const isTerminal = ['Hired','Rejected'].includes(app.stage);
-      const isSequential = body.stage === 'Rejected' || stages.indexOf(body.stage) === stages.indexOf(app.stage)+1;
+      const isSequential = body.stage === 'Rejected' || stages.indexOf(body.stage) === stages.indexOf(app.stage)+1 || (!isTerminal && stages.indexOf(body.stage) === stages.indexOf(app.stage)-1);
       const hiredCount = db.prepare("SELECT count(*) n FROM applications WHERE requisition_id=? AND stage='Hired'").get(req.id).n;
       const isOverHeadcount = body.stage === 'Hired' && hiredCount >= req.headcount;
 

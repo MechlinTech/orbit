@@ -155,12 +155,15 @@ const closeModal = () => {
   $('#modal').close();
 };
 function modal(title,html,onSubmit) {
-  $('#modal-body').innerHTML=`<h2>${escape(title)}</h2>${onSubmit?`<form id="edit-form">${html}<p class="error" id="form-error" role="alert"></p><button type="submit">Save</button></form>`:html}`;
+  $('#modal-body').innerHTML=`<h2 tabindex="-1">${escape(title)}</h2>${onSubmit?`<form id="edit-form">${html}<p class="error" id="form-error" role="alert"></p><button type="submit">Save</button></form>`:html}`;
   if(onSubmit)$('#edit-form').onsubmit=async event=>{event.preventDefault();const submit=event.target.querySelector('[type=submit]');submit.disabled=true;try{await onSubmit(Object.fromEntries(new FormData(event.target)));closeModal();notice('Saved.');await render();}catch(e){$('#form-error').textContent=e.message;}finally{submit.disabled=false;}};
   $('#modal').showModal();
+  const firstInput = $('#modal input:not([type=hidden]), #modal select, #modal textarea');
+  if(firstInput) firstInput.focus(); else $('#modal-body h2')?.focus();
   if($('#notice')?.textContent)$('#modal').appendChild($('#notice'));
 }
 $('#close-modal').onclick=closeModal;
+$('#modal').addEventListener('click',e=>{const r=$('#modal').getBoundingClientRect();if(e.clientY<r.top||e.clientY>r.bottom||e.clientX<r.left||e.clientX>r.right)closeModal();});
 $('#modal').addEventListener('close',()=>{const n=$('#notice');if(n&&n.parentElement!==document.body)document.body.appendChild(n);});
 function login() {
   const status=new URLSearchParams(location.search).get('access');
@@ -174,6 +177,38 @@ function shell() {
   $('#app').innerHTML=`<div class="layout"><aside class="sidebar"><div class="sidebar-brand">${brand()}</div><nav aria-label="Main navigation"><p class="nav-label">WORKSPACE</p>${nav.map(n=>`${n==='Administration'?'<p class="nav-label admin-label">MANAGE</p>':''}<button data-nav="${n}" class="${current===n?'active':''}" ${current===n?'aria-current="page"':''}>${icon(n)}<span>${n}</span></button>`).join('')}</nav><div class="profile"><span class="avatar">${initials(me.name)}</span><div><strong>${escape(me.name)}</strong><div class="muted">${escape(me.role)}</div></div></div><div class="sidebar-caption">Mechlin Orbit · Internal workspace</div></aside><div class="workspace"><header class="topbar"><div class="breadcrumb">Orbit <span>/</span> <strong>${escape(current)}</strong></div><div class="topbar-right"><span class="workspace-status">${icon('Administration')} Private workspace</span><button class="secondary" data-action="logout">Sign out</button><span class="avatar small" aria-label="${escape(me.name)}">${initials(me.name)}</span></div></header><main class="content" id="main" tabindex="-1"><p class="muted">Loading your workspace…</p></main><footer class="workspace-footer">Thoughtful hiring, together. <span>Orbit by Mechlin</span></footer></div></div>`;
   document.querySelectorAll('[data-nav]').forEach(b=>b.onclick=()=>{if(current!==b.dataset.nav){reqPage=1;pageState[b.dataset.nav]=1;if(b.dataset.nav==='Candidates')candidateQuery='';}current=b.dataset.nav;render();});
 }
+function syncPipelineScroll(initialLeft = 0) {
+  const board = $('#pipeline-board') || document.querySelector('.board');
+  if (!board) return;
+  const bottomScroll = $('#pipeline-bottom-scroll');
+  if (initialLeft > 0) board.scrollLeft = initialLeft;
+  const update = () => {
+    const sw = board.scrollWidth, cw = board.clientWidth, scrollable = sw > cw + 1;
+    const track = bottomScroll ? bottomScroll.querySelector('.pipeline-scroll-track') : null;
+    if (track) track.style.width = sw + 'px';
+    if (bottomScroll) {
+      bottomScroll.style.display = scrollable ? 'block' : 'none';
+      bottomScroll.scrollLeft = board.scrollLeft;
+    }
+  };
+  update();
+  requestAnimationFrame(update);
+  setTimeout(update, 60);
+  let lock = false;
+  const sync = (src, target) => {
+    if (lock) return;
+    lock = true;
+    try {
+      if (target) target.scrollLeft = src.scrollLeft;
+    } finally {
+      lock = false;
+    }
+  };
+  board.onscroll = () => sync(board, bottomScroll);
+  if (bottomScroll) bottomScroll.onscroll = () => sync(bottomScroll, board);
+}
+window.addEventListener('resize', () => { if (current === 'Pipeline') syncPipelineScroll(); }, { passive: true });
+
 async function render() {
   const version=++renderVersion;let html='';
   const heading=(subtitle,action='')=>`<div class="heading"><div><p class="eyebrow">${current==='Overview'?`YOUR TEAM. YOUR NEXT CHAPTER.`:allows('admin')&&['Settings','Administration','Audit log','Pipeline settings'].includes(current)?'WORKSPACE MANAGEMENT':'TALENT ACQUISITION'}</p><h1>${current}</h1><p class="muted">${subtitle}</p></div>${action}</div>`;
@@ -210,7 +245,12 @@ async function render() {
       });
     }
     if(current==='Pipeline') {
-      const [apps,stages]=await Promise.all([api('applications'),api('pipeline')]);html=heading('Move each application through a consistent hiring process.',allows('recruit')?button('+ Add application','new-application'):'')+`<div class="board">${stages.map((stage,index)=>`<section class="column${['Hired','Rejected'].includes(stage)?' column-terminal':''}" data-stage="${escape(stage)}"><h2>${escape(stage)} <span>${apps.filter(a=>a.stage===stage).length}</span></h2><div class="column-content">${apps.filter(a=>a.stage===stage).map(a=>`<article class="card"><h3>${escape(a.name)}</h3><p class="muted">${escape(a.title)}</p><div class="actions">${button('Skill match','match',a.id,'class="secondary"')}${allows('recruit')&&!['Hired','Rejected'].includes(stage)?button(`Move to ${stages[index+1]}`,'move',a.id,`data-stage="${escape(stages[index+1])}"`)+button('Reject','reject-app',a.id,'class="secondary"'):''}</div></article>`).join('')||'<p class="muted">No applications</p>'}</div></section>`).join('')}</div>`;
+      const [apps,stages]=await Promise.all([api('applications'),api('pipeline')]);
+      html=heading('Move each application through a consistent hiring process.',allows('recruit')?button('+ Add application','new-application'):'')+
+      `<div class="pipeline-wrapper">`+
+        `<div class="board" id="pipeline-board">${stages.map((stage,index)=>`<section class="column${['Hired','Rejected'].includes(stage)?' column-terminal':''}" data-stage="${escape(stage)}"><h2>${escape(stage)} <span>${apps.filter(a=>a.stage===stage).length}</span></h2><div class="column-content">${apps.filter(a=>a.stage===stage).map(a=>`<article class="card"><h3>${escape(a.name)}</h3><p class="muted card-role" title="${escape(a.title)}">${escape(a.title)}</p><div class="actions">${button('Skill match','match',a.id,'class="secondary"')}${allows('recruit')&&!['Hired','Rejected'].includes(stage)?(index>0?button(`Back to ${stages[index-1]}`,'move',a.id,`data-stage="${escape(stages[index-1])}" class="secondary"`):'')+button(`Move to ${stages[index+1]}`,'move',a.id,`data-stage="${escape(stages[index+1])}"`)+button('Reject','reject-app',a.id,'class="secondary"'):''}</div></article>`).join('')||'<p class="muted column-empty">No applications</p>'}</div></section>`).join('')}</div>`+
+        `<div class="pipeline-scroll-bar pipeline-scroll-bottom" id="pipeline-bottom-scroll" aria-label="Horizontal scroll sticky at bottom of screen"><div class="pipeline-scroll-track"></div></div>`+
+      `</div>`;
     }
     if(current==='Interviews') {
       const interviews=await api('interviews');
@@ -245,7 +285,13 @@ async function render() {
     }
     if(current==='Pipeline settings') {const stages=await api('pipeline');html=heading('Define the sequence your hiring teams follow.')+`<section class="panel"><p>${stages.map(badge).join(' → ')}</p>${button('Edit stages','edit-pipeline')}<p class="muted">Applied must come first. Hired and Rejected are terminal stages. A stage in use cannot be removed.</p></section>`;}
     if(current==='Integrations') {const adapters=await api('integrations');html=heading('Connect external services as later phases are enabled.')+`<section class="panel">${table(['Capability','Availability','Delivery phase'],adapters.map(a=>`<tr><td><strong>${escape(a.name)}</strong></td><td>${badge(a.status)}</td><td>Phase ${a.phase}</td></tr>`))}</section><p class="muted">No messages, calendar events or candidate records are sent to external providers by these unconfigured interfaces.</p>`;}
-    if(version===renderVersion && me){$('#main').innerHTML=html;document.title=`${current} · Orbit by Mechlin`;syncNavState();}
+    if(version===renderVersion && me){
+      const prevBoardLeft = (current === 'Pipeline' && $('#pipeline-board')) ? $('#pipeline-board').scrollLeft : 0;
+      $('#main').innerHTML=html;
+      document.title=`${current} · Orbit by Mechlin`;
+      syncNavState();
+      if(current === 'Pipeline') syncPipelineScroll(prevBoardLeft);
+    }
   }catch(e){if(me)$('#main').innerHTML=`<section class="panel"><h1>Could not load this view</h1><p class="error">${escape(e.message)}</p>${button('Try again','refresh')}</section>`;}
 }
 function reqTable(reqs) {return table(['Position','Team','Headcount','Status','Actions'],reqs.map(r=>`<tr><td><strong>${escape(r.title)}</strong><small>${escape(r.skills.join(', '))}</small></td><td>${escape(r.team)}</td><td>${r.headcount}</td><td>${badge(r.status)}</td><td><div class="actions">${button('Details','req-details',r.id,'class="secondary"')}${['draft','open'].includes(r.status)&&(allows('recruit')||allows('requisition'))?button('Edit','edit-req',r.id,'class="secondary"'):''}${r.status==='draft'&&(allows('recruit')||allows('requisition'))?button('Submit','submit-req',r.id):''}${(r.status==='pending_manager'&&allows('approve_manager')||r.status==='pending_finance'&&allows('approve_finance'))?button('Review','approve-req',r.id):''}</div></td></tr>`),'requisitions-table');}
