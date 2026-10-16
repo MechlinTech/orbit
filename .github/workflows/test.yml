@@ -11,4 +11,5 @@ jobs:
         with:
           node-version: 22.17.1
       - run: npm run check
+      - run: npm run scan:security
       - run: npm test
