@@ -527,4 +527,44 @@ test('System Admin permission enhancements, overrides, proxy scorecard, and team
   f.db.close();
 });
 
+test('pipeline allows sequential backward transitions for mistake correction while preventing skip-back', () => {
+  const f = hiringFixture();
+  assert.equal(f.app.stage, 'Applied');
+
+  // Move forward to Screening
+  const screening = call(f, f.recruiter, 'POST', `applications/${f.app.id}/stage`, { stage: 'Screening' });
+  assert.equal(screening.stage, 'Screening');
+
+  // Send back to Applied (mistake correction)
+  const backToApplied = call(f, f.recruiter, 'POST', `applications/${f.app.id}/stage`, { stage: 'Applied' });
+  assert.equal(backToApplied.stage, 'Applied');
+
+  // Move forward again: Applied -> Screening -> Interview
+  call(f, f.recruiter, 'POST', `applications/${f.app.id}/stage`, { stage: 'Screening' });
+  const interview = call(f, f.recruiter, 'POST', `applications/${f.app.id}/stage`, { stage: 'Interview' });
+  assert.equal(interview.stage, 'Interview');
+
+  // Cannot skip backward: from Interview directly to Applied throws 409
+  assert.throws(
+    () => call(f, f.recruiter, 'POST', `applications/${f.app.id}/stage`, { stage: 'Applied' }),
+    e => e.status === 409
+  );
+
+  // But sequential backward step to Screening succeeds
+  const backToScreening = call(f, f.recruiter, 'POST', `applications/${f.app.id}/stage`, { stage: 'Screening' });
+  assert.equal(backToScreening.stage, 'Screening');
+
+  // Verify stage events audit
+  const events = f.db.prepare('SELECT from_stage, to_stage FROM stage_events WHERE application_id=? ORDER BY at ASC').all(f.app.id);
+  assert.deepEqual(events.map(e => [e.from_stage, e.to_stage]), [
+    ['Applied', 'Screening'],
+    ['Screening', 'Applied'],
+    ['Applied', 'Screening'],
+    ['Screening', 'Interview'],
+    ['Interview', 'Screening']
+  ]);
+
+  f.db.close();
+});
+
 
