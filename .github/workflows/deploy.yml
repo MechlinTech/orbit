@@ -1,27 +1,44 @@
+
 name: Build and Deploy
 
 on:
   push:
     branches:
       - main
+      - production
 
   workflow_dispatch:
 
+# Keep deployments independent.
 concurrency:
-  group: mechlin-orbit-main
-  cancel-in-progress: true
+  group: mechlin-orbit-${{ github.ref == 'refs/heads/production' && 'production' || 'development' }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
-
-env:
-  IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/mechlin-orbit
-  IMAGE_TAG: dev
 
 jobs:
   deploy:
     name: Build and Deploy
     runs-on: [self-hosted, windows]
+
+    # Only main selects the development GitHub Environment.
+    # Production uses repository-level Actions secrets.
+    environment:
+      name: ${{ github.ref == 'refs/heads/production' || (github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main') && 'production' || 'development' }}
+
+    env:
+      DEPLOY_ENV: ${{ github.ref == 'refs/heads/production' || (github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main') && 'production' || 'development' }}
+
+      IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/mechlin-orbit
+
+      IMAGE_TAG: ${{ github.ref == 'refs/heads/production' || (github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main') && 'production' || 'development' }}
+
+      DOCKER_TARGET: ${{ github.ref == 'refs/heads/production' || (github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main') && 'production' || 'development' }}
+
+      COMPOSE_FILE: ${{ github.ref == 'refs/heads/production' || (github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main') && 'docker-compose.prod.yaml' || 'docker-compose.dev.yml' }}
+
+      COMPOSE_PROJECT_NAME: ${{ github.ref == 'refs/heads/production' || (github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main') && 'mechlin-orbit-prod' || 'mechlin-orbit-dev' }}
 
     steps:
       - name: Checkout
@@ -49,33 +66,48 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build Docker image
+        shell: powershell
         run: |
           docker build `
-            --target development `
+            --target "${{ env.DOCKER_TARGET }}" `
             --tag "${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}" `
             --tag "${{ env.IMAGE_NAME }}:${{ github.sha }}" `
             .
 
       - name: Push Docker image
+        shell: powershell
         run: |
           docker push "${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
           docker push "${{ env.IMAGE_NAME }}:${{ github.sha }}"
 
       - name: Create deployment environment
         shell: powershell
+        env:
+          APP_ORIGIN: ${{ secrets.APP_ORIGIN }}
+          ENTRA_TENANT_ID: ${{ secrets.ENTRA_TENANT_ID }}
+          ENTRA_CLIENT_ID: ${{ secrets.ENTRA_CLIENT_ID }}
+          ENTRA_CLIENT_SECRET: ${{ secrets.ENTRA_CLIENT_SECRET }}
+          ALLOWED_DOMAINS: ${{ secrets.ALLOWED_DOMAINS }}
+          DATABASE_PATH: ${{ secrets.DATABASE_PATH }}
+          SESSION_SECONDS: ${{ secrets.SESSION_SECONDS }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
         run: |
-          @"
-          NODE_ENV=development
-          HOST=0.0.0.0
-          APP_ORIGIN=${{ secrets.APP_ORIGIN }}
-          ENTRA_TENANT_ID=${{ secrets.ENTRA_TENANT_ID }}
-          ENTRA_CLIENT_ID=${{ secrets.ENTRA_CLIENT_ID }}
-          ENTRA_CLIENT_SECRET=${{ secrets.ENTRA_CLIENT_SECRET }}
-          ALLOWED_DOMAINS=${{ secrets.ALLOWED_DOMAINS }}
-          DATABASE_PATH=${{ secrets.DATABASE_PATH }}
-          SESSION_SECONDS=${{ secrets.SESSION_SECONDS }}
-          DOCKERHUB_USERNAME=${{ secrets.DOCKERHUB_USERNAME }}
-          "@ | Set-Content -Path ".env.dev" -Encoding UTF8
+          $lines = @(
+            "NODE_ENV=$env:DEPLOY_ENV"
+            "HOST=0.0.0.0"
+            "APP_ORIGIN=$env:APP_ORIGIN"
+            "ENTRA_TENANT_ID=$env:ENTRA_TENANT_ID"
+            "ENTRA_CLIENT_ID=$env:ENTRA_CLIENT_ID"
+            "ENTRA_CLIENT_SECRET=$env:ENTRA_CLIENT_SECRET"
+            "ALLOWED_DOMAINS=$env:ALLOWED_DOMAINS"
+            "DATABASE_PATH=$env:DATABASE_PATH"
+            "SESSION_SECONDS=$env:SESSION_SECONDS"
+            "DOCKERHUB_USERNAME=$env:DOCKERHUB_USERNAME"
+            "IMAGE_NAME=${{ env.IMAGE_NAME }}"
+            "IMAGE_TAG=${{ env.IMAGE_TAG }}"
+          )
+
+          $lines | Set-Content -Path ".env.deploy" -Encoding utf8
 
       - name: Pull Docker image
         shell: powershell
@@ -86,8 +118,9 @@ jobs:
         shell: powershell
         run: |
           docker compose `
-            --env-file .env.dev `
-            -f docker-compose.dev.yml `
+            --project-name "${{ env.COMPOSE_PROJECT_NAME }}" `
+            --env-file .env.deploy `
+            -f "${{ env.COMPOSE_FILE }}" `
             up `
             -d `
             --no-build `
@@ -97,23 +130,27 @@ jobs:
         shell: powershell
         run: |
           docker compose `
-            --env-file .env.dev `
-            -f docker-compose.dev.yml `
+            --project-name "${{ env.COMPOSE_PROJECT_NAME }}" `
+            --env-file .env.deploy `
+            -f "${{ env.COMPOSE_FILE }}" `
             ps
 
       - name: Show logs on failure
         if: failure()
         shell: powershell
         run: |
-          docker compose `
-            --env-file .env.dev `
-            -f docker-compose.dev.yml `
-            logs --tail=200
+          if (Test-Path ".env.deploy") {
+            docker compose `
+              --project-name "${{ env.COMPOSE_PROJECT_NAME }}" `
+              --env-file .env.deploy `
+              -f "${{ env.COMPOSE_FILE }}" `
+              logs --tail=200
+          }
 
       - name: Cleanup secrets
         if: always()
         shell: powershell
         run: |
-          if (Test-Path ".env.dev") {
-            Remove-Item ".env.dev" -Force
+          if (Test-Path ".env.deploy") {
+            Remove-Item ".env.deploy" -Force
           }
