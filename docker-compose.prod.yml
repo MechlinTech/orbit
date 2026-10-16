@@ -7,7 +7,9 @@ services:
       dockerfile: Dockerfile
       target: production
 
-    image: ${DOCKERHUB_USERNAME}/mechlin-orbit:prod
+    # Must match the tag built/pushed by .github/workflows/deploy.yml
+    # (production). Local overrides: IMAGE_NAME / IMAGE_TAG.
+    image: ${IMAGE_NAME:-mechlin-orbit}:${IMAGE_TAG:-production}
 
     restart: unless-stopped
 

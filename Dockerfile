@@ -53,6 +53,8 @@ COPY --from=dependencies /app/node_modules ./node_modules
 COPY package*.json ./
 COPY src ./src
 COPY scripts ./scripts
+# server.js serves the UI from ../public relative to the module (i.e. /app/public)
+COPY public ./public
 
 # If your application requires these directories at runtime,
 # they will be created and owned by node.
