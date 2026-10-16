@@ -1,126 +1,36 @@
 {
   "version": "2.0.0",
+  "options": {
+    "cwd": "${workspaceFolder}"
+  },
   "tasks": [
     {
-      "type": "npm",
-      "script": "start",
-      "label": "Start Orbit Server",
-      "detail": "node src/server.js",
+      "label": "folder-open",
+      "dependsOn": ["eslint-check"],
+      "runOptions": {
+        "runOn": "folderOpen"
+      },
+      "hide": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "eslint-check",
+      "type": "process",
+      "command": "sh",
+      "args": [".vscode/eslint-check.sh"],
+      "windows": {
+        "command": "cmd.exe",
+        "args": ["/d", "/c", ".vscode\\eslint-check.cmd"]
+      },
+      "isBackground": true,
+      "hide": true,
       "problemMatcher": [],
       "presentation": {
-        "reveal": "always",
+        "reveal": "never",
         "panel": "dedicated",
-        "clear": false
+        "echo": false,
+        "close": true
       }
-    },
-    {
-      "type": "npm",
-      "script": "test",
-      "label": "Run All Tests",
-      "detail": "node --test tests/*.test.js",
-      "group": {
-        "kind": "test",
-        "isDefault": true
-      },
-      "problemMatcher": []
-    },
-    {
-      "type": "shell",
-      "command": "node",
-      "args": ["--test", "${file}"],
-      "label": "Run Current Test File",
-      "detail": "Run node --test on the active test file in the editor",
-      "group": "test",
-      "problemMatcher": []
-    },
-    {
-      "type": "npm",
-      "script": "check",
-      "label": "Run Integrity & Syntax Checks",
-      "detail": "node scripts/check.js",
-      "group": {
-        "kind": "build",
-        "isDefault": true
-      },
-      "problemMatcher": []
-    },
-    {
-      "type": "npm",
-      "script": "test:browser",
-      "label": "Run Browser UI Tests",
-      "detail": "node tests/ui/browser.mjs",
-      "group": "test",
-      "problemMatcher": []
-    },
-    {
-      "type": "shell",
-      "command": "npm",
-      "args": [
-        "run",
-        "bootstrap",
-        "--",
-        "${input:adminEmail}",
-        "${input:adminName}",
-        "${input:entraObjectId}",
-        "${input:entraTenantId}"
-      ],
-      "label": "Bootstrap Administrator",
-      "detail": "node scripts/bootstrap.js - provision initial System Admin identity",
-      "problemMatcher": []
-    },
-    {
-      "type": "shell",
-      "command": "npm",
-      "args": ["run", "backup", "--", "${input:backupPath}"],
-      "label": "Backup SQLite Database",
-      "detail": "node scripts/backup.js - create consistent SQLite snapshot",
-      "problemMatcher": []
-    },
-    {
-      "type": "shell",
-      "command": "docker",
-      "args": ["compose", "-f", "docker-compose.dev.yml", "up", "-d"],
-      "label": "Docker: Start Dev Environment",
-      "detail": "Start Mechlin Orbit containers in the background",
-      "problemMatcher": []
-    },
-    {
-      "type": "shell",
-      "command": "docker",
-      "args": ["compose", "-f", "docker-compose.dev.yml", "down"],
-      "label": "Docker: Stop Dev Environment",
-      "detail": "Stop Mechlin Orbit development containers",
-      "problemMatcher": []
-    }
-  ],
-  "inputs": [
-    {
-      "id": "adminEmail",
-      "type": "promptString",
-      "description": "Administrator Email Address",
-      "default": "admin@company.com"
-    },
-    {
-      "id": "adminName",
-      "type": "promptString",
-      "description": "Administrator Full Name",
-      "default": "Admin Name"
-    },
-    {
-      "id": "entraObjectId",
-      "type": "promptString",
-      "description": "Entra User Object ID (36-character GUID)"
-    },
-    {
-      "id": "entraTenantId",
-      "type": "promptString",
-      "description": "Entra Tenant ID (36-character GUID)"
-    },
-    {
-      "id": "backupPath",
-      "type": "promptString",
-      "description": "Backup destination SQLite file path",
-      "default": "data/backup.sqlite"
     }
   ]
 }
