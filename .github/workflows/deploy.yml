@@ -22,23 +22,36 @@ jobs:
     name: Build and Deploy
     runs-on: [self-hosted, windows]
 
+    # Is this a production run?
+    #
+    #   production branch  -> production
+    #   manual run from any other branch -> production
+    #   otherwise (main)   -> development
+    #
+    # The whole boolean test MUST be wrapped in parentheses before the
+    # `&& 'x' || 'y'` selector. In GitHub Actions `&&` and `||` return operand
+    # *values* and bind tighter than `||`, so an unwrapped
+    # `cond || cond && 'a' || 'b'` evaluates to `(cond || (cond && 'a')) || 'b'`,
+    # which short-circuits to the boolean `true` on a production push and
+    # stringifies to "true" (e.g. `docker build --target "true"`).
+    #
     # Only main selects the development GitHub Environment.
     # Production uses repository-level Actions secrets.
     environment:
-      name: ${{ github.ref == 'refs/heads/production' || (github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main') && 'production' || 'development' }}
+      name: ${{ (github.ref == 'refs/heads/production' || (github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main')) && 'production' || 'development' }}
 
     env:
-      DEPLOY_ENV: ${{ github.ref == 'refs/heads/production' || (github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main') && 'production' || 'development' }}
+      DEPLOY_ENV: ${{ (github.ref == 'refs/heads/production' || (github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main')) && 'production' || 'development' }}
 
       IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/mechlin-orbit
 
-      IMAGE_TAG: ${{ github.ref == 'refs/heads/production' || (github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main') && 'production' || 'development' }}
+      IMAGE_TAG: ${{ (github.ref == 'refs/heads/production' || (github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main')) && 'production' || 'development' }}
 
-      DOCKER_TARGET: ${{ github.ref == 'refs/heads/production' || (github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main') && 'production' || 'development' }}
+      DOCKER_TARGET: ${{ (github.ref == 'refs/heads/production' || (github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main')) && 'production' || 'development' }}
 
-      COMPOSE_FILE: ${{ github.ref == 'refs/heads/production' || (github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main') && 'docker-compose.prod.yaml' || 'docker-compose.dev.yml' }}
+      COMPOSE_FILE: ${{ (github.ref == 'refs/heads/production' || (github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main')) && 'docker-compose.prod.yml' || 'docker-compose.dev.yml' }}
 
-      COMPOSE_PROJECT_NAME: ${{ github.ref == 'refs/heads/production' || (github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main') && 'mechlin-orbit-prod' || 'mechlin-orbit-dev' }}
+      COMPOSE_PROJECT_NAME: ${{ (github.ref == 'refs/heads/production' || (github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main')) && 'mechlin-orbit-prod' || 'mechlin-orbit-dev' }}
 
     steps:
       - name: Checkout
