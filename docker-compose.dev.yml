@@ -7,7 +7,9 @@ services:
       dockerfile: Dockerfile
       target: development
 
-    image: ${DOCKERHUB_USERNAME}/mechlin-orbit:dev
+    # Must match the tag built/pushed by .github/workflows/deploy.yml
+    # (development). Local overrides: IMAGE_NAME / IMAGE_TAG.
+    image: ${IMAGE_NAME:-mechlin-orbit}:${IMAGE_TAG:-development}
 
     restart: unless-stopped
 
