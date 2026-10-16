@@ -1,20 +1,18 @@
+
 services:
   app:
-    container_name: mechlin-orbit-dev
-
     build:
       context: .
       dockerfile: Dockerfile
       target: development
 
-    # Must match the tag built/pushed by .github/workflows/deploy.yml
-    # (development). Local overrides: IMAGE_NAME / IMAGE_TAG.
+    # Development Docker image
     image: ${IMAGE_NAME:-mechlin-orbit}:${IMAGE_TAG:-development}
 
     restart: unless-stopped
 
     environment:
-      NODE_ENV: ${NODE_ENV}
+      NODE_ENV: ${NODE_ENV:-development}
       HOST: 0.0.0.0
       PORT: 3000
       APP_ORIGIN: ${APP_ORIGIN}
@@ -24,22 +22,26 @@ services:
       ENTRA_TENANT_ID: ${ENTRA_TENANT_ID}
       ENTRA_CLIENT_ID: ${ENTRA_CLIENT_ID}
       ENTRA_CLIENT_SECRET: ${ENTRA_CLIENT_SECRET}
-#      ALLOWED_GROUP_IDS: ${ALLOWED_GROUP_IDS}
+      # ALLOWED_GROUP_IDS: ${ALLOWED_GROUP_IDS}
 
     ports:
       - "60155:3000"
 
     volumes:
-      - mechlin_orbit_data:/app/data
-      - mechlin_orbit_backups:/app/backups
+      - mechlin_orbit_dev_data:/app/data
+      - mechlin_orbit_dev_backups:/app/backups
 
     networks:
-      - mechlin-orbit
+      - mechlin-orbit-dev
 
 networks:
-  mechlin-orbit:
+  mechlin-orbit-dev:
+    name: mechlin-orbit-dev-network
     driver: bridge
 
 volumes:
-  mechlin_orbit_data:
-  mechlin_orbit_backups:
+  mechlin_orbit_dev_data:
+    name: mechlin_orbit_dev_data
+
+  mechlin_orbit_dev_backups:
+    name: mechlin_orbit_dev_backups
