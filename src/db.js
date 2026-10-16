@@ -40,12 +40,15 @@ export function openDb(path = 'data/talentos.sqlite') {
       interviewer_id TEXT NOT NULL REFERENCES users(id), scheduled_at TEXT NOT NULL, competencies TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'planned', created_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS scorecards(id TEXT PRIMARY KEY, interview_id TEXT NOT NULL UNIQUE REFERENCES interviews(id),
-      author TEXT NOT NULL REFERENCES users(id), ratings TEXT NOT NULL, recommendation TEXT NOT NULL, notes TEXT NOT NULL, submitted_at TEXT NOT NULL);
+      author TEXT NOT NULL REFERENCES users(id), ratings TEXT NOT NULL, recommendation TEXT NOT NULL, notes TEXT NOT NULL, submitted_at TEXT NOT NULL,
+      proxy_for TEXT REFERENCES users(id), proxy_reason TEXT);
     CREATE TABLE IF NOT EXISTS referrals(id TEXT PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL, requisition_id TEXT NOT NULL REFERENCES requisitions(id),
       note TEXT NOT NULL, created_by TEXT NOT NULL REFERENCES users(id), at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
     INSERT OR IGNORE INTO settings VALUES('pipeline','["Applied","Screening","Interview","Offer","Hired","Rejected"]');
     INSERT OR IGNORE INTO schema_migrations VALUES(1,datetime('now'));`);
+  try { db.exec('ALTER TABLE scorecards ADD COLUMN proxy_for TEXT REFERENCES users(id);'); } catch {}
+  try { db.exec('ALTER TABLE scorecards ADD COLUMN proxy_reason TEXT;'); } catch {}
   return db;
 }
 export function audit(db, actor, event, target = '', detail = {}) {

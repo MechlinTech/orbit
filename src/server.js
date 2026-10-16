@@ -83,7 +83,8 @@ export function createApp({db = openDb(process.env.DATABASE_PATH), c = config(),
   return server;
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  try { process.loadEnvFile?.(); } catch {}
   const app = createApp(); const port = Number(process.env.PORT || 3000), host = process.env.HOST || '127.0.0.1';
-  app.listen(port,host,()=>console.log(`TalentOS listening on ${host}:${port}`));
+  app.listen(port,host,()=>console.log(`Orbit listening on ${host}:${port}`));
   for (const signal of ['SIGINT','SIGTERM']) process.on(signal,()=>app.close(()=>process.exit(0)));
 }
