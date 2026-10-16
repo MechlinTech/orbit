@@ -1,13 +1,26 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 export const id = () => randomUUID();
 export const now = () => new Date().toISOString();
 export function openDb(path = 'data/talentos.sqlite') {
-  if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
-  const db = new DatabaseSync(path);
+  let db;
+  try {
+    if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
+    db = new DatabaseSync(path);
+  } catch (cause) {
+    if (path === ':memory:') throw cause;
+    // errcode 14 (SQLITE_CANTOPEN) in a container almost always means the
+    // directory is not writable by this user, i.e. the Docker volume behind it
+    // was created as root instead of by the app user.
+    const detail = String(cause?.message ?? cause);
+    const why = /unable to open database file|readonly database|EACCES|EPERM|EEXIST|ENOTDIR|EROFS/i.test(detail)
+      ? `${detail} — check that the directory exists and is owned by uid 1000 (node); a root-owned Docker volume mounted at /app/data is the usual cause (fix: chown -R 1000:1000 <volume>:/app/data)`
+      : detail;
+    throw new Error(`Cannot open SQLite database at ${resolve(path)} (uid ${process.getuid?.() ?? 'n/a'}, gid ${process.getgid?.() ?? 'n/a'}): ${why}`, { cause });
+  }
   db.exec(`PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;
     CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS users(
