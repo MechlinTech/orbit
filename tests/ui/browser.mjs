@@ -123,6 +123,20 @@ try{
   await click(`document.querySelector('[data-nav="Pipeline"]')`);await waitFor("document.querySelector('.board')!==null");
 
   check('Hired and Rejected pipeline columns have fixed/max height and overflow-y auto',await evaluate("(()=>{const hired=document.querySelector('.column[data-stage=\"Hired\"]');const rejected=document.querySelector('.column[data-stage=\"Rejected\"]');if(!hired||!rejected)return false;const hs=window.getComputedStyle(hired),rs=window.getComputedStyle(rejected);const hc=hired.querySelector('.column-content'),rc=rejected.querySelector('.column-content');const hcs=window.getComputedStyle(hc),rcs=window.getComputedStyle(rc);return hired.classList.contains('column-terminal') && rejected.classList.contains('column-terminal') && ((hs.overflowY==='auto'&&parseInt(hs.maxHeight,10)<=600)||(hcs.overflowY==='auto'&&parseInt(hcs.maxHeight,10)<=600)) && ((rs.overflowY==='auto'&&parseInt(rs.maxHeight,10)<=600)||(rcs.overflowY==='auto'&&parseInt(rcs.maxHeight,10)<=600));})()"));
+  check('Pipeline page does not render top horizontal scroll bar', await evaluate("document.querySelector('#pipeline-top-scroll') === null"));
+  check('Pipeline page renders sticky bottom horizontal scroll bar', await evaluate("document.querySelector('#pipeline-bottom-scroll') !== null"));
+  check('Pipeline cards in intermediate stages display Back button to previous stage', await evaluate("Boolean(document.querySelector('.column[data-stage=\"Screening\"] [data-action=\"move\"][data-stage=\"Applied\"]'))"));
+  check('Pipeline cards in Applied stage do not display Back button', await evaluate("(()=>{const btns=Array.from(document.querySelectorAll('.column[data-stage=\"Applied\"] button'));return !btns.some(b=>b.textContent.includes('Back to'));})()"));
+
+  const screeningAppCard = await evaluate("document.querySelector('.column[data-stage=\"Screening\"] .card h3')?.textContent");
+  if(screeningAppCard) {
+    const prevAppliedCount = await evaluate("document.querySelectorAll('.column[data-stage=\"Applied\"] .card').length");
+    await click(`document.querySelector('.column[data-stage="Screening"] [data-action="move"][data-stage="Applied"]')`);
+    await waitFor("document.querySelector('dialog').open && document.querySelector('#modal-body').textContent.includes('Applied')");
+    await click("document.querySelector('#edit-form button[type=submit]')");
+    await waitFor(`document.querySelectorAll('.column[data-stage="Applied"] .card').length === ${prevAppliedCount + 1}`);
+    check('Clicking Back button moves candidate card back to previous stage', await evaluate(`Boolean(Array.from(document.querySelectorAll('.column[data-stage="Applied"] .card h3')).find(h => h.textContent === ${JSON.stringify(screeningAppCard)}))`));
+  }
 
   await evaluate(`(async ()=>{
     const reqs=await api('requisitions');
@@ -139,6 +153,36 @@ try{
 
   check('Rejected column scrolls internally with internal vertical scrollbar when cards exceed space',await evaluate("(()=>{const col=document.querySelector('.column[data-stage=\"Rejected\"]');const content=col.querySelector('.column-content');const target=content.scrollHeight>content.clientHeight?content:col;return target.scrollHeight>target.clientHeight && col.clientHeight<=600;})()"));
   check('Pipeline board layout remains stable with multiple candidates in terminal columns',await evaluate("(()=>{const col=document.querySelector('.column[data-stage=\"Rejected\"]');return col && col.clientHeight<=600;})()"));
+
+  await evaluate(`(async ()=>{
+    const reqs=await api('requisitions');
+    const openReq=reqs.find(r=>r.status==='open');
+    if(!openReq)return;
+    const longTitle='Senior Staff Enterprise Distributed Systems & Infrastructure Security Architect (Global Cloud Platform & Kubernetes Microservices Lead)';
+    await api('requisitions/'+openReq.id,'PUT',{title:longTitle});
+    const c=await api('candidates','POST',{name:'Long Title Candidate',email:'longtitle@example.com',team:openReq.team,source:'Direct',skills:['JavaScript']});
+    await api('applications','POST',{candidate_id:c.id,requisition_id:openReq.id});
+  })()`);
+  await click(`document.querySelector('[data-nav="Candidates"]')`);await waitFor("document.querySelector('#candidate-table')!==null");
+  await click(`document.querySelector('[data-nav="Pipeline"]')`);await waitFor("document.querySelector('#pipeline-board') && document.querySelector('#pipeline-board').innerText.includes('Long Title Candidate')");
+
+  check('Long requisition title wraps within application card without overlapping adjacent columns or disrupting layout', await evaluate(`(()=>{
+    const card = Array.from(document.querySelectorAll('.card')).find(c => c.innerText.includes('Long Title Candidate'));
+    if(!card) return false;
+    const col = card.closest('.column');
+    const nextCol = col ? col.nextElementSibling : null;
+    const role = card.querySelector('.card-role') || card.querySelector('p.muted');
+    if(!role) return false;
+    const cardRect = card.getBoundingClientRect();
+    const colRect = col.getBoundingClientRect();
+    const roleRect = role.getBoundingClientRect();
+    const nextColLeft = nextCol ? nextCol.getBoundingClientRect().left : Infinity;
+    const wrapsWithinCard = roleRect.right <= cardRect.right + 2 && role.scrollWidth <= card.clientWidth + 2;
+    const withinColumn = cardRect.right <= colRect.right + 2 && cardRect.right < nextColLeft;
+    const s = window.getComputedStyle(role);
+    const hasWrapping = (s.overflowWrap === 'anywhere' || s.wordBreak === 'break-word') && s.whiteSpace === 'normal';
+    return wrapsWithinCard && withinColumn && hasWrapping;
+  })()`));
 
   await click(`document.querySelector('[data-nav="Interviews"]')`);
   await waitFor("document.querySelector('table tbody tr')!==null");
