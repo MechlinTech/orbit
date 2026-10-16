@@ -1,20 +1,18 @@
+
 services:
   app:
-    container_name: mechlin-orbit-prod
-
     build:
       context: .
       dockerfile: Dockerfile
       target: production
 
-    # Must match the tag built/pushed by .github/workflows/deploy.yml
-    # (production). Local overrides: IMAGE_NAME / IMAGE_TAG.
+    # Production Docker image
     image: ${IMAGE_NAME:-mechlin-orbit}:${IMAGE_TAG:-production}
 
     restart: unless-stopped
 
     environment:
-      NODE_ENV: ${NODE_ENV}
+      NODE_ENV: ${NODE_ENV:-production}
       HOST: 0.0.0.0
       PORT: 3000
       APP_ORIGIN: ${APP_ORIGIN}
@@ -24,22 +22,26 @@ services:
       ENTRA_TENANT_ID: ${ENTRA_TENANT_ID}
       ENTRA_CLIENT_ID: ${ENTRA_CLIENT_ID}
       ENTRA_CLIENT_SECRET: ${ENTRA_CLIENT_SECRET}
-#      ALLOWED_GROUP_IDS: ${ALLOWED_GROUP_IDS}
+      # ALLOWED_GROUP_IDS: ${ALLOWED_GROUP_IDS}
 
     ports:
       - "26370:3000"
 
     volumes:
-      - mechlin_orbit_data:/app/data
-      - mechlin_orbit_backups:/app/backups
+      - mechlin_orbit_prod_data:/app/data
+      - mechlin_orbit_prod_backups:/app/backups
 
     networks:
-      - mechlin-orbit
+      - mechlin-orbit-prod
 
 networks:
-  mechlin-orbit:
+  mechlin-orbit-prod:
+    name: mechlin-orbit-prod-network
     driver: bridge
 
 volumes:
-  mechlin_orbit_data:
-  mechlin_orbit_backups:
+  mechlin_orbit_prod_data:
+    name: mechlin_orbit_prod_data
+
+  mechlin_orbit_prod_backups:
+    name: mechlin_orbit_prod_backups
