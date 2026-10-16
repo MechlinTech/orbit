@@ -9,6 +9,14 @@ ENV NODE_ENV=production
 # Security / runtime dependencies
 RUN apk add --no-cache dumb-init
 
+# Persistent directories must exist *and* be owned by the runtime user in every
+# stage. Compose mounts named volumes over /app/data and /app/backups; when the
+# mount point is missing from the image Docker creates the volume as root:root,
+# which the `node` user (uid 1000) cannot write to -> SQLite errcode 14
+# "unable to open database file".
+RUN mkdir -p /app/data /app/backups && \
+    chown node:node /app/data /app/backups
+
 # --------------------------------------------------------------------
 # Dependencies
 # --------------------------------------------------------------------
@@ -53,6 +61,8 @@ COPY --from=dependencies /app/node_modules ./node_modules
 COPY package*.json ./
 COPY src ./src
 COPY scripts ./scripts
+# server.js serves the UI from ../public relative to the module (i.e. /app/public)
+COPY public ./public
 
 # If your application requires these directories at runtime,
 # they will be created and owned by node.

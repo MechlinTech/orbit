@@ -1,0 +1,47 @@
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+
+    # Production Docker image
+    image: ${IMAGE_NAME:-mechlin-orbit}:${IMAGE_TAG:-production}
+
+    restart: unless-stopped
+
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      HOST: 0.0.0.0
+      PORT: 3000
+      APP_ORIGIN: ${APP_ORIGIN}
+      ALLOWED_DOMAINS: ${ALLOWED_DOMAINS}
+      DATABASE_PATH: ${DATABASE_PATH}
+      SESSION_SECONDS: ${SESSION_SECONDS}
+      ENTRA_TENANT_ID: ${ENTRA_TENANT_ID}
+      ENTRA_CLIENT_ID: ${ENTRA_CLIENT_ID}
+      ENTRA_CLIENT_SECRET: ${ENTRA_CLIENT_SECRET}
+      # ALLOWED_GROUP_IDS: ${ALLOWED_GROUP_IDS}
+
+    ports:
+      - "26370:3000"
+
+    volumes:
+      - mechlin_orbit_prod_data:/app/data
+      - mechlin_orbit_prod_backups:/app/backups
+
+    networks:
+      - mechlin-orbit-prod
+
+networks:
+  mechlin-orbit-prod:
+    name: mechlin-orbit-prod-network
+    driver: bridge
+
+volumes:
+  mechlin_orbit_prod_data:
+    name: mechlin_orbit_prod_data
+
+  mechlin_orbit_prod_backups:
+    name: mechlin_orbit_prod_backups
