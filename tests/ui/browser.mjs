@@ -103,6 +103,86 @@ try{
   await waitFor("document.querySelector('#main').innerText.includes('qa-candidate@example.com')");
   check('Skills field accepts comma-separated format and renders separate skill chips',await evaluate("(()=>{const row=[...document.querySelectorAll('#candidate-table tbody tr')].find(r=>r.innerText.includes('qa-candidate@example.com'));if(!row)return false;const chips=[...row.querySelectorAll('.skill-chip')].map(c=>c.textContent.trim());return chips.includes('Manual Testing') && chips.includes('Automation Testing') && chips.length===2;})()"));
 
+  check('Candidates table header includes Status column',await evaluate("[...document.querySelectorAll('#candidate-table thead th')].some(th=>th.textContent.trim()==='Status')"));
+  check('Candidate with single application displays correct stage and requisition',await evaluate("(()=>{const row=[...document.querySelectorAll('#candidate-table tbody tr')].find(r=>r.innerText.includes('Avery Chen'));if(!row)return false;const cell=row.children[3];return cell.textContent.includes('Senior Software Engineer') && cell.textContent.includes('Applied') && Boolean(cell.querySelector('.badge.Applied'));})()"));
+  check('Candidate without applications displays No applications in Status cell',await evaluate("(()=>{const row=[...document.querySelectorAll('#candidate-table tbody tr')].find(r=>r.innerText.includes('Browser Test Senior Candidate'));if(!row)return false;const cell=row.children[3];return cell.textContent.includes('No applications');})()"));
+
+  await evaluate("(async()=>{const [cands,reqs]=await Promise.all([api('candidates'),api('requisitions')]);const avery=cands.find(c=>c.name==='Avery Chen');const otherReq=reqs.find(r=>r.title!=='Senior Software Engineer'&&r.status==='open');if(avery&&otherReq){await api('applications','POST',{candidate_id:avery.id,requisition_id:otherReq.id});await render();}})()");
+  check('Candidate with multiple applications displays each stage alongside requisition',await evaluate("(()=>{const row=[...document.querySelectorAll('#candidate-table tbody tr')].find(r=>r.innerText.includes('Avery Chen'));if(!row)return false;const cell=row.children[3];const pairs=[...cell.querySelectorAll('.candidate-status-pair')];return pairs.length===2 && cell.textContent.includes('Senior Software Engineer') && cell.textContent.includes('Applied');})()"));
+
+  await evaluate("(async()=>{const cands=await api('candidates');const avery=cands.find(c=>c.name==='Avery Chen');const secondApp=avery.applications.find(a=>a.title!=='Senior Software Engineer');if(secondApp){await api(`applications/${secondApp.id}/stage`,'POST',{stage:'Screening'});await render();}})()");
+  check('Candidate Status cell updates when application stage transitions',await evaluate("(()=>{const row=[...document.querySelectorAll('#candidate-table tbody tr')].find(r=>r.innerText.includes('Avery Chen'));if(!row)return false;const cell=row.children[3];return cell.textContent.includes('Screening') && Boolean(cell.querySelector('.badge.Screening'));})()"));
+
+  await evaluate("{const q=document.querySelector('#candidate-search');q.value='Screening';q.dispatchEvent(new Event('input'));}");
+  check('Candidate search filters by application stage',await evaluate("(()=>{const rows=[...document.querySelectorAll('#candidate-table tbody tr')];return rows.length>0 && rows.every(r=>r.children[3]?.textContent.includes('Screening') || r.innerText.toLowerCase().includes('screening'));})()"));
+  await evaluate("{const q=document.querySelector('#candidate-search');q.value='';q.dispatchEvent(new Event('input'));}");
+
+  await evaluate("(()=>{const row=[...document.querySelectorAll('#candidate-table tbody tr')].find(r=>r.innerText.includes('Avery Chen'));row.querySelector('[data-action=\"candidate-details\"]').click();})()");
+  await waitFor("document.querySelector('dialog').open");
+  check('Candidate profile modal displays applications and statuses',await evaluate("document.querySelector('dialog').innerText.includes('Applications & Status') && document.querySelector('dialog').innerText.includes('Senior Software Engineer')"));
+  await click(`document.querySelector('#close-modal')`);
+
+  await evaluate(`(async () => {
+    const longName = "AveryChenVeryLongUnbrokenCandidateNameWithoutAnySpacesOrPunctuationAtAllThatKeepsGoingAndGoingOnAndOn";
+    const longEmail = "candidate_with_unbroken_email_string_without_spaces_1234567890_1234567890_1234567890@super-long-unbroken-domain-name-with-no-spaces.example.com";
+    const longSkills = [
+      "SupercalifragilisticexpialidociousLongUnbrokenSkillTagThatNeverBreaksOrWrapsWithoutExplicitCssRule",
+      "AnotherVeryLongUnbrokenSkillStringThatMustWrapWithinTheSkillTagRatherThanPushingTheTableWider99",
+      "CloudArchitectureSpecialist",
+      "MicroservicesDesignPatterns",
+      "DistributedSystemsReliabilityEngineering"
+    ];
+    const c = await api('candidates', 'POST', {
+      name: longName,
+      email: longEmail,
+      skills: longSkills,
+      team: 'Dev',
+      source: 'Executive Search & Strategic Talent Advisory Services Direct Inbound Referral',
+      resume_text: 'Extensive technical leadership experience in cloud architecture and distributed systems.'
+    });
+    const reqs = (await api('requisitions')).filter(r => r.status === 'open');
+    if (reqs.length > 0) await api('applications', 'POST', { candidate_id: c.id, requisition_id: reqs[0].id });
+    if (reqs.length > 1) await api('applications', 'POST', { candidate_id: c.id, requisition_id: reqs[1].id });
+    await render();
+  })()`);
+  await waitFor("document.querySelector('#candidate-table').innerText.includes('AveryChenVeryLongUnbroken')");
+  check('Candidates page does not cause page-level horizontal overflow with long unbroken candidate details and skills', await evaluate('document.documentElement.scrollWidth <= window.innerWidth'));
+  check('Candidate table cells wrap long candidate details and unbroken strings within column bounds', await evaluate(`(()=>{
+    const row = [...document.querySelectorAll('#candidate-table tbody tr')].find(r => r.innerText.includes('AveryChenVeryLongUnbroken'));
+    if(!row) return false;
+    const nameStrong = row.querySelector('.person-cell strong');
+    const emailSmall = row.querySelector('.person-cell small');
+    const personDiv = row.querySelector('.person-cell > div');
+    const chips = [...row.querySelectorAll('.skill-chip')];
+    const longChip = chips[0];
+    const cell1 = row.children[0];
+    const cell2 = row.children[1];
+    const cell3 = row.children[2];
+    const cell4 = row.children[3];
+    const cell5 = row.children[4];
+    const allCellsFit = [cell1, cell2, cell3, cell4, cell5].every(td => td.scrollWidth <= td.offsetWidth + 2);
+    const chipWraps = longChip && longChip.scrollWidth <= longChip.offsetWidth + 2 && longChip.offsetWidth <= cell2.offsetWidth;
+    const sChip = longChip ? window.getComputedStyle(longChip) : null;
+    const hasChipWrapping = sChip && (sChip.overflowWrap === 'anywhere' || sChip.wordBreak === 'break-word') && sChip.whiteSpace === 'normal';
+    const sPerson = personDiv ? window.getComputedStyle(personDiv) : null;
+    const hasPersonShrink = sPerson && sPerson.minWidth === '0px';
+    return allCellsFit && chipWraps && hasChipWrapping && hasPersonShrink;
+  })()`));
+  check('Candidates table skill tags wrap across multiple lines within the Skills column', await evaluate(`(()=>{
+    const row = [...document.querySelectorAll('#candidate-table tbody tr')].find(r => r.innerText.includes('AveryChenVeryLongUnbroken'));
+    if(!row) return false;
+    const list = row.querySelector('.skill-list');
+    const chips = [...row.querySelectorAll('.skill-chip')];
+    return chips.length >= 4 && list.offsetHeight > 50;
+  })()`));
+  check('Candidates table preserves Status column with multiple requisition/status pairs for candidate with long details', await evaluate(`(()=>{
+    const row = [...document.querySelectorAll('#candidate-table tbody tr')].find(r => r.innerText.includes('AveryChenVeryLongUnbroken'));
+    if(!row) return false;
+    const pairs = [...row.children[3].querySelectorAll('.candidate-status-pair')];
+    return pairs.length >= 2;
+  })()`));
+  await snap('candidates-long-text-wrapping');
+
   await click(`document.querySelector('[data-nav="Overview"]')`);await waitFor("document.querySelector('.metrics')!==null");
   await evaluate("document.querySelector('#notice').textContent=''");
 
@@ -190,6 +270,7 @@ try{
   await click(`document.querySelector('table [data-action="edit-interview"]')`);
   await waitFor("document.querySelector('dialog').open && document.querySelector('#modal-body h2')?.textContent==='Edit interview'");
   check('Edit interview modal pre-populates scheduled date and time',await evaluate("Boolean(document.querySelector('#edit-form [name=scheduled_at]').value)"));
+  check('Edit interview modal pre-populates assigned interviewer selector',await evaluate("Boolean(document.querySelector('#edit-form select[name=interviewer_id]')?.value)"));
   await evaluate(`{
     const f=document.querySelector('#edit-form');
     f.elements['scheduled_at'].value='2030-05-20T14:30';
@@ -197,6 +278,11 @@ try{
   }`);
   await waitFor("!document.querySelector('dialog').open");
   check('Interviews table displays updated interview date and time after edit',await evaluate("document.querySelector('#main').innerText.includes('2030')"));
+  await click(`document.querySelector('[data-nav="Candidates"]')`);
+  await waitFor("document.querySelector('.heading h1')?.textContent==='Candidates' && document.querySelector('#candidate-table')!==null");
+  await click(`document.querySelector('[data-nav="Interviews"]')`);
+  await waitFor("document.querySelector('.heading h1')?.textContent==='Interviews' && document.querySelector('table tbody tr')!==null");
+  check('Interviews table persists updated interview date and time after navigation',await evaluate("document.querySelector('#main').innerText.includes('2030')"));
 
   await click(`document.querySelector('[data-nav="Requisitions"]')`);
   await waitFor("document.querySelector('.requisitions-table tbody tr')!==null");
@@ -224,6 +310,9 @@ try{
   await click(`document.querySelector('[data-nav="Overview"]')`);await waitFor("document.querySelector('.metrics')!==null");
   check('mobile dashboard fits viewport',await evaluate('document.documentElement.scrollWidth<=window.innerWidth'));
   await snap('mobile-overview');
+  await click(`document.querySelector('[data-nav="Candidates"]')`);await waitFor("document.querySelector('#candidate-table')!==null");
+  check('mobile candidates page fits viewport without page-level horizontal overflow',await evaluate('document.documentElement.scrollWidth<=window.innerWidth'));
+  await snap('mobile-candidates');
   await click(`document.querySelector('[data-nav="Pipeline"]')`);await waitFor("document.querySelector('.board')!==null");
   check('mobile pipeline uses contained horizontal scrolling',await evaluate('document.documentElement.scrollWidth<=window.innerWidth && document.querySelector(".board").scrollWidth>document.querySelector(".board").clientWidth'));
   await snap('mobile-pipeline');
@@ -240,6 +329,46 @@ try{
   await send('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});await snap('desktop-login');
   await send('Page.navigate',{url:'http://localhost:3000/?access=pending'});await waitFor("document.querySelector('.notice-inline')!==null");
   check('pending access notice explains approval requirement',await evaluate("document.querySelector('.notice-inline').textContent.includes('Access pending approval')"));
+
+  await send('Page.navigate',{url:'http://localhost:3000/'});await waitFor("document.querySelector('.login-card')!==null");
+  check('login page displays Demo / QA Login button when demo is enabled',await evaluate("Boolean(document.querySelector('[data-action=\"demo-login-modal\"]'))"));
+
+  await click("document.querySelector('[data-action=\"demo-login-modal\"]')");
+  await waitFor("document.querySelector('dialog').open && document.querySelector('#modal-body h2')?.textContent==='Demo / QA Sign In'");
+  check('demo login modal opens with role and team selectors',await evaluate("Boolean(document.querySelector('#edit-form select[name=\"role\"]') && document.querySelector('#edit-form select[name=\"team\"]'))"));
+  check('demo login modal displays role description',await evaluate("Boolean(document.querySelector('#demo-role-desc')?.textContent.length > 5)"));
+
+  await evaluate(`{
+    const f=document.querySelector('#edit-form');
+    f.elements['role'].value='Recruiter';
+    f.elements['role'].dispatchEvent(new Event('change'));
+    f.elements['team'].value='Dev';
+    f.requestSubmit();
+  }`);
+  await waitFor("!document.querySelector('dialog').open && document.querySelector('.topbar')!==null");
+  check('demo user authenticates and enters workspace',await evaluate("Boolean(document.querySelector('.topbar'))"));
+  check('topbar displays Switch QA Role button for demo user',await evaluate("Boolean(document.querySelector('[data-action=\"switch-demo-role\"]'))"));
+  check('sidebar profile indicates QA Demo User identity',await evaluate("Boolean(document.querySelector('.profile .qa-badge')) && document.querySelector('.profile').innerText.includes('Recruiter')"));
+
+  await click("document.querySelector('[data-action=\"switch-demo-role\"]')");
+  await waitFor("document.querySelector('dialog').open && document.querySelector('#modal-body h2')?.textContent==='Switch QA Demo Persona'");
+  check('switch demo modal opens for active demo session',await evaluate("document.querySelector('dialog').open"));
+
+  await evaluate(`{
+    const f=document.querySelector('#edit-form');
+    f.elements['role'].value='Hiring Manager';
+    f.elements['role'].dispatchEvent(new Event('change'));
+    f.elements['team'].value='QA';
+    f.requestSubmit();
+  }`);
+  await waitFor("!document.querySelector('dialog').open && document.querySelector('.profile').innerText.includes('Hiring Manager')");
+  check('switching demo identity updates active profile role to Hiring Manager and team to QA',await evaluate("document.querySelector('.profile').innerText.includes('Hiring Manager') && document.querySelector('.profile').innerText.includes('QA')"));
+  check('navigation updates to match new role permissions',await evaluate("Boolean(document.querySelector('[data-nav=\"Requisitions\"]')) && !document.querySelector('[data-nav=\"Administration\"]')"));
+
+  await click("document.querySelector('[data-action=\"logout\"]')");
+  await waitFor("document.querySelector('.login-card')!==null");
+  check('logout after demo session returns to login page',await evaluate("Boolean(document.querySelector('.login-card'))"));
+
   check('no browser runtime exceptions',exceptions.length===0);
   writeFileSync(resolve(output,'BROWSER_RESULTS.txt'),`${results.join('\n')}\nChecks: ${results.length}; failed: 0\nBrowser: ${JSON.stringify(await send('Browser.getVersion',{},null))}\nSynthetic in-memory data; no live Entra authentication.\n`);
 }catch(error){console.error('BROWSER FAILURE',error.message);try{console.error('PAGE',await evaluate('document.body.innerText'));console.error('EXCEPTIONS',JSON.stringify(exceptions));const shot=await send('Page.captureScreenshot',{format:'png'});writeFileSync(resolve(output,'browser-failure.png'),Buffer.from(shot.data,'base64'));}catch{console.error('Browser diagnostics unavailable.');}throw error;}finally{await send('Browser.close',{},null).catch(()=>{});ws.close();chrome.kill();app.close();}

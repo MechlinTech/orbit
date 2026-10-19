@@ -137,17 +137,85 @@ test('interview editing updates scheduled date and time and validates future dat
     competencies:['Technical analysis']
   });
 
+  // Verify initial listing returns original interviewer
+  const initialListing = call(f, f.recruiter, 'GET', 'interviews');
+  assert.equal(initialListing.find(i=>i.id===created.id).interviewer_id, f.interviewer.id);
+  assert.equal(initialListing.find(i=>i.id===created.id).interviewer, f.interviewer.name);
+
+  // Recruiter reschedules date/time
   const rescheduledDate=new Date(Date.now()+86400000*5).toISOString();
   const updatedByRecruiter=call(f,f.recruiter,'PUT',`interviews/${created.id}`,{
     scheduled_at:rescheduledDate
   });
   assert.equal(updatedByRecruiter.scheduled_at,rescheduledDate);
 
+  // Assigned interviewer reschedules date/time
   const rescheduledByInterviewer=new Date(Date.now()+86400000*6).toISOString();
   const updatedByInterviewer=call(f,f.interviewer,'PUT',`interviews/${created.id}`,{
     scheduled_at:rescheduledByInterviewer
   });
   assert.equal(updatedByInterviewer.scheduled_at,rescheduledByInterviewer);
+
+  // Recruiter reassigns interviewer to another eligible team member
+  const secondInterviewer = user(f.db, 'Interviewer', f.req.team);
+  const reassignedDate = new Date(Date.now()+86400000*7).toISOString();
+  const reassigned = call(f, f.recruiter, 'PUT', `interviews/${created.id}`, {
+    scheduled_at: reassignedDate,
+    interviewer_id: secondInterviewer.id
+  });
+  assert.equal(reassigned.interviewer_id, secondInterviewer.id);
+  assert.equal(reassigned.scheduled_at, reassignedDate);
+
+  // Verify changes persist across GET /api/interviews and GET /api/interviews/:id
+  const updatedListing = call(f, f.recruiter, 'GET', 'interviews');
+  const listed = updatedListing.find(i=>i.id===created.id);
+  assert.equal(listed.interviewer_id, secondInterviewer.id);
+  assert.equal(listed.interviewer, secondInterviewer.name);
+  assert.equal(listed.scheduled_at, reassignedDate);
+
+  const detail = call(f, f.recruiter, 'GET', `interviews/${created.id}`);
+  assert.equal(detail.interviewer_id, secondInterviewer.id);
+  assert.equal(detail.interviewer, secondInterviewer.name);
+  assert.equal(detail.scheduled_at, reassignedDate);
+
+  // Assigned interviewer without recruit permission cannot reassign interviewer
+  assert.throws(
+    ()=>call(f, secondInterviewer, 'PUT', `interviews/${created.id}`, { scheduled_at: new Date(Date.now()+86400000*8).toISOString(), interviewer_id: f.interviewer.id }),
+    e=>e.status===403
+  );
+
+  // Inactive interviewer rejection
+  const disabledInterviewer = user(f.db, 'Interviewer', f.req.team, 'disabled');
+  assert.throws(
+    ()=>call(f, f.recruiter, 'PUT', `interviews/${created.id}`, { scheduled_at: new Date(Date.now()+86400000*8).toISOString(), interviewer_id: disabledInterviewer.id }),
+    e=>e.status===400 && e.message.includes('active interviewer')
+  );
+
+  // Non-existent interviewer ID rejection
+  assert.throws(
+    ()=>call(f, f.recruiter, 'PUT', `interviews/${created.id}`, { scheduled_at: new Date(Date.now()+86400000*8).toISOString(), interviewer_id: 'non-existent-user' }),
+    e=>e.status===404
+  );
+
+  // Cross-team interviewer rejection
+  const otherTeamInterviewer = user(f.db, 'Interviewer', 'HR');
+  assert.throws(
+    ()=>call(f, f.recruiter, 'PUT', `interviews/${created.id}`, { scheduled_at: new Date(Date.now()+86400000*8).toISOString(), interviewer_id: otherTeamInterviewer.id }),
+    e=>e.status===400 && e.message.includes('can access this team')
+  );
+
+  // Cross-team recruiter rejection
+  const crossTeamRecruiter = user(f.db, 'Recruiter', 'HR');
+  assert.throws(
+    ()=>call(f, crossTeamRecruiter, 'PUT', `interviews/${created.id}`, { scheduled_at: new Date(Date.now()+86400000*8).toISOString() }),
+    e=>e.status===403
+  );
+
+  // Non-existent interview ID rejection
+  assert.throws(
+    ()=>call(f, f.recruiter, 'PUT', 'interviews/non-existent-id', { scheduled_at: new Date(Date.now()+86400000*8).toISOString() }),
+    e=>e.status===404
+  );
 
   // Past date validation
   assert.throws(
@@ -163,7 +231,7 @@ test('interview editing updates scheduled date and time and validates future dat
   );
 
   // Completed interview cannot be edited
-  call(f,f.interviewer,'POST',`interviews/${created.id}/scorecards`,{
+  call(f,secondInterviewer,'POST',`interviews/${created.id}/scorecards`,{
     ratings:{'Technical analysis':4},
     recommendation:'Yes',
     notes:'Good discussion'
@@ -172,6 +240,9 @@ test('interview editing updates scheduled date and time and validates future dat
     ()=>call(f,f.recruiter,'PUT',`interviews/${created.id}`,{scheduled_at:new Date(Date.now()+86400000*8).toISOString()}),
     e=>e.status===409&&e.message.includes('Completed interviews cannot be edited')
   );
+
+  // Verify audit logging
+  assert.ok(f.db.prepare("SELECT * FROM audit WHERE event='interview.updated' AND target=?").get(created.id));
 
   f.db.close();
 });
@@ -563,6 +634,127 @@ test('pipeline allows sequential backward transitions for mistake correction whi
     ['Screening', 'Interview'],
     ['Interview', 'Screening']
   ]);
+
+  f.db.close();
+});
+
+test('candidate status: lists applications with persisted stage and requisition title, handles zero and multiple applications', () => {
+  const f = hiringFixture();
+  // Candidate 1 (f.candidate) has 1 application (f.app) on f.req
+  const list1 = call(f, f.recruiter, 'GET', 'candidates');
+  const cand1 = list1.find(c => c.id === f.candidate.id);
+  assert.ok(cand1);
+  assert.equal(cand1.applications.length, 1);
+  assert.equal(cand1.applications[0].title, f.req.title);
+  assert.equal(cand1.applications[0].stage, 'Applied');
+
+  // Candidate with zero applications
+  const unappliedCand = call(f, f.recruiter, 'POST', 'candidates', {
+    ...candidateBody,
+    email: 'unapplied@example.com',
+    name: 'Unapplied Candidate'
+  });
+  const list2 = call(f, f.recruiter, 'GET', 'candidates');
+  const unapplied = list2.find(c => c.id === unappliedCand.id);
+  assert.ok(unapplied);
+  assert.deepEqual(unapplied.applications, []);
+
+  // Candidate with multiple applications across different requisitions
+  const req2 = call(f, f.recruiter, 'POST', 'requisitions', {
+    ...reqBody,
+    title: 'QA Lead',
+    skills: ['Testing', 'Automation']
+  });
+  call(f, f.recruiter, 'POST', `requisitions/${req2.id}/submit`);
+  call(f, f.manager, 'POST', `requisitions/${req2.id}/approve`, {});
+  call(f, f.finance, 'POST', `requisitions/${req2.id}/approve`, {});
+
+  // Apply Candidate 1 to req2
+  const app2 = call(f, f.recruiter, 'POST', 'applications', {
+    candidate_id: f.candidate.id,
+    requisition_id: req2.id
+  });
+
+  // Advance application 1 stage to Interview
+  call(f, f.recruiter, 'POST', `applications/${f.app.id}/stage`, { stage: 'Screening' });
+  call(f, f.recruiter, 'POST', `applications/${f.app.id}/stage`, { stage: 'Interview' });
+
+  // Advance application 2 stage to Screening
+  call(f, f.recruiter, 'POST', `applications/${app2.id}/stage`, { stage: 'Screening' });
+
+  // Fetch candidate list and single candidate
+  const list3 = call(f, f.recruiter, 'GET', 'candidates');
+  const multiCand = list3.find(c => c.id === f.candidate.id);
+  assert.ok(multiCand);
+  assert.equal(multiCand.applications.length, 2);
+
+  const appMap = new Map(multiCand.applications.map(a => [a.title, a.stage]));
+  assert.equal(appMap.get(f.req.title), 'Interview');
+  assert.equal(appMap.get('QA Lead'), 'Screening');
+
+  // Verify single candidate fetch (GET /api/candidates/:id)
+  const single = call(f, f.recruiter, 'GET', `candidates/${f.candidate.id}`);
+  assert.equal(single.applications.length, 2);
+  const singleMap = new Map(single.applications.map(a => [a.title, a.stage]));
+  assert.equal(singleMap.get(f.req.title), 'Interview');
+  assert.equal(singleMap.get('QA Lead'), 'Screening');
+
+  // Verify search by requisition title and stage
+  const searchReq = service(f.db, f.recruiter, 'GET', 'candidates', {}, new URLSearchParams({ q: 'QA Lead' }));
+  assert.ok(searchReq.some(c => c.id === f.candidate.id));
+  assert.ok(!searchReq.some(c => c.id === unappliedCand.id));
+
+  const searchStage = service(f.db, f.recruiter, 'GET', 'candidates', {}, new URLSearchParams({ q: 'Interview' }));
+  assert.ok(searchStage.some(c => c.id === f.candidate.id));
+  assert.ok(!searchStage.some(c => c.id === unappliedCand.id));
+
+  f.db.close();
+});
+
+test('candidate status: enforces team-scoping for applications and prevents cross-team data leaks', () => {
+  const f = hiringFixture();
+  const salesRecruiter = user(f.db, 'Recruiter', 'Sales');
+  const salesManager = user(f.db, 'Hiring Manager', 'Sales');
+  const salesFinance = user(f.db, 'Finance Approver', 'Sales');
+
+  // Create a requisition on 'Sales'
+  const salesReq = call(f, salesRecruiter, 'POST', 'requisitions', {
+    ...reqBody,
+    team: 'Sales',
+    title: 'Account Executive',
+    skills: ['Sales', 'Negotiation']
+  });
+  call(f, salesRecruiter, 'POST', `requisitions/${salesReq.id}/submit`);
+  call(f, salesManager, 'POST', `requisitions/${salesReq.id}/approve`, {});
+  call(f, salesFinance, 'POST', `requisitions/${salesReq.id}/approve`, {});
+
+  // Admin applies the Engineering candidate to the Sales requisition (cross-team application)
+  const crossApp = call(f, f.admin, 'POST', 'applications', {
+    candidate_id: f.candidate.id,
+    requisition_id: salesReq.id
+  });
+  assert.ok(crossApp.id);
+
+  // Recruiter on Engineering sees candidate, but only sees the Engineering requisition application (NOT Sales)
+  const engCandList = call(f, f.recruiter, 'GET', 'candidates');
+  const engCand = engCandList.find(c => c.id === f.candidate.id);
+  assert.ok(engCand);
+  assert.equal(engCand.applications.length, 1);
+  assert.equal(engCand.applications[0].title, f.req.title);
+  assert.ok(!engCand.applications.some(a => a.title === 'Account Executive'));
+
+  // Recruiter on Sales cannot see Engineering candidate at all
+  const salesCandList = call(f, salesRecruiter, 'GET', 'candidates');
+  assert.ok(!salesCandList.some(c => c.id === f.candidate.id));
+
+  // Admin sees both applications on the candidate
+  const adminCandList = call(f, f.admin, 'GET', 'candidates');
+  const adminCand = adminCandList.find(c => c.id === f.candidate.id);
+  assert.ok(adminCand);
+  assert.equal(adminCand.applications.length, 2);
+  const titles = adminCand.applications.map(a => a.title);
+  assert.ok(titles.includes(f.req.title));
+  assert.ok(titles.includes('Account Executive'));
 
   f.db.close();
 });
