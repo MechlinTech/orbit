@@ -15,6 +15,7 @@ Use `node --env-file=.env src/server.js` locally, systemd `EnvironmentFile`, or 
 | ALLOWED_DOMAINS | empty | Comma-separated exact email domains; required in production |
 | ALLOWED_GROUP_IDS | empty | Optional comma-separated group object IDs; at least one must appear in validated claims |
 | SESSION_SECONDS | `28800` | Absolute session lifetime, integer from 300 to 86400 |
+| ENABLE_DEMO_LOGIN | `true` | Set `false` to disable demo/QA login button and endpoints |
 
 Keep origins consistent: `localhost` and `127.0.0.1` are different origins. Production redirects and mutation requests must use precisely the configured HTTPS hostname. Group IDs are case-normalized; team names are not.
 
