@@ -14,6 +14,8 @@ export function config(env = process.env) {
   if (c.production && (!c.origin.startsWith('https://') || !c.secret || !c.domains.length)) throw new Error('Production requires HTTPS, Entra credentials and ALLOWED_DOMAINS');
   if ((c.tenant && !/^[0-9a-f-]{36}$/i.test(c.tenant)) || (c.client && !/^[0-9a-f-]{36}$/i.test(c.client))) throw new Error('Entra IDs must be GUIDs');
   if (c.production && (!c.tenant || !c.client)) throw new Error('Production requires tenant/client IDs');
+  const demoFlag = env.ENABLE_DEMO_LOGIN ?? env.DEMO_LOGIN ?? env.QA_LOGIN;
+  c.demoLogin = demoFlag !== 'false';
   return c;
 }
 export function startLogin(db, c) {

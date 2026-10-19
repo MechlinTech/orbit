@@ -7,6 +7,7 @@ import { config, startLogin, consumeState, exchangeCode, acceptIdentity, createS
 import { service } from './service.js';
 import { HttpError } from './policy.js';
 import { getAppearance } from './appearance.js';
+import { isDemoUser, getOrCreateDemoUser, DEMO_ROLES, DEMO_TEAMS } from './demo.js';
 
 const publicDir = fileURLToPath(new URL('../public/',import.meta.url));
 const files = {'/':['index.html','text/html'], '/app.js':['app.js','text/javascript'], '/style.css':['style.css','text/css'], '/orbit.css':['orbit.css','text/css'], '/sw.js':['sw.js','text/javascript'],
@@ -47,6 +48,22 @@ export function createApp({db = openDb(process.env.DATABASE_PATH), c = config(),
         if (user.status !== 'active') return redirect(`/?access=${user.status}`);
         const session = createSession(db,user,c); res.setHeader('Set-Cookie',[cookie('oauth_state','',0),cookie('session',session.value,c.sessionSeconds)]); return redirect('/');
       }
+      if (path === '/auth/demo' && req.method === 'GET') {
+        return json(200, { demoLogin: Boolean(c.demoLogin), roles: DEMO_ROLES, teams: DEMO_TEAMS });
+      }
+      if (path === '/auth/demo-login' && req.method === 'POST') {
+        if (!c.demoLogin) throw new HttpError(403, 'Demo login is disabled in this environment.');
+        if (req.headers.origin && req.headers.origin !== c.origin) throw new HttpError(403, 'Request validation failed.');
+        const chunks = []; let size = 0;
+        for await (const chunk of req) { size += chunk.length; if (size > 131072) throw new HttpError(413, 'Request exceeds 128 KB.'); chunks.push(chunk); }
+        let body = {};
+        try { body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'); } catch { throw new HttpError(400, 'Invalid JSON.'); }
+        const demoUser = getOrCreateDemoUser(db, c, body.role, body.team);
+        const session = createSession(db, demoUser, c);
+        audit(db, demoUser.id, 'auth.demo_login', demoUser.id, { role: demoUser.role, team: demoUser.team });
+        res.setHeader('Set-Cookie', cookie('session', session.value, c.sessionSeconds));
+        return json(200, { ok: true, user: { id: demoUser.id, name: demoUser.name, email: demoUser.email, role: demoUser.role, team: demoUser.team }, csrf: session.csrf });
+      }
       if (path.startsWith('/api/')) {
         const user = sessionUser(db,cookies.session); actor = user.id;
         if (!['GET','POST','PUT'].includes(req.method)) throw new HttpError(405,'Method not allowed.');
@@ -59,16 +76,26 @@ export function createApp({db = openDb(process.env.DATABASE_PATH), c = config(),
           try {body=JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');} catch {throw new HttpError(400,'Invalid JSON.');}
           if (!body || Array.isArray(body) || typeof body !== 'object') throw new HttpError(400,'JSON object required.');
         }
+        if (path === '/api/demo/switch' && req.method === 'POST') {
+          if (!c.demoLogin) throw new HttpError(403, 'Demo login is disabled in this environment.');
+          if (!isDemoUser(user)) throw new HttpError(403, 'Role switching is only permitted for demo users.');
+          const nextUser = getOrCreateDemoUser(db, c, body.role, body.team);
+          db.prepare('DELETE FROM sessions WHERE token_hash=?').run(hash(cookies.session));
+          const nextSession = createSession(db, nextUser, c);
+          audit(db, user.id, 'auth.demo_switch', nextUser.id, { fromRole: user.role, fromTeam: user.team, toRole: nextUser.role, toTeam: nextUser.team });
+          res.setHeader('Set-Cookie', cookie('session', nextSession.value, c.sessionSeconds));
+          return json(200, { ok: true, user: { id: nextUser.id, name: nextUser.name, email: nextUser.email, role: nextUser.role, team: nextUser.team }, csrf: nextSession.csrf });
+        }
         if (path === '/api/logout' && req.method === 'POST') {
           db.prepare('DELETE FROM sessions WHERE token_hash=?').run(hash(cookies.session)); audit(db,user.id,'auth.logout',user.id); res.setHeader('Set-Cookie',cookie('session','',0)); return json(200,{ok:true});
         }
-        return json(200,service(db,user,req.method,path.slice(5),body,url.searchParams));
+        return json(200,service(db,user,req.method,path.slice(5),body,url.searchParams,c));
       }
       if (files[path] && req.method === 'GET') {
         const [file,type] = files[path];
         const content=readFileSync(resolve(publicDir,file));
         res.writeHead(200,{'Content-Type':type.startsWith('image/')?type:`${type}; charset=utf-8`});
-        return res.end(file==='index.html'?content.toString('utf8').replace('data-theme="mechlin"',`data-theme="${getAppearance(db).theme}"`):content);
+        return res.end(file==='index.html'?content.toString('utf8').replace('data-theme="mechlin"',`data-theme="${getAppearance(db).theme}"${c.demoLogin?' data-demo-login="true"':''}`):content);
       }
       throw new HttpError(404,'Page not found.');
     } catch (error) {

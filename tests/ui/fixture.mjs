@@ -21,6 +21,6 @@ for(const [n,name] of ['Avery Chen','Jordan Williams','Sam Rivera','Taylor Morga
 user(f.db,'Employee/Referral','Dev','pending');
 const c={...testConfig(),origin:'http://localhost:3000'},s=createSession(f.db,f.admin,c),app=createApp({db:f.db,c});
 // Review harness injects synthetic identity only on a loopback, in-memory server.
-app.prependListener('request',req=>{req.headers.cookie=`session=${s.value}`;});
+app.prependListener('request',req=>{req.headers.cookie=req.headers.cookie||`session=${s.value}`;});
 app.listen(3000,'127.0.0.1',()=>console.log('Synthetic UI review server on http://localhost:3000'));
 export {app};
