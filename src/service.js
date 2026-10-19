@@ -1,6 +1,7 @@
 import { audit, id, now, transaction } from './db.js';
 import { HttpError, roles, teams, requirePermission as permit, requireTeam, inTeam, can, text, email, phone as validatePhone, currency as validateCurrency, list, validateSkills, integer } from './policy.js';
 import { getAppearance, setAppearance } from './appearance.js';
+import { isDemoUser } from './demo.js';
 
 const get = (db, table, key) => {
   const row = db.prepare(`SELECT * FROM ${table} WHERE id=?`).get(key);
@@ -24,11 +25,11 @@ function appContext(db, user, aid, interviewer = false) {
   } else requireTeam(user, req.team);
   return { app, req };
 }
-export function service(db, user, method, path, body = {}, query = new URLSearchParams()) {
+export function service(db, user, method, path, body = {}, query = new URLSearchParams(), c = {}) {
   const parts = path.split('/').filter(Boolean), key = parts[1], action = parts[2];
   if (path === 'appearance' && method === 'GET') return getAppearance(db);
   if (path === 'admin/appearance' && method === 'PUT') return setAppearance(db,user,body);
-  if (method === 'GET' && path === 'me') return { user:publicUser(user), csrf:user.csrf, roles, teams, permissions:['admin','recruit','requisition','approve_manager','approve_finance','review','analytics','refer','jobs','interview'].filter(p => can(user,p)) };
+  if (method === 'GET' && path === 'me') return { user: { ...publicUser(user), isDemoUser: isDemoUser(user) }, csrf: user.csrf, roles, teams, demoLogin: Boolean(c?.demoLogin), isDemoUser: isDemoUser(user), permissions: ['admin','recruit','requisition','approve_manager','approve_finance','review','analytics','refer','jobs','interview'].filter(p => can(user,p)) };
   if (parts[0] === 'admin') {
     permit(user,'admin');
     if (method === 'GET' && key === 'users') return db.prepare('SELECT * FROM users ORDER BY created_at DESC').all().map(publicUser);
@@ -238,10 +239,46 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       if (key) {
         const c = get(db, 'candidates', key);
         requireTeam(user, c.team);
-        return { ...c, skills: JSON.parse(c.skills), experience: c.resume_text };
+        const apps = db.prepare('SELECT a.id, a.candidate_id, a.requisition_id, a.stage, a.created_at, r.title, r.team FROM applications a JOIN requisitions r ON r.id=a.requisition_id WHERE a.candidate_id=? ORDER BY a.created_at ASC').all(key).filter(a => inTeam(user, a.team)).map(a => ({
+          id: a.id,
+          requisition_id: a.requisition_id,
+          title: a.title,
+          stage: a.stage,
+          team: a.team,
+          created_at: a.created_at
+        }));
+        return { ...c, skills: JSON.parse(c.skills), experience: c.resume_text, applications: apps };
       }
       const search = (query.get('q') || '').toLowerCase();
-      return db.prepare('SELECT * FROM candidates ORDER BY created_at DESC').all().filter(c => inTeam(user,c.team) && `${c.name} ${c.email} ${c.skills} ${c.resume_text}`.toLowerCase().includes(search)).map(c => ({...c,skills:JSON.parse(c.skills),experience:c.resume_text}));
+      const cands = db.prepare('SELECT * FROM candidates ORDER BY created_at DESC').all().filter(c => inTeam(user,c.team));
+      const appRows = db.prepare('SELECT a.id, a.candidate_id, a.requisition_id, a.stage, a.created_at, r.title, r.team FROM applications a JOIN requisitions r ON r.id=a.requisition_id ORDER BY a.created_at ASC').all().filter(a => inTeam(user, a.team));
+      const appsByCandidate = new Map();
+      for (const a of appRows) {
+        let list = appsByCandidate.get(a.candidate_id);
+        if (!list) {
+          list = [];
+          appsByCandidate.set(a.candidate_id, list);
+        }
+        list.push({
+          id: a.id,
+          requisition_id: a.requisition_id,
+          title: a.title,
+          stage: a.stage,
+          team: a.team,
+          created_at: a.created_at
+        });
+      }
+      return cands
+        .filter(c => {
+          const appText = (appsByCandidate.get(c.id) || []).map(a => `${a.title} ${a.stage}`).join(' ');
+          return `${c.name} ${c.email} ${c.skills} ${c.resume_text} ${appText}`.toLowerCase().includes(search);
+        })
+        .map(c => ({
+          ...c,
+          skills: JSON.parse(c.skills),
+          experience: c.resume_text,
+          applications: appsByCandidate.get(c.id) || []
+        }));
     }
     if (method === 'POST' && !key) {
       permit(user,'recruit'); const team = text(body.team,'Team',100); requireTeam(user,team);
@@ -254,7 +291,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
         db.prepare('INSERT INTO candidates VALUES(?,?,?,?,?,?,?,?,?,?)').run(cid,name,address,phone,JSON.stringify(skills),resume,source,team,user.id,now());
         audit(db,user.id,'candidate.created',cid);
         const created = get(db,'candidates',cid);
-        return {...created,skills:JSON.parse(created.skills),experience:created.resume_text};
+        return {...created,skills:JSON.parse(created.skills),experience:created.resume_text,applications:[]};
       });
     }
     if ((method === 'PUT' || method === 'POST') && key) {
@@ -275,7 +312,15 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
         db.prepare('UPDATE candidates SET name=?,email=?,phone=?,skills=?,resume_text=?,source=?,team=? WHERE id=?').run(name,address,phone,JSON.stringify(skills),resume,source,team,key);
         audit(db,user.id,'candidate.updated',key,{name,email:address,team});
         const updated = get(db,'candidates',key);
-        return {...updated,skills:JSON.parse(updated.skills),experience:updated.resume_text};
+        const apps = db.prepare('SELECT a.id, a.candidate_id, a.requisition_id, a.stage, a.created_at, r.title, r.team FROM applications a JOIN requisitions r ON r.id=a.requisition_id WHERE a.candidate_id=? ORDER BY a.created_at ASC').all(key).filter(a => inTeam(user, a.team)).map(a => ({
+          id: a.id,
+          requisition_id: a.requisition_id,
+          title: a.title,
+          stage: a.stage,
+          team: a.team,
+          created_at: a.created_at
+        }));
+        return {...updated,skills:JSON.parse(updated.skills),experience:updated.resume_text,applications:apps};
       });
     }
   }
@@ -380,7 +425,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
     if (method === 'PUT' && key && !action) {
       const interview = get(db, 'interviews', key);
       const {app, req} = appContext(db, user, interview.application_id, true);
-      if (!can(user, 'recruit') && interview.interviewer_id !== user.id) {
+      if (!can(user, 'recruit') && !can(user, 'admin') && interview.interviewer_id !== user.id) {
         throw new HttpError(403, 'Your role cannot perform this action.');
       }
       if (interview.status === 'completed') {
@@ -391,7 +436,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       }
       let interviewerId = interview.interviewer_id;
       if (body.interviewer_id && body.interviewer_id !== interview.interviewer_id) {
-        permit(user, 'recruit');
+        permit(user, 'recruit', 'admin');
         const interviewer = get(db, 'users', body.interviewer_id);
         if (interviewer.status !== 'active' || !['Interviewer','Hiring Manager','Recruiter','TA Manager','TA Director','System Admin'].includes(interviewer.role) || !inTeam(interviewer, req.team)) {
           throw new HttpError(400, 'Choose an active interviewer who can access this team.');
@@ -404,7 +449,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       }
       let competencies = JSON.parse(interview.competencies);
       if (body.competencies !== undefined) {
-        permit(user, 'recruit');
+        permit(user, 'recruit', 'admin');
         competencies = list(body.competencies, 'Competencies', 10);
         if (!competencies.length) throw new HttpError(400, 'At least one competency is required.');
       }
@@ -472,7 +517,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
     }
   }
   if (path === 'interviewers' && method === 'GET') {
-    permit(user,'recruit'); return db.prepare("SELECT * FROM users WHERE status='active'").all().filter(u => inTeam(user,u.team) && ['Interviewer','Hiring Manager','Recruiter','TA Manager','TA Director','System Admin'].includes(u.role)).map(u=>({id:u.id,name:u.name,team:u.team}));
+    permit(user,'recruit','admin'); return db.prepare("SELECT * FROM users WHERE status='active'").all().filter(u => inTeam(user,u.team) && ['Interviewer','Hiring Manager','Recruiter','TA Manager','TA Director','System Admin'].includes(u.role)).map(u=>({id:u.id,name:u.name,team:u.team}));
   }
   if (path === 'referrals') {
     permit(user,'refer');

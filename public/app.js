@@ -156,7 +156,7 @@ const closeModal = () => {
 };
 function modal(title,html,onSubmit) {
   $('#modal-body').innerHTML=`<h2 tabindex="-1">${escape(title)}</h2>${onSubmit?`<form id="edit-form">${html}<p class="error" id="form-error" role="alert"></p><button type="submit">Save</button></form>`:html}`;
-  if(onSubmit)$('#edit-form').onsubmit=async event=>{event.preventDefault();const submit=event.target.querySelector('[type=submit]');submit.disabled=true;try{await onSubmit(Object.fromEntries(new FormData(event.target)));closeModal();notice('Saved.');await render();}catch(e){$('#form-error').textContent=e.message;}finally{submit.disabled=false;}};
+  if(onSubmit)$('#edit-form').onsubmit=async event=>{event.preventDefault();const submit=event.target.querySelector('[type=submit]');submit.disabled=true;try{const msg=await onSubmit(Object.fromEntries(new FormData(event.target)));closeModal();notice(typeof msg==='string'?msg:'Saved.');await render();}catch(e){$('#form-error').textContent=e.message;}finally{submit.disabled=false;}};
   $('#modal').showModal();
   const firstInput = $('#modal input:not([type=hidden]), #modal select, #modal textarea');
   if(firstInput) firstInput.focus(); else $('#modal-body h2')?.focus();
@@ -165,16 +165,88 @@ function modal(title,html,onSubmit) {
 $('#close-modal').onclick=closeModal;
 $('#modal').addEventListener('click',e=>{const r=$('#modal').getBoundingClientRect();if(e.clientY<r.top||e.clientY>r.bottom||e.clientX<r.left||e.clientX>r.right)closeModal();});
 $('#modal').addEventListener('close',()=>{const n=$('#notice');if(n&&n.parentElement!==document.body)document.body.appendChild(n);});
+async function openDemoModal(isSwitch=false){
+  let demoMeta=window._demoMeta;
+  if(!demoMeta){
+    try{
+      const res=await fetch('/auth/demo');
+      demoMeta=await res.json();
+      window._demoMeta=demoMeta;
+    }catch{throw new Error('Demo login service is unavailable.');}
+  }
+  if(!demoMeta.demoLogin)throw new Error('Demo login is not enabled in this environment.');
+  const roleList=demoMeta.roles||[];
+  const teamList=demoMeta.teams||standardTeams;
+  const currentRole=(isSwitch&&me?.role)||roleList[0]?.role||'Recruiter';
+  const currentTeam=(isSwitch&&me?.team)||'Dev';
+  const title=isSwitch?'Switch QA Demo Persona':'Demo / QA Sign In';
+  const submitText=isSwitch?'Switch Persona':'Sign in as Demo User';
+  const modalHtml=`<div class="form-grid"><div class="full demo-role-desc-box" id="demo-role-desc" style="background:var(--surface-alt);border:1px solid var(--line);border-radius:8px;padding:12px;font-size:0.85rem;color:var(--ink);line-height:1.5;"></div>${select('Select Demo Role','role',roleList.map(r=>[r.role,`${r.role} — ${r.title}`]),currentRole)}<label class="full" id="demo-team-label">Select Team<select name="team" id="demo-team-select"></select></label><p class="full muted" style="font-size:0.8rem;margin-top:4px;">${isSwitch?'Switching establishes a new verified demo session with permissions and team scope for the selected identity.':'Predefined QA identity with sample data. No Microsoft 365 credentials required.'}</p></div>`;
+  modal(title,modalHtml,async vals=>{
+    const role=vals.role, team=vals.team||'';
+    if(isSwitch){
+      const res=await fetch('/api/demo/switch',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf||''},body:JSON.stringify({role,team})});
+      const data=await res.json();
+      if(!res.ok)throw new Error(data.error||'Failed to switch demo persona.');
+      csrf=data.csrf;
+      me=data.user;
+      const meData=await api('me');
+      me=meData.user;
+      permissions=meData.permissions;
+      csrf=meData.csrf;
+      candidateQuery='';
+      reqPage=1;
+      Object.keys(pageState).forEach(k=>pageState[k]=1);
+      try{sessionStorage.removeItem('orbit_current');sessionStorage.removeItem('orbit_pages');localStorage.removeItem('orbit_current');localStorage.removeItem('orbit_pages');}catch{}
+      const nav=getNavList();
+      current=nav[0]||'Overview';
+      return `Switched persona to ${me.role} · ${me.team||'Organization'}.`;
+    }else{
+      const res=await fetch('/auth/demo-login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({role,team})});
+      const data=await res.json();
+      if(!res.ok)throw new Error(data.error||'Demo login failed.');
+      csrf=data.csrf;
+      me=data.user;
+      const meData=await api('me');
+      me=meData.user;
+      permissions=meData.permissions;
+      csrf=meData.csrf;
+      loadSavedPages();
+      const nav=getNavList();
+      current=getSavedNav(nav);
+      return `Signed in as ${me.name}.`;
+    }
+  });
+  const submitBtn=$('#edit-form button[type="submit"]');
+  if(submitBtn)submitBtn.textContent=submitText;
+  const roleSelect=$('#edit-form [name="role"]');
+  const teamSelectEl=$('#demo-team-select');
+  const descEl=$('#demo-role-desc');
+  const updateRoleState=()=>{
+    const selectedRole=roleSelect.value;
+    const roleInfo=roleList.find(r=>r.role===selectedRole);
+    if(descEl)descEl.innerHTML=`<strong>${escape(roleInfo?.title||selectedRole)}:</strong> ${escape(roleInfo?.description||'')}`;
+    const isOrgRole=['System Admin','TA Director'].includes(selectedRole);
+    const options=[];
+    if(isOrgRole)options.push(['','Organization (Org-wide access)']);
+    for(const t of teamList)options.push([t,t]);
+    teamSelectEl.innerHTML=options.map(([val,label])=>`<option value="${escape(val)}" ${val===currentTeam?'selected':''}>${escape(label)}</option>`).join('');
+  };
+  if(roleSelect&&teamSelectEl){roleSelect.onchange=updateRoleState;updateRoleState();}
+}
 function login() {
   const status=new URLSearchParams(location.search).get('access');
   const messages={pending:'Access pending approval. Your request has been sent to the ATS administrators. Sign in again after approval.',rejected:'Your access request was rejected. Contact your ATS administrator.',disabled:'Your access has been disabled. Contact your ATS administrator.'};
+  const isDemoEnabled=document.documentElement.dataset.demoLogin==='true';
   applyTheme(appearance.theme);
-  $('#app').innerHTML=`<div class="login"><section class="login-brand"><div>${brand()}</div><div class="login-message"><p class="eyebrow">People. Possibility. Orbit.</p><h1>Great teams<br>start with<br><em>great connections.</em></h1><p>A shared space for every step of your next great hire.</p><div class="login-steps"><span>Discover</span><span>Connect</span><span>Hire</span></div></div><p class="login-footer">A Mechlin product · Built for our people</p></section><main class="login-form" id="main"><div class="login-card"><span class="workspace-label">MECHLIN WORKSPACE</span><h1>Welcome to Orbit</h1><p class="muted">Your team’s next chapter starts here.</p>${messages[status]?`<div class="notice-inline">${messages[status]}</div>`:''}<a class="button microsoft-signin" href="/auth/login"><span class="microsoft-mark" aria-hidden="true"></span>Sign in with Microsoft 365</a><p class="muted">Use your Mechlin work account. New team members need administrator approval.</p><div class="login-access-note">${icon('Administration')}<span>Private workspace. Approved access only.</span></div></div></main></div>`;
+  $('#app').innerHTML=`<div class="login"><section class="login-brand"><div>${brand()}</div><div class="login-message"><p class="eyebrow">People. Possibility. Orbit.</p><h1>Great teams<br>start with<br><em>great connections.</em></h1><p>A shared space for every step of your next great hire.</p><div class="login-steps"><span>Discover</span><span>Connect</span><span>Hire</span></div></div><p class="login-footer">A Mechlin product · Built for our people</p></section><main class="login-form" id="main"><div class="login-card"><span class="workspace-label">MECHLIN WORKSPACE</span><h1>Welcome to Orbit</h1><p class="muted">Your team’s next chapter starts here.</p>${messages[status]?`<div class="notice-inline">${messages[status]}</div>`:''}<a class="button microsoft-signin" href="/auth/login"><span class="microsoft-mark" aria-hidden="true"></span>Sign in with Microsoft 365</a><p class="muted">Use your Mechlin work account. New team members need administrator approval.</p>${isDemoEnabled?`<div class="demo-login-divider"><span>OR QA TESTING</span></div><button type="button" class="button secondary demo-signin-button" data-action="demo-login-modal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" style="margin-right:8px;"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M9 3a4 4 0 1 0 0 8a4 4 0 0 0 0-8 M17 4a4 4 0 0 1 0 8 M22 21v-2a4 4 0 0 0-3-4"/></svg>Demo / QA Login</button>`:''}<div class="login-access-note">${icon('Administration')}<span>Private workspace. Approved access only.</span></div></div></main></div>`;
 }
 function shell() {
   const nav=getNavList();
   if(!nav.includes(current))current=nav[0];
-  $('#app').innerHTML=`<div class="layout"><aside class="sidebar"><div class="sidebar-brand">${brand()}</div><nav aria-label="Main navigation"><p class="nav-label">WORKSPACE</p>${nav.map(n=>`${n==='Administration'?'<p class="nav-label admin-label">MANAGE</p>':''}<button data-nav="${n}" class="${current===n?'active':''}" ${current===n?'aria-current="page"':''}>${icon(n)}<span>${n}</span></button>`).join('')}</nav><div class="profile"><span class="avatar">${initials(me.name)}</span><div><strong>${escape(me.name)}</strong><div class="muted">${escape(me.role)}</div></div></div><div class="sidebar-caption">Mechlin Orbit · Internal workspace</div></aside><div class="workspace"><header class="topbar"><div class="breadcrumb">Orbit <span>/</span> <strong>${escape(current)}</strong></div><div class="topbar-right"><span class="workspace-status">${icon('Administration')} Private workspace</span><button class="secondary" data-action="logout">Sign out</button><span class="avatar small" aria-label="${escape(me.name)}">${initials(me.name)}</span></div></header><main class="content" id="main" tabindex="-1"><p class="muted">Loading your workspace…</p></main><footer class="workspace-footer">Thoughtful hiring, together. <span>Orbit by Mechlin</span></footer></div></div>`;
+  const isDemoEnabled=document.documentElement.dataset.demoLogin==='true';
+  const showQASwitch=Boolean(me?.isDemoUser||isDemoEnabled);
+  $('#app').innerHTML=`<div class="layout"><aside class="sidebar"><div class="sidebar-brand">${brand()}</div><nav aria-label="Main navigation"><p class="nav-label">WORKSPACE</p>${nav.map(n=>`${n==='Administration'?'<p class="nav-label admin-label">MANAGE</p>':''}<button data-nav="${n}" class="${current===n?'active':''}" ${current===n?'aria-current="page"':''}>${icon(n)}<span>${n}</span></button>`).join('')}</nav><div class="profile"><span class="avatar">${initials(me.name)}</span><div><strong>${escape(me.name)}</strong><div class="muted">${escape(me.role)}${me.team?` · ${escape(me.team)}`:''}</div>${me.isDemoUser?'<span class="qa-badge">QA Demo User</span>':''}</div></div><div class="sidebar-caption">Mechlin Orbit · Internal workspace</div></aside><div class="workspace"><header class="topbar"><div class="breadcrumb">Orbit <span>/</span> <strong>${escape(current)}</strong></div><div class="topbar-right">${showQASwitch?`<button type="button" class="secondary qa-switch-button" data-action="switch-demo-role" title="Switch QA Demo Persona">${icon('Administration')}<span>Switch QA Role</span></button>`:''}<span class="workspace-status">${icon('Administration')} Private workspace</span><button class="secondary" data-action="logout">Sign out</button><span class="avatar small" aria-label="${escape(me.name)}">${initials(me.name)}</span></div></header><main class="content" id="main" tabindex="-1"><p class="muted">Loading your workspace…</p></main><footer class="workspace-footer">Thoughtful hiring, together. <span>Orbit by Mechlin</span></footer></div></div>`;
   document.querySelectorAll('[data-nav]').forEach(b=>b.onclick=()=>{if(current!==b.dataset.nav){reqPage=1;pageState[b.dataset.nav]=1;if(b.dataset.nav==='Candidates')candidateQuery='';}current=b.dataset.nav;render();});
 }
 function syncPipelineScroll(initialLeft = 0) {
@@ -229,7 +301,10 @@ async function render() {
       const candidates=await api('candidates');
       const renderCandidateTable=(q=candidateQuery)=>{
         candidateQuery=q;
-        const filtered=q?candidates.filter(c=>`${c.name} ${c.email} ${c.skills} ${c.resume_text}`.toLowerCase().includes(q)):candidates;
+        const filtered=q?candidates.filter(c=>{
+          const appText=(c.applications||[]).map(a=>`${a.title} ${a.stage}`).join(' ');
+          return `${c.name} ${c.email} ${c.skills} ${c.resume_text} ${appText}`.toLowerCase().includes(q);
+        }):candidates;
         const {paged,page,totalPages,total,start}=paginate(filtered,pageState.Candidates||1,10);
         pageState.Candidates=page;
         const pag=renderPagination('Candidates',page,totalPages,total,start,10);
@@ -257,7 +332,7 @@ async function render() {
       const {paged,page,totalPages,total,start}=paginate(interviews,pageState.Interviews||1,10);
       pageState.Interviews=page;
       const pag=renderPagination('Interviews',page,totalPages,total,start,10);
-      html=heading('Structured interviews, independent feedback.',allows('recruit')?button('+ Plan interview','new-interview'):'')+`<div class="notice-inline">Interview plans are stored here. Calendar invitations and Teams/Meet links require a calendar adapter.</div><section class="panel">${table(['Candidate / role','Interviewer','Scheduled','Status','Feedback'],paged.map(i=>`<tr><td><strong>${escape(i.name)}</strong>${escape(i.title)}</td><td>${escape(i.interviewer)}</td><td>${escape(new Date(i.scheduled_at).toLocaleString())}</td><td>${badge(i.status)}</td><td><div class="actions">${i.interviewer_id===me.id&&i.status!=='completed'?button('Submit scorecard','scorecard',i.id):''}${allows('admin')&&i.interviewer_id!==me.id&&i.status!=='completed'?button('Proxy scorecard','scorecard-proxy',i.id,'class="secondary"'):''}${i.status!=='completed'&&(allows('recruit')||i.interviewer_id===me.id)?button('Edit','edit-interview',i.id,'class="secondary"'):''}${button('View feedback','feedback',i.id,'class="secondary"')}</div></td></tr>`))}${pag}</section>`;
+      html=heading('Structured interviews, independent feedback.',allows('recruit')?button('+ Plan interview','new-interview'):'')+`<div class="notice-inline">Interview plans are stored here. Calendar invitations and Teams/Meet links require a calendar adapter.</div><section class="panel">${table(['Candidate / role','Interviewer','Scheduled','Status','Feedback'],paged.map(i=>`<tr><td><strong>${escape(i.name)}</strong>${escape(i.title)}</td><td>${escape(i.interviewer)}</td><td>${escape(new Date(i.scheduled_at).toLocaleString())}</td><td>${badge(i.status)}</td><td><div class="actions">${i.interviewer_id===me.id&&i.status!=='completed'?button('Submit scorecard','scorecard',i.id):''}${allows('admin')&&i.interviewer_id!==me.id&&i.status!=='completed'?button('Proxy scorecard','scorecard-proxy',i.id,'class="secondary"'):''}${i.status!=='completed'&&(allows('recruit')||allows('admin')||i.interviewer_id===me.id)?button('Edit','edit-interview',i.id,'class="secondary"'):''}${button('View feedback','feedback',i.id,'class="secondary"')}</div></td></tr>`))}${pag}</section>`;
     }
     if(current==='Referrals') {
       const refs=await api('referrals');
@@ -295,7 +370,14 @@ async function render() {
   }catch(e){if(me)$('#main').innerHTML=`<section class="panel"><h1>Could not load this view</h1><p class="error">${escape(e.message)}</p>${button('Try again','refresh')}</section>`;}
 }
 function reqTable(reqs) {return table(['Position','Team','Headcount','Status','Actions'],reqs.map(r=>`<tr><td><strong>${escape(r.title)}</strong><small>${escape(r.skills.join(', '))}</small></td><td>${escape(r.team)}</td><td>${r.headcount}</td><td>${badge(r.status)}</td><td><div class="actions">${button('Details','req-details',r.id,'class="secondary"')}${['draft','open'].includes(r.status)&&(allows('recruit')||allows('requisition'))?button('Edit','edit-req',r.id,'class="secondary"'):''}${r.status==='draft'&&(allows('recruit')||allows('requisition'))?button('Submit','submit-req',r.id):''}${(r.status==='pending_manager'&&allows('approve_manager')||r.status==='pending_finance'&&allows('approve_finance'))?button('Review','approve-req',r.id):''}</div></td></tr>`),'requisitions-table');}
-function candidateTable(cs){return table(['Candidate','Skills','Source','Actions'],cs.map(c=>`<tr><td><div class="person-cell"><span class="avatar">${initials(c.name)}</span><div><strong>${escape(c.name)}</strong><small>${escape(c.email)}</small></div></div></td><td><div class="skill-list">${c.skills.map(s=>`<span class="skill-chip">${escape(s)}</span>`).join('')}</div></td><td>${escape(c.source)}</td><td><div class="actions">${button('View profile','candidate-details',c.id,'class="secondary"')}${allows('recruit')?button('Edit','edit-candidate',c.id,'class="secondary"'):''}</div></td></tr>`));}
+function candidateStatusCell(c){
+  if(!c.applications||!c.applications.length)return '<span class="muted">No applications</span>';
+  return `<div class="candidate-status-list">${c.applications.map(a=>{
+    const title=escape(a.title||'General Application');
+    return `<div class="candidate-status-pair"><span class="candidate-status-role" title="${title}">${title}</span> <span class="status-sep" aria-hidden="true">—</span> ${badge(a.stage||'Applied')}</div>`;
+  }).join('')}</div>`;
+}
+function candidateTable(cs){return table(['Candidate','Skills','Source','Status','Actions'],cs.map(c=>`<tr><td><div class="person-cell"><span class="avatar">${initials(c.name)}</span><div><strong title="${escape(c.name)}">${escape(c.name)}</strong><small title="${escape(c.email)}">${escape(c.email)}</small></div></div></td><td><div class="skill-list">${c.skills.map(s=>`<span class="skill-chip" title="${escape(s)}">${escape(s)}</span>`).join('')}</div></td><td><span title="${escape(c.source)}">${escape(c.source)}</span></td><td>${candidateStatusCell(c)}</td><td><div class="actions">${button('View profile','candidate-details',c.id,'class="secondary"')}${allows('recruit')?button('Edit','edit-candidate',c.id,'class="secondary"'):''}</div></td></tr>`),'candidates-table');}
 document.addEventListener('change',event=>{
   if(event.target.matches('#appearance-form input[name="theme"]')){
     const chosen=event.target.value;applyTheme(chosen);$('#save-theme').disabled=chosen===appearance.theme;
@@ -310,6 +392,8 @@ document.addEventListener('submit',async event=>{
 document.addEventListener('click',async event=>{
   const b=event.target.closest('[data-action]');if(!b)return;const a=b.dataset.action,id=b.dataset.id;
   try {
+    if(a==='demo-login-modal'){await openDemoModal(false);return;}
+    if(a==='switch-demo-role'){await openDemoModal(true);return;}
     if(a==='req-page'||a==='page'){const view=b.dataset.view||'Requisitions';const p=Number(b.dataset.page);const total=Number(b.dataset.totalPages||Infinity);if(p>=1&&p<=total&&p!==(pageState[view]||1)){pageState[view]=p;reqPage=pageState.Requisitions;await render();}return;}
     if(a==='navigate'){if(current!==b.dataset.view){reqPage=1;pageState[b.dataset.view]=1;if(b.dataset.view==='Candidates')candidateQuery='';}current=b.dataset.view;await render();return;}
     if(a==='reset-theme'){applyTheme(appearance.theme);document.querySelector(`#appearance-form input[value="${appearance.theme}"]`).checked=true;$('#save-theme').disabled=true;$('#appearance-status').textContent='Preview reset to the saved workspace theme.';return;}
@@ -464,7 +548,7 @@ document.addEventListener('click',async event=>{
       bindValidation('skills',checkSkills);
     }
     if(a==='parse-resume'){const form=$('#edit-form');const r=await api('resume/parse','POST',{text:form.elements.resume_text.value});if(r.email)form.elements.email.value=r.email;if(r.phone){form.elements.phone.value=r.phone;form.elements.phone.dispatchEvent(new Event('input'));}notice(r.warning);}
-    if(a==='candidate-details'){const c=(await api('candidates')).find(c=>c.id===id)||await api(`candidates/${id}`);modal(c.name,`<p>${escape(c.email)}${c.phone?` · ${escape(c.phone)}`:''}</p><p>${escape((c.skills||[]).join(', '))}</p><h3>Experience / Resume</h3><p class="score-note">${escape(c.resume_text||c.experience||'No resume text provided.')}</p>${allows('recruit')?`<div class="actions" style="margin-top:16px">${button('Edit','edit-candidate',c.id)}</div>`:''}`);}
+    if(a==='candidate-details'){const c=(await api('candidates')).find(c=>c.id===id)||await api(`candidates/${id}`);const appsHtml=(c.applications&&c.applications.length)?`<h3>Applications & Status</h3><div class="candidate-status-list" style="margin-bottom:14px;">${c.applications.map(app=>{const title=escape(app.title||'General Application');return `<div class="candidate-status-pair"><span class="candidate-status-role" title="${title}">${title}</span> <span class="status-sep" aria-hidden="true">—</span> ${badge(app.stage||'Applied')}</div>`;}).join('')}</div>`:'';modal(c.name,`<p>${escape(c.email)}${c.phone?` · ${escape(c.phone)}`:''}</p><p>${escape((c.skills||[]).join(', '))}</p>${appsHtml}<h3>Experience / Resume</h3><p class="score-note">${escape(c.resume_text||c.experience||'No resume text provided.')}</p>${allows('recruit')?`<div class="actions" style="margin-top:16px">${button('Edit','edit-candidate',c.id)}</div>`:''}`);}
     if(a==='new-application'){const [cs,rs]=await Promise.all([api('candidates'),api('requisitions')]);if(!cs.length||!rs.some(r=>r.status==='open'))throw new Error('Add a candidate and approve a requisition first.');modal('Add application',select('Candidate','candidate_id',cs.map(c=>[c.id,c.name]))+select('Open requisition','requisition_id',rs.filter(r=>r.status==='open').map(r=>[r.id,r.title])),v=>api('applications','POST',v));}
     if(a==='move'||a==='reject-app'){const stage=a==='move'?b.dataset.stage:'Rejected';modal('Change application stage',`<p>Move this application to <strong>${escape(stage)}</strong>?</p>`,()=>api(`applications/${id}/stage`,'POST',{stage}));}
     if(a==='match'){const r=await api(`applications/${id}/match`);modal('Skill match explanation',`<p class="eyebrow">${escape(r.method)}</p><h1>${r.score===null?'Unscored':r.score+'%'}</h1><p>${escape(r.explanation)}</p><h3>Matched</h3><p>${escape(r.matched.join(', ')||'None')}</p><h3>Not found in skills</h3><p>${escape(r.missing.join(', ')||'None')}</p><p class="muted">This does not assess ability, potential or suitability. Never use this score as an automatic rejection rule.</p>`);}
@@ -473,11 +557,16 @@ document.addEventListener('click',async event=>{
       const interviews=await api('interviews');
       const i=interviews.find(item=>item.id===id)||await api(`interviews/${id}`);
       if(!i)throw new Error('Interview not found.');
-      const users=allows('recruit')?await api('interviewers'):[];
+      const canManage=allows('recruit')||allows('admin');
+      const users=canManage?await api('interviewers'):[];
       const pad=n=>String(n).padStart(2,'0');
       const toLocal=s=>{const d=new Date(s);return isNaN(d.getTime())?'':`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;};
       const comps=JSON.parse(i.competencies||'[]');
-      modal('Edit interview',`<div class="form-grid"><p class="full"><strong>Candidate:</strong> ${escape(i.name)} · ${escape(i.title)}</p>${users.length?select('Interviewer','interviewer_id',users.map(u=>[u.id,u.name]),i.interviewer_id):`<p class="full"><strong>Interviewer:</strong> ${escape(i.interviewer)}</p>`}${field('Date and time (your timezone)','scheduled_at','datetime-local',toLocal(i.scheduled_at))}${allows('recruit')?field('Competencies, comma separated','competencies','text',comps.join(', '),false):''}<p class="full status-note">This updates the scheduled interview date and time. It does not send a calendar invitation.</p></div>`,v=>{
+      const interviewerOptions = users.map(u=>[u.id,u.name]);
+      if(i.interviewer_id && !interviewerOptions.some(([uid])=>uid===i.interviewer_id)){
+        interviewerOptions.unshift([i.interviewer_id, `${i.interviewer || 'Assigned interviewer'} (Current)`]);
+      }
+      modal('Edit interview',`<div class="form-grid"><p class="full"><strong>Candidate:</strong> ${escape(i.name)} · ${escape(i.title)}</p>${interviewerOptions.length?select('Interviewer','interviewer_id',interviewerOptions,i.interviewer_id):`<p class="full"><strong>Interviewer:</strong> ${escape(i.interviewer)}</p>`}${field('Date and time (your timezone)','scheduled_at','datetime-local',toLocal(i.scheduled_at))}${canManage?field('Competencies, comma separated','competencies','text',comps.join(', '),false):''}<p class="full status-note">This updates the scheduled interview date and time. It does not send a calendar invitation.</p></div>`,v=>{
         const scheduledDate=new Date(v.scheduled_at);
         if(!Number.isFinite(scheduledDate.getTime())||scheduledDate.getTime()<Date.now()){
           throw new Error('Enter a future interview date.');
