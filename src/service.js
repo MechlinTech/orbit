@@ -326,8 +326,10 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
   }
   if (path === 'resume/parse' && method === 'POST') {
     permit(user,'recruit'); const resume = text(body.text,'Resume text',50000);
-    return {email:resume.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0] || '', phone:resume.match(/\+?[\d][\d ()-]{8,20}\d/)?.[0] || '',
-      warning:'Plain-text extraction only. Confirm every field; PDF/DOCX parsing is a later adapter.'};
+    const email = resume.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0] || '';
+    const phone = resume.match(/\+?[\d][\d ()-]{8,20}\d/)?.[0] || '';
+    const message = (email || phone) ? 'Email and phone number extracted successfully.' : 'No email or phone number found in resume text.';
+    return { email, phone, message, warning: message };
   }
   if (path === 'jd/draft' && method === 'POST') {
     permit(user,'recruit','requisition'); const title = text(body.title,'Title',200), skills = validateSkills(body.skills);

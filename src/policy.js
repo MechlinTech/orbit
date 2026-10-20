@@ -26,7 +26,7 @@ export function text(value, label, max = 500, optional = false) {
 }
 export function email(value) {
   const result = text(value, 'Email', 254).toLowerCase();
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(result)) throw new HttpError(400, 'Enter a valid email address.');
+  if (!/^[^\s@.]+(?:\.[^\s@.]+)*@[^\s@]+\.[^\s@]+$/.test(result)) throw new HttpError(400, 'Enter a valid email address.');
   return result;
 }
 export function phone(value, optional = true) {
@@ -38,7 +38,8 @@ export function phone(value, optional = true) {
 }
 export const currencies = ['USD','EUR','GBP','CAD','AUD','INR','JPY','CHF','SGD','NZD','AED','HKD','SEK','NOK','DKK','BRL','MXN','ZAR'];
 export function currency(value) {
-  const result = text(value, 'Currency', 10).toUpperCase();
+  if (typeof value !== 'string') throw new HttpError(400, 'Enter a supported three-letter currency code.');
+  const result = value.trim().toUpperCase();
   if (!/^[A-Z]{3}$/.test(result) || !currencies.includes(result)) throw new HttpError(400, 'Enter a supported three-letter currency code.');
   return result;
 }
