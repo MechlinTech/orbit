@@ -19,7 +19,8 @@ const results=[];const check=(label,condition)=>{if(!condition)throw new Error('
 try{
   const target=await send('Target.createTarget',{url:'about:blank'},null);session=(await send('Target.attachToTarget',{targetId:target.targetId,flatten:true},null)).sessionId;
   await send('Runtime.enable');await send('Page.enable');await send('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});
-  await send('Page.navigate',{url:'http://localhost:3000/#/Overview'});await waitFor("document.querySelector('.metrics') && document.querySelectorAll('.metric').length===4");
+  const port=Number(process.env.TEST_PORT || 3005);
+  await send('Page.navigate',{url:`http://localhost:${port}/#/Overview`});await waitFor("document.querySelector('.metrics') && document.querySelectorAll('.metric').length===4");
   check('dashboard renders persisted statistics',await evaluate("document.querySelector('.metrics').innerText.includes('Approved headcount')"));
   const snap=async name=>{const r=await send('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});writeFileSync(resolve(output,name+'.png'),Buffer.from(r.data,'base64'));};
   await snap('desktop-overview');
@@ -59,6 +60,29 @@ try{
   await click(`document.querySelector('[data-nav="Candidates"]')`);await waitFor(`document.querySelector('[data-action="new-candidate"]')!==null`);
   await click(`document.querySelector('[data-action="new-candidate"]')`);await waitFor("document.querySelector('dialog').open");
   check('candidate form fields have labels',await evaluate("[...document.querySelectorAll('#edit-form input,#edit-form textarea')].every(e=>e.closest('label'))"));
+
+  const candidateIndicatorsMatch = await evaluate(`(()=>{
+    const form = document.querySelector('#edit-form');
+    const getLabelHeading = name => form.querySelector(\`[name="\${name}"]\`).closest('label')?.querySelector('.label-heading')?.innerText.trim();
+    const hasRequired = name => {
+      const el = form.querySelector(\`[name="\${name}"]\`);
+      const heading = getLabelHeading(name);
+      return heading && heading.endsWith('*') && el.required && el.getAttribute('aria-required') === 'true';
+    };
+    const hasOptional = name => {
+      const el = form.querySelector(\`[name="\${name}"]\`);
+      const heading = getLabelHeading(name);
+      return heading && heading.endsWith('Optional') && !el.required && !el.hasAttribute('aria-required');
+    };
+    return hasRequired('name') &&
+           hasRequired('email') &&
+           hasRequired('team') &&
+           hasRequired('source') &&
+           hasOptional('phone') &&
+           hasOptional('skills') &&
+           hasOptional('resume_text');
+  })()`);
+  check('Add Candidate form displays * for required fields and Optional for optional fields with aria-required', candidateIndicatorsMatch);
   await evaluate(`{const f=document.querySelector('#edit-form');for(const [k,v] of Object.entries({name:'Browser Test <b>Candidate</b>',email:'browser-test@example.com',phone:'',team:'Dev',skills:'SQL, JavaScript',source:'Referral',resume_text:'Experience with SQL and JavaScript.'}))f.elements[k].value=v;f.requestSubmit();}`);
   await waitFor("!document.querySelector('dialog').open && document.querySelector('#main').innerText.includes('browser-test@example.com')");
   check('candidate form saves and refreshes directory',true);
@@ -70,7 +94,24 @@ try{
   await click(`document.querySelector('#candidate-table [data-action="edit-candidate"]')`);
   await waitFor("document.querySelector('dialog').open && document.querySelector('#modal-body h2')?.textContent==='Edit candidate'");
   check('edit form pre-populates existing candidate details',await evaluate("document.querySelector('#edit-form [name=name]').value.includes('Candidate') && document.querySelector('#edit-form [name=email]').value==='browser-test@example.com' && document.querySelector('#edit-form [name=resume_text]').value.includes('Experience with SQL')"));
-  await evaluate(`{const f=document.querySelector('#edit-form');f.elements['name'].value='Browser Test Senior Candidate';f.elements['skills'].value='SQL, JavaScript, TypeScript';f.elements['resume_text'].value='10 years experience with SQL, JavaScript and TypeScript.';f.requestSubmit();}`);
+  await evaluate(`{const f=document.querySelector('#edit-form');f.elements['phone'].value='abc123';f.elements['phone'].dispatchEvent(new Event('blur'));f.requestSubmit();}`);
+  await waitFor("document.querySelector('#phone-error')?.textContent.includes('Enter a valid phone number.')");
+  check('Candidate edit rejects invalid phone number abc123 with inline message and blocks save without native customError tooltip',await evaluate("document.querySelector('dialog').open && document.querySelector('#phone-error').textContent.includes('Enter a valid phone number.') && !document.querySelector('#edit-form [name=phone]').validity.customError"));
+  await evaluate(`{const f=document.querySelector('#edit-form');f.elements['phone'].value='+1 555-019-2834';f.elements['phone'].dispatchEvent(new Event('input'));}`);
+  check('Correcting phone number clears the phone validation error',await evaluate("document.querySelector('#phone-error').textContent===''"));
+
+  await evaluate(`{const f=document.querySelector('#edit-form');f.elements['resume_text'].value='No contact details in this resume text.';}`);
+  await click(`document.querySelector('[data-action="parse-resume"]')`);
+  await waitFor("document.querySelector('#notice')?.textContent.includes('No email or phone number found')");
+  check('Extracting without email or phone displays informational message and does not falsely indicate success',await evaluate("document.querySelector('#notice')?.textContent.includes('No email or phone number found in resume text.')"));
+
+  await evaluate(`{const f=document.querySelector('#edit-form');f.elements['resume_text'].value='Experienced engineer. Contact: extracted.lead@example.com or +1 555-888-9999.';}`);
+  await click(`document.querySelector('[data-action="parse-resume"]')`);
+  await waitFor("document.querySelector('#notice')?.textContent==='Email and phone number extracted successfully.'");
+  check('Extract email and phone displays clear success notification: Email and phone number extracted successfully.',await evaluate("document.querySelector('#notice')?.textContent==='Email and phone number extracted successfully.'"));
+  check('Extract email and phone populates email and phone fields correctly',await evaluate("document.querySelector('#edit-form [name=email]').value==='extracted.lead@example.com' && document.querySelector('#edit-form [name=phone]').value==='+1 555-888-9999'"));
+
+  await evaluate(`{const f=document.querySelector('#edit-form');f.elements['name'].value='Browser Test Senior Candidate';f.elements['email'].value='browser-test@example.com';f.elements['skills'].value='SQL, JavaScript, TypeScript';f.elements['resume_text'].value='10 years experience with SQL, JavaScript and TypeScript.';f.requestSubmit();}`);
   await waitFor("!document.querySelector('dialog').open && document.querySelector('#candidate-table').innerText.includes('Browser Test Senior Candidate')");
   check('candidate edit updates candidate details and experience in directory',await evaluate("document.querySelector('#candidate-table').innerText.includes('Browser Test Senior Candidate') && document.querySelector('#candidate-table').innerText.includes('TypeScript')"));
   await click(`document.querySelector('#candidate-table [data-action="candidate-details"]')`);
@@ -102,6 +143,28 @@ try{
   await evaluate(`{const q=document.querySelector('#candidate-search');if(q){q.value='';q.dispatchEvent(new Event('input'));}}`);
   await waitFor("document.querySelector('#main').innerText.includes('qa-candidate@example.com')");
   check('Skills field accepts comma-separated format and renders separate skill chips',await evaluate("(()=>{const row=[...document.querySelectorAll('#candidate-table tbody tr')].find(r=>r.innerText.includes('qa-candidate@example.com'));if(!row)return false;const chips=[...row.querySelectorAll('.skill-chip')].map(c=>c.textContent.trim());return chips.includes('Manual Testing') && chips.includes('Automation Testing') && chips.length===2;})()"));
+
+  await click(`document.querySelector('[data-action="new-candidate"]')`);
+  await waitFor("document.querySelector('dialog').open");
+  await evaluate(`{const f=document.querySelector('#edit-form');f.elements['name'].value='Gaurvi Gupta';f.elements['email'].value='gaurvi..gupta@example.com';f.elements['skills'].value='Manual Testing';f.requestSubmit();}`);
+  await waitFor("document.querySelector('#email-error')?.textContent.includes('Enter a valid email address.')");
+  check('Email field rejects consecutive dots in local part and displays validation message',await evaluate("document.querySelector('dialog').open && document.querySelector('#email-error').textContent.includes('Enter a valid email address.') && document.querySelector('#edit-form [name=name]').value==='Gaurvi Gupta'"));
+
+  await evaluate(`{const f=document.querySelector('#edit-form');f.elements['email'].value='.gaurvi@example.com';f.requestSubmit();}`);
+  await waitFor("document.querySelector('#email-error')?.textContent.includes('Enter a valid email address.')");
+  check('Email field rejects local part starting with dot',await evaluate("document.querySelector('dialog').open && document.querySelector('#email-error').textContent.includes('Enter a valid email address.')"));
+
+  await evaluate(`{const f=document.querySelector('#edit-form');f.elements['email'].value='gaurvi.@example.com';f.requestSubmit();}`);
+  await waitFor("document.querySelector('#email-error')?.textContent.includes('Enter a valid email address.')");
+  check('Email field rejects local part ending with dot',await evaluate("document.querySelector('dialog').open && document.querySelector('#email-error').textContent.includes('Enter a valid email address.')"));
+
+  await evaluate(`{const f=document.querySelector('#edit-form');f.elements['email'].value='gaurvi.gupta@example.com';f.elements['email'].dispatchEvent(new Event('input'));}`);
+  check('Correcting email clears the validation error message',await evaluate("document.querySelector('#email-error').textContent===''"));
+  await evaluate(`{document.querySelector('#edit-form').requestSubmit();}`);
+  await waitFor("!document.querySelector('dialog').open");
+  await evaluate(`{const q=document.querySelector('#candidate-search');if(q){q.value='';q.dispatchEvent(new Event('input'));}}`);
+  await waitFor("document.querySelector('#main').innerText.includes('gaurvi.gupta@example.com')");
+  check('Candidate with valid email is created and displayed in directory',await evaluate("document.querySelector('#main').innerText.includes('gaurvi.gupta@example.com')"));
 
   check('Candidates table header includes Status column',await evaluate("[...document.querySelectorAll('#candidate-table thead th')].some(th=>th.textContent.trim()==='Status')"));
   check('Candidate with single application displays correct stage and requisition',await evaluate("(()=>{const row=[...document.querySelectorAll('#candidate-table tbody tr')].find(r=>r.innerText.includes('Avery Chen'));if(!row)return false;const cell=row.children[3];return cell.textContent.includes('Senior Software Engineer') && cell.textContent.includes('Applied') && Boolean(cell.querySelector('.badge.Applied'));})()"));
@@ -284,6 +347,83 @@ try{
   await waitFor("document.querySelector('.heading h1')?.textContent==='Interviews' && document.querySelector('table tbody tr')!==null");
   check('Interviews table persists updated interview date and time after navigation',await evaluate("document.querySelector('#main').innerText.includes('2030')"));
 
+  check('Plan interview button is displayed on Interviews page', await evaluate("Boolean(document.querySelector('[data-action=\"new-interview\"]'))"));
+  await click(`document.querySelector('[data-action="new-interview"]')`);
+  await waitFor("document.querySelector('dialog').open && document.querySelector('#modal-body h2')?.textContent==='Plan interview'");
+
+  const interviewIndicatorsMatch = await evaluate(`(()=>{
+    const form = document.querySelector('#edit-form');
+    const getLabelHeading = name => form.querySelector(\`[name="\${name}"]\`).closest('label')?.querySelector('.label-heading')?.innerText.trim();
+    const hasRequired = name => {
+      const el = form.querySelector(\`[name="\${name}"]\`);
+      const heading = getLabelHeading(name);
+      return heading && heading.endsWith('*') && el.required && el.getAttribute('aria-required') === 'true';
+    };
+    return hasRequired('application_id') &&
+           hasRequired('interviewer_id') &&
+           hasRequired('scheduled_at') &&
+           hasRequired('competencies');
+  })()`);
+  check('Plan interview form displays * for required fields with aria-required', interviewIndicatorsMatch);
+
+  const dateMinMatchesToday = await evaluate(`(()=>{
+    const inp = document.querySelector('#edit-form [name="scheduled_at"]');
+    if (!inp) return false;
+    const d = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    const expectedMin = \`\${d.getFullYear()}-\${pad(d.getMonth() + 1)}-\${pad(d.getDate())}T00:00\`;
+    return inp.min === expectedMin && inp.getAttribute('min') === expectedMin;
+  })()`);
+  check('Plan interview date picker sets min attribute to local today', dateMinMatchesToday);
+
+  const pastDateDisabled = await evaluate(`(()=>{
+    const inp = document.querySelector('#edit-form [name="scheduled_at"]');
+    const d = new Date(Date.now() - 86400000);
+    const pad = n => String(n).padStart(2, '0');
+    inp.value = \`\${d.getFullYear()}-\${pad(d.getMonth() + 1)}-\${pad(d.getDate())}T10:00\`;
+    return inp.validity.rangeUnderflow === true;
+  })()`);
+  check('Plan interview date picker marks yesterday date as rangeUnderflow (disabled in calendar)', pastDateDisabled);
+
+  const todaySelectable = await evaluate(`(()=>{
+    const inp = document.querySelector('#edit-form [name="scheduled_at"]');
+    const d = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    inp.value = \`\${d.getFullYear()}-\${pad(d.getMonth() + 1)}-\${pad(d.getDate())}T23:59\`;
+    return inp.validity.rangeUnderflow === false;
+  })()`);
+  check('Plan interview date picker allows today date (rangeUnderflow is false)', todaySelectable);
+
+  const futureSelectable = await evaluate(`(()=>{
+    const inp = document.querySelector('#edit-form [name="scheduled_at"]');
+    const d = new Date(Date.now() + 7 * 86400000);
+    const pad = n => String(n).padStart(2, '0');
+    inp.value = \`\${d.getFullYear()}-\${pad(d.getMonth() + 1)}-\${pad(d.getDate())}T15:00\`;
+    return inp.validity.rangeUnderflow === false && inp.checkValidity() === true;
+  })()`);
+  check('Plan interview date picker allows future dates', futureSelectable);
+
+  // Attempting to submit past date is blocked
+  await evaluate(`(()=>{
+    const f = document.querySelector('#edit-form');
+    const d = new Date(Date.now() - 86400000);
+    const pad = n => String(n).padStart(2, '0');
+    f.elements['scheduled_at'].value = \`\${d.getFullYear()}-\${pad(d.getMonth() + 1)}-\${pad(d.getDate())}T10:00\`;
+    f.requestSubmit();
+  })()`);
+  check('Plan interview blocks submission of past interview dates', await evaluate("document.querySelector('dialog').open"));
+
+  // Submit valid future interview date
+  await evaluate(`(()=>{
+    const f = document.querySelector('#edit-form');
+    const d = new Date(Date.now() + 5 * 86400000);
+    const pad = n => String(n).padStart(2, '0');
+    f.elements['scheduled_at'].value = \`\${d.getFullYear()}-\${pad(d.getMonth() + 1)}-\${pad(d.getDate())}T14:00\`;
+    f.requestSubmit();
+  })()`);
+  await waitFor("!document.querySelector('dialog').open && document.querySelectorAll('table tbody tr').length >= 2");
+  check('Plan interview succeeds with future date and schedules interview', await evaluate("document.querySelectorAll('table tbody tr').length >= 2"));
+
   await click(`document.querySelector('[data-nav="Requisitions"]')`);
   await waitFor("document.querySelector('.requisitions-table tbody tr')!==null");
   check('Requisitions table displays Edit option for existing eligible requisition',await evaluate("Boolean(document.querySelector('.requisitions-table [data-action=\"edit-req\"]'))"));
@@ -291,10 +431,77 @@ try{
   await click(`document.querySelector('.requisitions-table [data-action="edit-req"]')`);
   await waitFor("document.querySelector('dialog').open && document.querySelector('#modal-body h2')?.textContent==='Edit requisition'");
   check('Edit requisition modal pre-populates existing position, team, headcount, and description',await evaluate("Boolean(document.querySelector('#edit-form [name=title]').value && document.querySelector('#edit-form [name=team]').value && document.querySelector('#edit-form [name=headcount]').value && document.querySelector('#edit-form [name=description]').value)"));
+
+  const reqIndicatorsMatch = await evaluate(`(()=>{
+    const form = document.querySelector('#edit-form');
+    const getLabelHeading = name => form.querySelector(\`[name="\${name}"]\`).closest('label')?.querySelector('.label-heading')?.innerText.trim();
+    const hasRequired = name => {
+      const el = form.querySelector(\`[name="\${name}"]\`);
+      const heading = getLabelHeading(name);
+      return heading && heading.endsWith('*') && el.required && el.getAttribute('aria-required') === 'true';
+    };
+    const hasOptional = name => {
+      const el = form.querySelector(\`[name="\${name}"]\`);
+      const heading = getLabelHeading(name);
+      return heading && heading.endsWith('Optional') && !el.required && !el.hasAttribute('aria-required');
+    };
+    return hasRequired('title') &&
+           hasRequired('team') &&
+           hasRequired('headcount') &&
+           hasRequired('currency') &&
+           hasRequired('salary_min') &&
+           hasRequired('salary_max') &&
+           hasRequired('description') &&
+           hasOptional('skills');
+  })()`);
+  check('Edit Requisition form displays * for required fields and Optional for optional fields with aria-required', reqIndicatorsMatch);
+
+  const specialCharsBlocked = await evaluate(`(()=>{
+    const f=document.querySelector('#edit-form');
+    const minInp=f.elements['salary_min'];
+    const maxInp=f.elements['salary_max'];
+    const results = [];
+    for(const key of ['-', '+', '.', 'e', 'E']) {
+      const evMin = new KeyboardEvent('keydown', { key, cancelable: true, bubbles: true });
+      minInp.dispatchEvent(evMin);
+      results.push(evMin.defaultPrevented);
+      const evMax = new KeyboardEvent('keydown', { key, cancelable: true, bubbles: true });
+      maxInp.dispatchEvent(evMax);
+      results.push(evMax.defaultPrevented);
+    }
+    return results.every(Boolean);
+  })()`);
+  check('Edit Requisition salary fields block -, +, and . keyboard inputs', specialCharsBlocked);
+
+  const pasteCleaned = await evaluate(`(()=>{
+    const f=document.querySelector('#edit-form');
+    const minInp=f.elements['salary_min'];
+    const maxInp=f.elements['salary_max'];
+    const pasteMin = new Event('paste', { cancelable: true, bubbles: true });
+    pasteMin.clipboardData = { getData: () => '-50000.50' };
+    minInp.dispatchEvent(pasteMin);
+    const pasteMax = new Event('paste', { cancelable: true, bubbles: true });
+    pasteMax.clipboardData = { getData: () => '+120000.00' };
+    maxInp.dispatchEvent(pasteMax);
+    return minInp.value === '5000050' && maxInp.value === '12000000';
+  })()`);
+  check('Edit Requisition salary fields sanitize pasted values removing -, +, and .', pasteCleaned);
+
+  await evaluate(`{
+    const f=document.querySelector('#edit-form');
+    f.elements['salary_min'].value='150000';
+    f.elements['salary_max'].value='120000';
+    f.requestSubmit();
+  }`);
+  await waitFor("document.querySelector('#form-error')?.textContent.includes('Minimum salary exceeds maximum.')");
+  check('Minimum salary exceeding maximum salary blocks save with error', await evaluate("document.querySelector('dialog').open && document.querySelector('#form-error').textContent.includes('Minimum salary exceeds maximum.')"));
+
   await evaluate(`{
     const f=document.querySelector('#edit-form');
     f.elements['title'].value='Staff Cloud Architect';
     f.elements['headcount'].value='2';
+    f.elements['salary_min'].value='90000';
+    f.elements['salary_max'].value='140000';
     f.elements['skills'].value='Go, Kubernetes, Cloud Architecture';
     f.elements['description'].value='Lead our core cloud architecture and distributed infrastructure.';
     f.requestSubmit();
@@ -305,6 +512,66 @@ try{
   await waitFor("document.querySelector('dialog').open && document.querySelector('#modal-body')?.innerText.includes('Lead our core cloud architecture')");
   check('Requisition details modal displays updated details and Edit option',await evaluate("document.querySelector('dialog').innerText.includes('Lead our core cloud architecture') && Boolean(document.querySelector('dialog [data-action=\"edit-req\"]'))"));
   await click(`document.querySelector('#close-modal')`);
+
+  await click(`document.querySelector('[data-action="new-req"]')`);
+  await waitFor("document.querySelector('dialog').open && document.querySelector('#modal-body h2')?.textContent==='New requisition'");
+  await evaluate(`{
+    const f=document.querySelector('#edit-form');
+    f.elements['title'].value='Platform Engineer';
+    f.elements['currency'].value='@@@';
+    f.elements['skills'].value='Go, Kubernetes';
+    f.elements['description'].value='Platform engineering role.';
+    f.requestSubmit();
+  }`);
+  await waitFor("document.querySelector('#currency-error')?.textContent.includes('Enter a supported three-letter currency code.')");
+  check('New Requisition rejects unsupported currency @@@ and displays validation message',await evaluate("document.querySelector('dialog').open && document.querySelector('#currency-error').textContent.includes('Enter a supported three-letter currency code.')"));
+
+  await evaluate(`{
+    const f=document.querySelector('#edit-form');
+    f.elements['currency'].value='123';
+    f.requestSubmit();
+  }`);
+  await waitFor("document.querySelector('#currency-error')?.textContent.includes('Enter a supported three-letter currency code.')");
+  check('New Requisition rejects unsupported numeric currency 123',await evaluate("document.querySelector('dialog').open && document.querySelector('#currency-error').textContent.includes('Enter a supported three-letter currency code.')"));
+
+  await evaluate(`{
+    const f=document.querySelector('#edit-form');
+    f.elements['currency'].value='USD';
+    f.elements['currency'].dispatchEvent(new Event('input'));
+  }`);
+  check('Correcting currency clears the currency validation error message',await evaluate("document.querySelector('#currency-error').textContent===''"));
+
+  await evaluate(`{document.querySelector('#edit-form').requestSubmit();}`);
+  await waitFor("!document.querySelector('dialog').open && document.querySelector('.requisitions-table').innerText.includes('Platform Engineer')");
+  check('New Requisition with valid currency USD is created successfully',await evaluate("document.querySelector('.requisitions-table').innerText.includes('Platform Engineer')"));
+
+  await click(`document.querySelector('[data-nav="Administration"]')`);
+  await waitFor("document.querySelector('[data-action=\"new-user\"]')!==null");
+  await click(`document.querySelector('[data-action=\"new-user\"]')`);
+  await waitFor("document.querySelector('dialog').open && document.querySelector('#modal-body h2')?.textContent==='Add Microsoft 365 user'");
+  const adminIndicatorsMatch = await evaluate(`(()=>{
+    const form = document.querySelector('#edit-form');
+    const getLabelHeading = name => form.querySelector(\`[name="\${name}"]\`).closest('label')?.querySelector('.label-heading')?.innerText.trim();
+    const hasRequired = name => {
+      const el = form.querySelector(\`[name="\${name}"]\`);
+      const heading = getLabelHeading(name);
+      return heading && heading.endsWith('*') && el.required && el.getAttribute('aria-required') === 'true';
+    };
+    const hasOptional = name => {
+      const el = form.querySelector(\`[name="\${name}"]\`);
+      const heading = getLabelHeading(name);
+      return heading && heading.endsWith('Optional') && !el.required && !el.hasAttribute('aria-required');
+    };
+    return hasRequired('name') &&
+           hasRequired('email') &&
+           hasRequired('oid') &&
+           hasRequired('tenant') &&
+           hasRequired('role') &&
+           hasOptional('team');
+  })()`);
+  check('Add user form displays * for required fields and Optional for optional fields with aria-required', adminIndicatorsMatch);
+  await click("document.querySelector('#close-modal')");
+  await waitFor("!document.querySelector('dialog').open");
 
   await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
   await click(`document.querySelector('[data-nav="Overview"]')`);await waitFor("document.querySelector('.metrics')!==null");
@@ -327,16 +594,44 @@ try{
   await click(`document.querySelector('[data-action="logout"]')`);await waitFor("document.querySelector('.login-card')!==null");
   check('sign out returns to Microsoft-only login',await evaluate("document.querySelector('.login-card a').textContent.trim()==='Sign in with Microsoft 365'"));
   await send('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});await snap('desktop-login');
-  await send('Page.navigate',{url:'http://localhost:3000/?access=pending'});await waitFor("document.querySelector('.notice-inline')!==null");
+  await send('Page.navigate',{url:`http://localhost:${port}/?access=pending`});await waitFor("document.querySelector('.notice-inline')!==null");
   check('pending access notice explains approval requirement',await evaluate("document.querySelector('.notice-inline').textContent.includes('Access pending approval')"));
 
-  await send('Page.navigate',{url:'http://localhost:3000/'});await waitFor("document.querySelector('.login-card')!==null");
+  await send('Page.navigate',{url:`http://localhost:${port}/`});await waitFor("document.querySelector('.login-card')!==null");
   check('login page displays Demo / QA Login button when demo is enabled',await evaluate("Boolean(document.querySelector('[data-action=\"demo-login-modal\"]'))"));
 
   await click("document.querySelector('[data-action=\"demo-login-modal\"]')");
   await waitFor("document.querySelector('dialog').open && document.querySelector('#modal-body h2')?.textContent==='Demo / QA Sign In'");
   check('demo login modal opens with role and team selectors',await evaluate("Boolean(document.querySelector('#edit-form select[name=\"role\"]') && document.querySelector('#edit-form select[name=\"team\"]'))"));
   check('demo login modal displays role description',await evaluate("Boolean(document.querySelector('#demo-role-desc')?.textContent.length > 5)"));
+
+  const demoRoleIndicators = await evaluate(`(()=>{
+    const form = document.querySelector('#edit-form');
+    const roleSelect = form.querySelector('[name="role"]');
+    const teamSelect = form.querySelector('[name="team"]');
+    const getTeamHeading = () => form.querySelector('#demo-team-label .label-heading')?.innerText.trim();
+
+    // Test with Recruiter role: Team should be required with *
+    roleSelect.value = 'Recruiter';
+    roleSelect.dispatchEvent(new Event('change'));
+    const isRequiredForRecruiter = teamSelect.required &&
+      teamSelect.getAttribute('aria-required') === 'true' &&
+      getTeamHeading().endsWith('*');
+
+    // Switch to System Admin role: Team should become Optional without required
+    roleSelect.value = 'System Admin';
+    roleSelect.dispatchEvent(new Event('change'));
+    const isOptionalForAdmin = !teamSelect.required &&
+      !teamSelect.hasAttribute('aria-required') &&
+      getTeamHeading().endsWith('Optional');
+
+    // Switch back to Recruiter
+    roleSelect.value = 'Recruiter';
+    roleSelect.dispatchEvent(new Event('change'));
+
+    return isRequiredForRecruiter && isOptionalForAdmin;
+  })()`);
+  check('Demo login modal conditionally updates team indicator between required * and Optional based on selected role', demoRoleIndicators);
 
   await evaluate(`{
     const f=document.querySelector('#edit-form');
