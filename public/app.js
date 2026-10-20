@@ -80,9 +80,18 @@ const badge = value => `<span class="badge ${escape(String(value).split('_')[0])
 const empty = message => `<div class="empty">${escape(message)}</div>`;
 const button = (title,action,id='',extra='') => `<button type="button" data-action="${action}" data-id="${escape(id)}" ${extra}>${escape(title)}</button>`;
 const table = (headers,rows,cls='') => rows.length?`<div class="table-wrap ${cls?cls+'-wrap':''}"><table class="${cls}"><thead><tr>${headers.map(h=>`<th scope="col">${h}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`:empty('No records yet.');
-const field = (label,name,type='text',value='',required=true) => `<label>${label}<input name="${name}" type="${type}" value="${escape(value)}" ${required?'required':''}><span class="field-error error" id="${name}-error" role="alert"></span></label>`;
-const area = (label,name,value='',required=false) => `<label class="full">${label}<textarea name="${name}" ${required?'required':''}>${escape(value)}</textarea></label>`;
-const select = (label,name,values,selected='') => `<label>${label}<select name="${name}" required>${values.map(v=>{const [id,title]=Array.isArray(v)?v:[v,v];return `<option value="${escape(id)}" ${id===selected?'selected':''}>${escape(title)}</option>`;}).join('')}</select></label>`;
+const formatLabel = (label, required) => {
+  if (typeof label !== 'string') return label;
+  if (label.includes('field-required') || label.includes('field-optional')) return label;
+  const clean = label.replace(/\s*\((?:optional|required)\)\s*$/i, '').replace(/\s*\*+\s*$/, '').trim();
+  const indicator = required
+    ? '<span class="field-required" title="Required" aria-hidden="true">*</span>'
+    : '<span class="field-optional">Optional</span>';
+  return `<span class="label-heading">${clean} ${indicator}</span>`;
+};
+const field = (label,name,type='text',value='',required=true,extra='') => `<label>${formatLabel(label, required)}<input name="${name}" type="${type}" value="${escape(value)}" ${required?'required aria-required="true"':''} ${extra}><span class="field-error error" id="${name}-error" role="alert"></span></label>`;
+const area = (label,name,value='',required=false) => `<label class="full">${formatLabel(label, required)}<textarea name="${name}" ${required?'required aria-required="true"':''}>${escape(value)}</textarea></label>`;
+const select = (label,name,values,selected='',required=true) => `<label>${formatLabel(label, required)}<select name="${name}" ${required?'required aria-required="true"':''}>${values.map(v=>{const [id,title]=Array.isArray(v)?v:[v,v];return `<option value="${escape(id)}" ${id===selected?'selected':''}>${escape(title)}</option>`;}).join('')}</select></label>`;
 const standardTeams = ['Dev','QA','BD','DevOps','HR','Product','Design','Operations','Sales','Other','PM','TL'];
 const teamSelect = (label,name,selected='',allowOrg=false) => {
   const options = [];
@@ -91,7 +100,8 @@ const teamSelect = (label,name,selected='',allowOrg=false) => {
   if (selected && selected !== '' && !standardTeams.includes(selected) && selected !== 'Engineering') {
     options.push([selected, selected]);
   }
-  return `<label>${label}<select name="${name}" ${allowOrg ? '' : 'required'}>${options.map(([id, title]) => `<option value="${escape(id)}" ${id === selected ? 'selected' : ''}>${escape(title)}</option>`).join('')}</select></label>`;
+  const required = !allowOrg;
+  return `<label>${formatLabel(label, required)}<select name="${name}" ${required ? 'required aria-required="true"' : ''}>${options.map(([id, title]) => `<option value="${escape(id)}" ${id === selected ? 'selected' : ''}>${escape(title)}</option>`).join('')}</select></label>`;
 };
 const skills = v => v.split(',').map(s=>s.trim()).filter(Boolean);
 const checkSkills = v => {
@@ -116,7 +126,6 @@ const bindValidation = (name, checkFn) => {
   if (!inp) return;
   inp.onblur = () => {
     const err = checkFn(inp.value);
-    inp.setCustomValidity(err);
     const el = $(`#${name}-error`);
     if (el) el.textContent = err;
   };
@@ -128,6 +137,50 @@ const bindValidation = (name, checkFn) => {
     }
   };
 };
+const bindSalaryInput = (name) => {
+  const inp = $(`#edit-form [name="${name}"]`);
+  if (!inp) return;
+  inp.addEventListener('keydown', e => {
+    if (e.key.length === 1 && !/^[0-9]$/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      e.preventDefault();
+    }
+  });
+  inp.addEventListener('beforeinput', e => {
+    if (e.data && /[^0-9]/.test(e.data)) {
+      e.preventDefault();
+    }
+  });
+  const handleInsert = (e, text) => {
+    e.preventDefault();
+    const clean = String(text || '').replace(/[^0-9]/g, '');
+    if (document.activeElement === inp) {
+      let inserted = false;
+      try {
+        inserted = document.execCommand('insertText', false, clean);
+      } catch {}
+      if (inserted) return;
+    }
+    inp.value = clean;
+    inp.dispatchEvent(new Event('input', { bubbles: true }));
+  };
+  inp.addEventListener('paste', e => {
+    const text = (e.clipboardData || window.clipboardData)?.getData('text') || '';
+    handleInsert(e, text);
+  });
+  inp.addEventListener('drop', e => {
+    const text = e.dataTransfer?.getData('text') || '';
+    handleInsert(e, text);
+  });
+  inp.addEventListener('input', () => {
+    if (/[^0-9]/.test(inp.value)) {
+      inp.value = inp.value.replace(/[^0-9]/g, '');
+    }
+  });
+};
+const pad = n => String(n).padStart(2, '0');
+const getLocalDateString = (d = new Date()) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const getLocalTodayMin = () => `${getLocalDateString()}T00:00`;
+const checkEmail = v => { const s = String(v ?? '').trim(); return (!s || s.length > 254 || !/^[^\s@.]+(?:\.[^\s@.]+)*@[^\s@]+\.[^\s@]+$/.test(s)) ? 'Enter a valid email address.' : ''; };
 const checkPhone = v => { const s = String(v ?? '').trim(); if (!s) return ''; const d = s.replace(/\D/g, ''); return ((!/^\+?[0-9\s\-().–—]+$/.test(s) && !/^\([+]?[0-9]+\)[\s0-9\-().–—]+$/.test(s)) || d.length < 7 || d.length > 15) ? 'Enter a valid phone number.' : ''; };
 const paginate = (items, page = 1, pageSize = 10) => { const total = items.length, totalPages = Math.max(1, Math.ceil(total / pageSize)), cur = Math.min(Math.max(1, page), totalPages), start = (cur - 1) * pageSize; return { paged: items.slice(start, start + pageSize), page: cur, totalPages, total, start }; };
 const renderPagination = (view, page, totalPages, total, start, pageSize = 10) => {
@@ -181,7 +234,7 @@ async function openDemoModal(isSwitch=false){
   const currentTeam=(isSwitch&&me?.team)||'Dev';
   const title=isSwitch?'Switch QA Demo Persona':'Demo / QA Sign In';
   const submitText=isSwitch?'Switch Persona':'Sign in as Demo User';
-  const modalHtml=`<div class="form-grid"><div class="full demo-role-desc-box" id="demo-role-desc" style="background:var(--surface-alt);border:1px solid var(--line);border-radius:8px;padding:12px;font-size:0.85rem;color:var(--ink);line-height:1.5;"></div>${select('Select Demo Role','role',roleList.map(r=>[r.role,`${r.role} — ${r.title}`]),currentRole)}<label class="full" id="demo-team-label">Select Team<select name="team" id="demo-team-select"></select></label><p class="full muted" style="font-size:0.8rem;margin-top:4px;">${isSwitch?'Switching establishes a new verified demo session with permissions and team scope for the selected identity.':'Predefined QA identity with sample data. No Microsoft 365 credentials required.'}</p></div>`;
+  const modalHtml=`<div class="form-grid"><div class="full demo-role-desc-box" id="demo-role-desc" style="background:var(--surface-alt);border:1px solid var(--line);border-radius:8px;padding:12px;font-size:0.85rem;color:var(--ink);line-height:1.5;"></div>${select('Select Demo Role','role',roleList.map(r=>[r.role,`${r.role} — ${r.title}`]),currentRole)}<label class="full" id="demo-team-label">${formatLabel('Select Team', true)}<select name="team" id="demo-team-select"></select></label><p class="full muted" style="font-size:0.8rem;margin-top:4px;">${isSwitch?'Switching establishes a new verified demo session with permissions and team scope for the selected identity.':'Predefined QA identity with sample data. No Microsoft 365 credentials required.'}</p></div>`;
   modal(title,modalHtml,async vals=>{
     const role=vals.role, team=vals.team||'';
     if(isSwitch){
@@ -231,6 +284,18 @@ async function openDemoModal(isSwitch=false){
     if(isOrgRole)options.push(['','Organization (Org-wide access)']);
     for(const t of teamList)options.push([t,t]);
     teamSelectEl.innerHTML=options.map(([val,label])=>`<option value="${escape(val)}" ${val===currentTeam?'selected':''}>${escape(label)}</option>`).join('');
+    const isRequired = !isOrgRole;
+    if (isRequired) {
+      teamSelectEl.setAttribute('required', '');
+      teamSelectEl.setAttribute('aria-required', 'true');
+    } else {
+      teamSelectEl.removeAttribute('required');
+      teamSelectEl.removeAttribute('aria-required');
+    }
+    const teamHeading = $('#demo-team-label .label-heading');
+    if (teamHeading) {
+      teamHeading.outerHTML = formatLabel('Select Team', isRequired);
+    }
   };
   if(roleSelect&&teamSelectEl){roleSelect.onchange=updateRoleState;updateRoleState();}
 }
@@ -430,6 +495,8 @@ document.addEventListener('click',async event=>{
       });
       bindValidation('currency',checkCurrency);
       bindValidation('skills',checkSkills);
+      bindSalaryInput('salary_min');
+      bindSalaryInput('salary_max');
     }
     if(a==='draft-jd'){
       const form=$('#edit-form');
@@ -469,7 +536,7 @@ document.addEventListener('click',async event=>{
         summaryCard +
         adminNotice +
         select('Decision', 'decision', [['approve', '✓ Approve requisition'], ['reject', '✕ Reject requisition']], 'approve') +
-        area('Decision note (optional)', 'note', ''),
+        area('Decision note', 'note', ''),
         v => {
           const payload = { note: v.note };
           if (isAdmin) {
@@ -506,13 +573,20 @@ document.addEventListener('click',async event=>{
       });
       bindValidation('currency',checkCurrency);
       bindValidation('skills',checkSkills);
+      bindSalaryInput('salary_min');
+      bindSalaryInput('salary_max');
     }
     if(a==='new-candidate'){
       modal('Add candidate',`<div class="form-grid">${field('Full name','name')}${field('Email','email','email')}${field('Phone','phone','tel','',false)}${teamSelect('Team','team',me.team||'Dev',false)}${field('Skills, comma separated','skills','text','',false)}${field('Source','source','text','Direct')}${area('Experience / Resume text','resume_text')}</div>${button('Extract email and phone','parse-resume','','class="secondary"')}`,v=>{
+        const eErr=checkEmail(v.email);
+        if(eErr){
+          const el=$('#email-error');if(el)el.textContent=eErr;
+          const inp=$('#edit-form [name="email"]');if(inp){inp.setCustomValidity(eErr);inp.reportValidity();}
+          throw new Error(eErr);
+        }
         const err=checkPhone(v.phone);
         if(err){
           const el=$('#phone-error');if(el)el.textContent=err;
-          const inp=$('#edit-form [name="phone"]');if(inp){inp.setCustomValidity(err);inp.reportValidity();}
           throw new Error(err);
         }
         const sErr=checkSkills(v.skills);
@@ -523,6 +597,7 @@ document.addEventListener('click',async event=>{
         }
         return api('candidates','POST',{...v,skills:skills(v.skills),experience:v.resume_text});
       });
+      bindValidation('email',checkEmail);
       bindValidation('phone',checkPhone);
       bindValidation('skills',checkSkills);
     }
@@ -530,10 +605,15 @@ document.addEventListener('click',async event=>{
       const c=(await api('candidates')).find(c=>c.id===id)||await api(`candidates/${id}`);
       if(!c)throw new Error('Candidate not found.');
       modal('Edit candidate',`<div class="form-grid">${field('Full name','name','text',c.name)}${field('Email','email','email',c.email)}${field('Phone','phone','tel',c.phone||'',false)}${teamSelect('Team','team',c.team||me.team||'Dev',false)}${field('Skills, comma separated','skills','text',(c.skills||[]).join(', '),false)}${field('Source','source','text',c.source||'Direct')}${area('Experience / Resume text','resume_text',c.resume_text||c.experience||'')}</div>${button('Extract email and phone','parse-resume','','class="secondary"')}`,v=>{
+        const eErr=checkEmail(v.email);
+        if(eErr){
+          const el=$('#email-error');if(el)el.textContent=eErr;
+          const inp=$('#edit-form [name="email"]');if(inp){inp.setCustomValidity(eErr);inp.reportValidity();}
+          throw new Error(eErr);
+        }
         const err=checkPhone(v.phone);
         if(err){
           const el=$('#phone-error');if(el)el.textContent=err;
-          const inp=$('#edit-form [name="phone"]');if(inp){inp.setCustomValidity(err);inp.reportValidity();}
           throw new Error(err);
         }
         const sErr=checkSkills(v.skills);
@@ -544,29 +624,30 @@ document.addEventListener('click',async event=>{
         }
         return api(`candidates/${id}`,'PUT',{...v,skills:skills(v.skills),experience:v.resume_text});
       });
+      bindValidation('email',checkEmail);
       bindValidation('phone',checkPhone);
       bindValidation('skills',checkSkills);
     }
-    if(a==='parse-resume'){const form=$('#edit-form');const r=await api('resume/parse','POST',{text:form.elements.resume_text.value});if(r.email)form.elements.email.value=r.email;if(r.phone){form.elements.phone.value=r.phone;form.elements.phone.dispatchEvent(new Event('input'));}notice(r.warning);}
+    if(a==='parse-resume'){const form=$('#edit-form');const r=await api('resume/parse','POST',{text:form.elements.resume_text.value});if(r.email){form.elements.email.value=r.email;form.elements.email.dispatchEvent(new Event('input'));}if(r.phone){form.elements.phone.value=r.phone;form.elements.phone.dispatchEvent(new Event('input'));}notice((r.email||r.phone)?'Email and phone number extracted successfully.':(r.message||'No email or phone number found in resume text.'));}
     if(a==='candidate-details'){const c=(await api('candidates')).find(c=>c.id===id)||await api(`candidates/${id}`);const appsHtml=(c.applications&&c.applications.length)?`<h3>Applications & Status</h3><div class="candidate-status-list" style="margin-bottom:14px;">${c.applications.map(app=>{const title=escape(app.title||'General Application');return `<div class="candidate-status-pair"><span class="candidate-status-role" title="${title}">${title}</span> <span class="status-sep" aria-hidden="true">—</span> ${badge(app.stage||'Applied')}</div>`;}).join('')}</div>`:'';modal(c.name,`<p>${escape(c.email)}${c.phone?` · ${escape(c.phone)}`:''}</p><p>${escape((c.skills||[]).join(', '))}</p>${appsHtml}<h3>Experience / Resume</h3><p class="score-note">${escape(c.resume_text||c.experience||'No resume text provided.')}</p>${allows('recruit')?`<div class="actions" style="margin-top:16px">${button('Edit','edit-candidate',c.id)}</div>`:''}`);}
     if(a==='new-application'){const [cs,rs]=await Promise.all([api('candidates'),api('requisitions')]);if(!cs.length||!rs.some(r=>r.status==='open'))throw new Error('Add a candidate and approve a requisition first.');modal('Add application',select('Candidate','candidate_id',cs.map(c=>[c.id,c.name]))+select('Open requisition','requisition_id',rs.filter(r=>r.status==='open').map(r=>[r.id,r.title])),v=>api('applications','POST',v));}
     if(a==='move'||a==='reject-app'){const stage=a==='move'?b.dataset.stage:'Rejected';modal('Change application stage',`<p>Move this application to <strong>${escape(stage)}</strong>?</p>`,()=>api(`applications/${id}/stage`,'POST',{stage}));}
     if(a==='match'){const r=await api(`applications/${id}/match`);modal('Skill match explanation',`<p class="eyebrow">${escape(r.method)}</p><h1>${r.score===null?'Unscored':r.score+'%'}</h1><p>${escape(r.explanation)}</p><h3>Matched</h3><p>${escape(r.matched.join(', ')||'None')}</p><h3>Not found in skills</h3><p>${escape(r.missing.join(', ')||'None')}</p><p class="muted">This does not assess ability, potential or suitability. Never use this score as an automatic rejection rule.</p>`);}
-    if(a==='new-interview'){const [apps,users]=await Promise.all([api('applications'),api('interviewers')]);const active=apps.filter(a=>!['Hired','Rejected'].includes(a.stage));if(!active.length||!users.length)throw new Error('An active application and interviewer are required.');modal('Plan interview',select('Application','application_id',active.map(a=>[a.id,`${a.name} · ${a.title}`]))+select('Interviewer','interviewer_id',users.map(u=>[u.id,u.name]))+field('Date and time (your timezone)','scheduled_at','datetime-local')+field('Competencies, comma separated','competencies','text','Role knowledge, Problem solving')+'<p class="status-note">This stores an interview plan. It does not send a calendar invitation.</p>',v=>api('interviews','POST',{...v,scheduled_at:new Date(v.scheduled_at).toISOString(),competencies:skills(v.competencies)}));}
+    if(a==='new-interview'){const [apps,users]=await Promise.all([api('applications'),api('interviewers')]);const active=apps.filter(a=>!['Hired','Rejected'].includes(a.stage));if(!active.length||!users.length)throw new Error('An active application and interviewer are required.');const todayMin=getLocalTodayMin();modal('Plan interview',select('Application','application_id',active.map(a=>[a.id,`${a.name} · ${a.title}`]))+select('Interviewer','interviewer_id',users.map(u=>[u.id,u.name]))+field('Date and time (your timezone)','scheduled_at','datetime-local','',true,`min="${todayMin}"`)+field('Competencies, comma separated','competencies','text','Role knowledge, Problem solving')+'<p class="status-note">This stores an interview plan. It does not send a calendar invitation.</p>',v=>{const scheduledDate=new Date(v.scheduled_at);if(!Number.isFinite(scheduledDate.getTime())||scheduledDate.getTime()<Date.now()){throw new Error('Enter a future interview date.');}return api('interviews','POST',{...v,scheduled_at:scheduledDate.toISOString(),competencies:skills(v.competencies)});});const dateInp=$('#edit-form [name="scheduled_at"]');if(dateInp)dateInp.min=todayMin;}
     if(a==='edit-interview'||a==='reschedule-interview'){
       const interviews=await api('interviews');
       const i=interviews.find(item=>item.id===id)||await api(`interviews/${id}`);
       if(!i)throw new Error('Interview not found.');
       const canManage=allows('recruit')||allows('admin');
       const users=canManage?await api('interviewers'):[];
-      const pad=n=>String(n).padStart(2,'0');
-      const toLocal=s=>{const d=new Date(s);return isNaN(d.getTime())?'':`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;};
+      const toLocal=s=>{const d=new Date(s);return isNaN(d.getTime())?'':`${getLocalDateString(d)}T${pad(d.getHours())}:${pad(d.getMinutes())}`;};
       const comps=JSON.parse(i.competencies||'[]');
       const interviewerOptions = users.map(u=>[u.id,u.name]);
       if(i.interviewer_id && !interviewerOptions.some(([uid])=>uid===i.interviewer_id)){
         interviewerOptions.unshift([i.interviewer_id, `${i.interviewer || 'Assigned interviewer'} (Current)`]);
       }
-      modal('Edit interview',`<div class="form-grid"><p class="full"><strong>Candidate:</strong> ${escape(i.name)} · ${escape(i.title)}</p>${interviewerOptions.length?select('Interviewer','interviewer_id',interviewerOptions,i.interviewer_id):`<p class="full"><strong>Interviewer:</strong> ${escape(i.interviewer)}</p>`}${field('Date and time (your timezone)','scheduled_at','datetime-local',toLocal(i.scheduled_at))}${canManage?field('Competencies, comma separated','competencies','text',comps.join(', '),false):''}<p class="full status-note">This updates the scheduled interview date and time. It does not send a calendar invitation.</p></div>`,v=>{
+      const todayMin=getLocalTodayMin();
+      modal('Edit interview',`<div class="form-grid"><p class="full"><strong>Candidate:</strong> ${escape(i.name)} · ${escape(i.title)}</p>${interviewerOptions.length?select('Interviewer','interviewer_id',interviewerOptions,i.interviewer_id):`<p class="full"><strong>Interviewer:</strong> ${escape(i.interviewer)}</p>`}${field('Date and time (your timezone)','scheduled_at','datetime-local',toLocal(i.scheduled_at),true,`min="${todayMin}"`)}${canManage?field('Competencies, comma separated','competencies','text',comps.join(', '),true):''}<p class="full status-note">This updates the scheduled interview date and time. It does not send a calendar invitation.</p></div>`,v=>{
         const scheduledDate=new Date(v.scheduled_at);
         if(!Number.isFinite(scheduledDate.getTime())||scheduledDate.getTime()<Date.now()){
           throw new Error('Enter a future interview date.');
@@ -588,7 +669,7 @@ document.addEventListener('click',async event=>{
     if(a==='scorecard-proxy'){
       const i=(await api('interviews')).find(i=>i.id===id)||await api(`interviews/${id}`);
       const comps=JSON.parse(i.competencies);
-      modal(`Submit proxy scorecard on behalf of ${escape(i.interviewer)}`,`<div class="notice-inline"><strong>Administrative Proxy Submission:</strong> You are submitting this scorecard on behalf of the assigned interviewer (${escape(i.interviewer)}). An audit log entry will record your action and reason.</div>`+comps.map((c,n)=>select(`${escape(c)} (1 low – 5 high)`,`rating${n}`,['1','2','3','4','5'],'3')).join('')+select('Recommendation','recommendation',['Strong yes','Yes','No','Strong no'])+area('Job-related evidence','notes','',true)+area('Reason for proxy submission (required)','proxy_reason','',true),v=>{
+      modal(`Submit proxy scorecard on behalf of ${escape(i.interviewer)}`,`<div class="notice-inline"><strong>Administrative Proxy Submission:</strong> You are submitting this scorecard on behalf of the assigned interviewer (${escape(i.interviewer)}). An audit log entry will record your action and reason.</div>`+comps.map((c,n)=>select(`${escape(c)} (1 low – 5 high)`,`rating${n}`,['1','2','3','4','5'],'3')).join('')+select('Recommendation','recommendation',['Strong yes','Yes','No','Strong no'])+area('Job-related evidence','notes','',true)+area('Reason for proxy submission','proxy_reason','',true),v=>{
         if(!v.proxy_reason||!v.proxy_reason.trim())throw new Error('A reason for proxy submission is required.');
         return api(`interviews/${id}/scorecards`,'POST',{ratings:Object.fromEntries(comps.map((c,n)=>[c,Number(v[`rating${n}`])])),recommendation:v.recommendation,notes:v.notes,proxy_reason:v.proxy_reason});
       });
