@@ -21,7 +21,23 @@ test('invalid scorecards and past interview dates fail validation',()=>{const f=
 test('referrals reveal only the submitting employee records',()=>{const f=hiringFixture(),employee=user(f.db,'Employee/Referral'),other=user(f.db,'Employee/Referral');call(f,employee,'POST','referrals',{requisition_id:f.req.id,name:'Referral',email:'ref@example.com',note:'Worked together'});assert.equal(call(f,employee,'GET','referrals').length,1);assert.equal(call(f,other,'GET','referrals').length,0);assert.equal(call(f,employee,'GET','requisitions')[0].salary_max,undefined);f.db.close();});
 test('analytics are scoped to the actor team',()=>{const f=hiringFixture(),other=user(f.db,'Recruiter','Sales');assert.equal(call(f,f.recruiter,'GET','analytics').candidates,1);assert.equal(call(f,other,'GET','analytics').candidates,0);f.db.close();});
 test('audit records are append-only and admin-only',()=>{const f=fixture();audit(f.db,f.admin.id,'test.event','target');assert.throws(()=>f.db.exec("UPDATE audit SET event='changed'"));assert.throws(()=>f.db.exec('DELETE FROM audit'));assert.throws(()=>call(f,f.recruiter,'GET','admin/audit'));assert.equal(call(f,f.admin,'GET','admin/audit')[0].event,'test.event');f.db.close();});
-test('plain text parser and job template return honest methods',()=>{const f=fixture();assert.equal(call(f,f.recruiter,'POST','resume/parse',{text:'Contact: hi@example.com'}).email,'hi@example.com');assert.match(call(f,f.recruiter,'POST','jd/draft',{title:'Engineer',skills:['SQL']}).method,/not generative AI/);f.db.close();});
+test('plain text parser and job template return honest methods',()=>{
+  const f=fixture();
+  const parsed=call(f,f.recruiter,'POST','resume/parse',{text:'Contact: hi@example.com, Phone: +1 555-123-4567'});
+  assert.equal(parsed.email,'hi@example.com');
+  assert.equal(parsed.phone,'+1 555-123-4567');
+  assert.equal(parsed.message,'Email and phone number extracted successfully.');
+
+  const emptyParsed=call(f,f.recruiter,'POST','resume/parse',{text:'No contact info here.'});
+  assert.equal(emptyParsed.email,'');
+  assert.equal(emptyParsed.phone,'');
+  assert.equal(emptyParsed.message,'No email or phone number found in resume text.');
+
+  assert.throws(()=>call(f,f.recruiter,'POST','resume/parse',{text:''}),e=>e.status===400);
+
+  assert.match(call(f,f.recruiter,'POST','jd/draft',{title:'Engineer',skills:['SQL']}).method,/not generative AI/);
+  f.db.close();
+});
 test('candidate editing updates candidate details, experience and enforces permissions and duplicate checks',()=>{
   const f=hiringFixture();
   const updated=call(f,f.recruiter,'PUT',`candidates/${f.candidate.id}`,{
@@ -60,6 +76,14 @@ test('candidate editing updates candidate details, experience and enforces permi
     ...updated,
     name:'Avery C.'
   }));
+
+  assert.throws(
+    ()=>call(f,f.recruiter,'PUT',`candidates/${f.candidate.id}`,{
+      ...updated,
+      phone:'abc123'
+    }),
+    e=>e.status===400&&e.message==='Enter a valid phone number.'
+  );
 
   const interviewer=user(f.db,'Interviewer','Engineering');
   assert.throws(()=>call(f,interviewer,'PUT',`candidates/${f.candidate.id}`,{name:'Hacker'}));
@@ -124,6 +148,50 @@ test('skills validation accepts comma-separated skills and rejects unsupported c
     ()=>call(f,f.recruiter,'PUT',`candidates/${validCandidate.id}`,{...validCandidate,skills:'Manual Testing & Automation Testing'}),
     e=>e.status===400&&e.message.includes('expected comma-separated format')
   );
+  f.db.close();
+});
+
+test('candidate email validation rejects malformed email formats and accepts valid formats',()=>{
+  const f=fixture();
+  const malformedEmails=[
+    'gaurvi..gupta@example.com',
+    '.gaurvi@example.com',
+    'gaurvi.@example.com',
+    '..@example.com',
+    'test..user@domain.com',
+    '.leading@domain.com',
+    'trailing.@domain.com'
+  ];
+
+  for(const badEmail of malformedEmails){
+    assert.throws(
+      ()=>call(f,f.recruiter,'POST','candidates',{...candidateBody,email:badEmail}),
+      e=>e.status===400&&e.message==='Enter a valid email address.'
+    );
+    assert.throws(
+      ()=>call(f,f.admin,'POST','candidates',{...candidateBody,email:badEmail,team:'Dev'}),
+      e=>e.status===400&&e.message==='Enter a valid email address.'
+    );
+  }
+
+  assert.equal(f.db.prepare('SELECT count(*) n FROM candidates').get().n,0);
+
+  const cand=call(f,f.recruiter,'POST','candidates',{...candidateBody,email:'gaurvi.gupta@example.com'});
+  assert.ok(cand.id);
+  assert.equal(cand.email,'gaurvi.gupta@example.com');
+  assert.equal(f.db.prepare('SELECT count(*) n FROM candidates WHERE email=?').get('gaurvi.gupta@example.com').n,1);
+
+  for(const badEmail of malformedEmails){
+    assert.throws(
+      ()=>call(f,f.recruiter,'PUT',`candidates/${cand.id}`,{email:badEmail}),
+      e=>e.status===400&&e.message==='Enter a valid email address.'
+    );
+  }
+
+  const updated=call(f,f.recruiter,'PUT',`candidates/${cand.id}`,{email:'gaurvi.updated@example.com'});
+  assert.equal(updated.email,'gaurvi.updated@example.com');
+  assert.equal(f.db.prepare('SELECT email FROM candidates WHERE id=?').get(cand.id).email,'gaurvi.updated@example.com');
+
   f.db.close();
 });
 
@@ -372,6 +440,24 @@ test('requisition editing updates requisition details and enforces approval stat
 
   f.db.close();
   hf.db.close();
+});
+
+test('requisition currency validation rejects unsupported values and accepts supported currencies',()=>{
+  const f=fixture();
+  const unsupportedCurrencies=['@@@','123','XYZ','ABC','','!@#'];
+  for(const cur of unsupportedCurrencies){
+    assert.throws(
+      ()=>call(f,f.recruiter,'POST','requisitions',{...reqBody,currency:cur}),
+      e=>e.status===400&&e.message==='Enter a supported three-letter currency code.'
+    );
+  }
+
+  for(const cur of ['USD','eur','gbp','inr']){
+    const req=call(f,f.recruiter,'POST','requisitions',{...reqBody,title:`Req in ${cur}`,currency:cur});
+    assert.ok(req.id);
+    assert.equal(req.currency,cur.trim().toUpperCase());
+  }
+  f.db.close();
 });
 
 test('System Admin permission enhancements, overrides, proxy scorecard, and team dropdowns', () => {

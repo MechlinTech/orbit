@@ -19,8 +19,9 @@ for(const [title,required] of roles){const r=call(f.recruiter,'POST','requisitio
 const pending=call(f.recruiter,'POST','requisitions',{...reqBody,team:'Dev',title:'Engineering Manager',headcount:2});call(f.recruiter,'POST',`requisitions/${pending.id}/submit`);
 for(const [n,name] of ['Avery Chen','Jordan Williams','Sam Rivera','Taylor Morgan'].entries()){const c=call(f.recruiter,'POST','candidates',{...candidateBody,team:'Dev',name,email:`candidate${n}@example.com`,skills:n%2?['SQL']:['JavaScript','SQL']});const a=call(f.recruiter,'POST','applications',{candidate_id:c.id,requisition_id:first.id});if(n>0)call(f.recruiter,'POST',`applications/${a.id}/stage`,{stage:'Screening'});if(n>1)call(f.recruiter,'POST',`applications/${a.id}/stage`,{stage:'Interview'});if(n===2)call(f.recruiter,'POST','interviews',{application_id:a.id,interviewer_id:f.interviewer.id,scheduled_at:new Date(Date.now()+86400000).toISOString(),competencies:['Problem solving','Communication']});}
 user(f.db,'Employee/Referral','Dev','pending');
-const c={...testConfig(),origin:'http://localhost:3000'},s=createSession(f.db,f.admin,c),app=createApp({db:f.db,c});
+const port=Number(process.env.TEST_PORT || 3005);
+const c={...testConfig(),origin:`http://localhost:${port}`},s=createSession(f.db,f.admin,c),app=createApp({db:f.db,c});
 // Review harness injects synthetic identity only on a loopback, in-memory server.
 app.prependListener('request',req=>{req.headers.cookie=req.headers.cookie||`session=${s.value}`;});
-app.listen(3000,'127.0.0.1',()=>console.log('Synthetic UI review server on http://localhost:3000'));
+app.listen(port,'127.0.0.1',()=>console.log(`Synthetic UI review server on http://localhost:${port}`));
 export {app};
