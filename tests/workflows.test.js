@@ -845,4 +845,94 @@ test('candidate status: enforces team-scoping for applications and prevents cros
   f.db.close();
 });
 
+test('TA Manager can review and approve requisitions in pending_manager stage for their team', () => {
+  const f = fixture();
+  const taManager = user(f.db, 'TA Manager', 'Engineering');
+  const otherTeamTAManager = user(f.db, 'TA Manager', 'Sales');
+
+  // Recruiter creates and submits requisition
+  const req = call(f, f.recruiter, 'POST', 'requisitions', reqBody);
+  assert.equal(req.status, 'draft');
+
+  // TA Manager cannot approve draft
+  assert.throws(() => call(f, taManager, 'POST', `requisitions/${req.id}/approve`, {}), e => e.status === 409);
+
+  call(f, f.recruiter, 'POST', `requisitions/${req.id}/submit`);
+  const pendingReq = call(f, taManager, 'GET', `requisitions/${req.id}`);
+  assert.equal(pendingReq.status, 'pending_manager');
+
+  // TA Manager from another team cannot approve
+  assert.throws(() => call(f, otherTeamTAManager, 'POST', `requisitions/${req.id}/approve`, {}), e => e.status === 403);
+
+  // Authorized TA Manager approves
+  const approved = call(f, taManager, 'POST', `requisitions/${req.id}/approve`, { note: 'Approved by TA Manager' });
+  assert.equal(approved.status, 'pending_finance');
+
+  // Verify approval record
+  const approvalRecord = f.db.prepare("SELECT * FROM approvals WHERE requisition_id=? AND step='manager'").get(req.id);
+  assert.ok(approvalRecord);
+  assert.equal(approvalRecord.actor, taManager.id);
+  assert.equal(approvalRecord.decision, 'approve');
+  assert.equal(approvalRecord.note, 'Approved by TA Manager');
+
+  // Verify audit entry
+  const auditEntry = f.db.prepare("SELECT * FROM audit WHERE event='requisition.approve' AND target=?").get(req.id);
+  assert.ok(auditEntry);
+  assert.equal(auditEntry.actor, taManager.id);
+
+  // TA Manager cannot approve pending_finance (only finance approver/admin can)
+  assert.throws(() => call(f, taManager, 'POST', `requisitions/${req.id}/approve`, {}), e => e.status === 403);
+
+  // Finance approver completes approval
+  const finalReq = call(f, f.finance, 'POST', `requisitions/${req.id}/approve`, { note: 'Finance sign-off' });
+  assert.equal(finalReq.status, 'open');
+
+  // Cannot approve open requisition
+  assert.throws(() => call(f, taManager, 'POST', `requisitions/${req.id}/approve`, {}), e => e.status === 409);
+
+  f.db.close();
+});
+
+test('TA Manager can reject a requisition awaiting manager approval', () => {
+  const f = fixture();
+  const taManager = user(f.db, 'TA Manager', 'Engineering');
+
+  const req = call(f, f.recruiter, 'POST', 'requisitions', reqBody);
+  call(f, f.recruiter, 'POST', `requisitions/${req.id}/submit`);
+
+  const rejected = call(f, taManager, 'POST', `requisitions/${req.id}/reject`, { note: 'Headcount frozen' });
+  assert.equal(rejected.status, 'rejected');
+
+  const approvalRecord = f.db.prepare("SELECT * FROM approvals WHERE requisition_id=? AND step='manager'").get(req.id);
+  assert.ok(approvalRecord);
+  assert.equal(approvalRecord.actor, taManager.id);
+  assert.equal(approvalRecord.decision, 'reject');
+  assert.equal(approvalRecord.note, 'Headcount frozen');
+
+  // Rejected requisition cannot be approved
+  assert.throws(() => call(f, taManager, 'POST', `requisitions/${req.id}/approve`, {}), e => e.status === 409);
+
+  f.db.close();
+});
+
+test('TA Manager cannot approve a requisition they personally created (separation of duties)', () => {
+  const f = fixture();
+  const taManager = user(f.db, 'TA Manager', 'Engineering');
+  const secondTAManager = user(f.db, 'TA Manager', 'Engineering');
+
+  // TA Manager has 'recruit' permission, so they can create a requisition
+  const req = call(f, taManager, 'POST', 'requisitions', reqBody);
+  call(f, taManager, 'POST', `requisitions/${req.id}/submit`);
+
+  // TA Manager tries to self-approve: must be rejected
+  assert.throws(() => call(f, taManager, 'POST', `requisitions/${req.id}/approve`, {}), e => e.status === 403 && /different people/i.test(e.message));
+
+  // A different TA Manager in the same team CAN approve it
+  const approved = call(f, secondTAManager, 'POST', `requisitions/${req.id}/approve`, { note: 'Peer manager approval' });
+  assert.equal(approved.status, 'pending_finance');
+
+  f.db.close();
+});
+
+
 

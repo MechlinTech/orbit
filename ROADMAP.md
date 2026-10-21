@@ -12,12 +12,12 @@ The foundation intentionally uses templates and deterministic skill overlap. An 
 
 ## Phase 3 — Integration workflows (contracts supplied)
 
-1. Microsoft Graph calendar/Teams and Google Calendar/Meet adapters with timezone/availability logic, incremental consent, encrypted connector tokens, durable job outbox, retries, cancellation and idempotency. Gate: provider sandbox invitation lifecycle plus collision and DST tests.
-2. Candidate communications with approved templates, consent/preferences, delivery status, bounce handling and scoped mail/SMS providers. Gate: sandbox delivery receipts and opt-out enforcement.
-3. Offer entity/versioning and approval controls, document generation, signature adapter, verified signed webhooks and immutable signature evidence. Gate: sandbox offer-to-signed transition and replay-protection tests.
-4. Preboarding checklist and HRMS mapping/handoff with approved-field allowlists and retry-safe external identifiers. Gate: isolated HRMS sandbox round-trip without duplicate employees.
-5. Quarantined resume file storage, type/size validation, antivirus and PDF/DOCX parsing; explainable AI adapter with human overrides and audited model versions. Gate: malicious-file tests and quality/fairness evaluation on approved data.
-6. Fraud signals as reviewable evidence-linked flags with challenge/correction procedures. Gate: no automatic rejection; all adverse decisions require authorized human review.
+1. Microsoft Graph calendar and Teams meetings adapter with timezone/availability logic, incremental consent, encrypted connector tokens, durable job outbox, retries, cancellation and idempotency. Gate: provider sandbox invitation lifecycle plus collision and DST tests.
+2. Candidate email communications with approved templates, consent/preferences, delivery status, bounce handling and scoped mail providers. Gate: sandbox delivery receipts and opt-out enforcement.
+3. Quarantined resume file storage, type/size validation, antivirus and PDF/DOCX parsing; explainable AI adapter with human overrides and audited model versions. Gate: malicious-file tests and quality/fairness evaluation on approved data.
+4. Offer entity/versioning and approval controls, document generation, signature adapter, verified signed webhooks and immutable signature evidence. Gate: sandbox offer-to-signed transition and replay-protection tests.
+5. Fraud signals as reviewable evidence-linked flags with challenge/correction procedures. Gate: no automatic rejection; all adverse decisions require authorized human review.
+6. Preboarding checklist and HRMS mapping/handoff with approved-field allowlists and retry-safe external identifiers (placed at last). Gate: isolated HRMS sandbox round-trip without duplicate employees.
 
 ## Phase 4 — Enterprise hardening and optional agency portal
 
