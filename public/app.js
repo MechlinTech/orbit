@@ -393,6 +393,14 @@ function modal(title,html,onSubmit) {
   if(firstInput) firstInput.focus(); else $('#modal-body h2')?.focus();
   if($('#notice')?.children.length)$('#modal').appendChild($('#notice'));
 }
+function deleteDialog(kind, record, impact, path, success) {
+  modal(`Delete ${kind}`, `<div class="notice-inline danger-notice"><strong>${escape(record)}</strong> will be removed from active lists.</div><p>${escape(impact)}</p><p class="muted">This uses recoverable soft deletion and keeps an audit record. Linked records are never silently deleted. If this record has dependencies, deletion will be blocked and the record will remain unchanged.</p>`, async () => {
+    await api(path, 'DELETE');
+    return success;
+  });
+  const submit = $('#edit-form [type="submit"]');
+  if (submit) { submit.textContent = `Delete ${kind}`; submit.classList.add('danger'); }
+}
 $('#close-modal').onclick=closeModal;
 $('#modal').addEventListener('click',e=>{const r=$('#modal').getBoundingClientRect();if(e.clientY<r.top||e.clientY>r.bottom||e.clientX<r.left||e.clientX>r.right)closeModal();});
 $('#modal').addEventListener('close',()=>{const n=$('#notice');if(n&&n.parentElement!==document.body)document.body.appendChild(n);});
@@ -598,7 +606,19 @@ async function render() {
       const {paged,page,totalPages,total,start}=paginate(refs,pageState.Referrals||1,10);
       pageState.Referrals=page;
       const pag=renderPagination('Referrals',page,totalPages,total,start,10);
-      html=heading(allows('admin')?'Organization employee referrals.':'Recommend a colleague for an open position.',button('+ Make referral','new-referral'))+`<section class="panel"><h2>${allows('admin')?'All referrals':'Your referrals'}</h2>${table(allows('admin')?['Candidate','Email','Referred','Referrer']:['Candidate','Email','Referred'],paged.map(r=>`<tr><td>${escape(r.name)}</td><td>${escape(r.email)}</td><td>${escape(new Date(r.at).toLocaleDateString())}</td>${allows('admin')?`<td>${escape(r.referrer_name||'You')}</td>`:''}</tr>`))}${pag}</section>`;
+      const canProcess=allows('recruit');
+      const scopeTitle=canProcess?'Employee referrals within your team scope':'Your referrals';
+      const rows=paged.map(r=>{
+        const position=r.requisition_title
+          ? (r.can_view_requisition?button(r.requisition_title,'req-details',r.requisition_id,'class="text-button referral-position"'):`<span title="${escape(r.requisition_title)}">${escape(r.requisition_title)}</span>`)
+          : (r.requisition_restricted?'<span class="muted">Restricted</span>':'<span class="muted">Not linked</span>');
+        const actions=[button('View details','referral-details',r.id,'class="secondary"')];
+        if(r.can_edit)actions.push(button('Edit','edit-referral',r.id,'class="secondary"'));
+        if(r.can_process)actions.push(button('Process','process-referral',r.id));
+        if(r.can_withdraw)actions.push(button('Withdraw','withdraw-referral',r.id,'class="secondary"'));
+        return `<tr><td><button type="button" class="text-button person-link" data-action="referral-details" data-id="${escape(r.id)}" title="${escape(r.name)}">${escape(r.name)}</button>${r.application_id?`<small>Application linked</small>`:''}</td><td>${escape(r.email)}</td><td>${position}</td><td>${badge(r.status)}${r.application_id&&r.status!=='Withdrawn'?`<small>${escape(r.status==='Submitted'?'New referral':'Application status')}</small>`:''}</td><td>${escape(new Date(r.at).toLocaleDateString())}</td><td>${escape(r.referrer_name||'You')}</td><td><div class="actions">${actions.join('')}</div></td></tr>`;
+      });
+      html=heading(canProcess?`Review employee referrals for ${escape(me.team||'your organization')}.`:'Recommend a colleague for an open position.',button('+ Make referral','new-referral'))+`<section class="panel"><h2>${scopeTitle}</h2>${table(['Candidate','Email','Job Position','Referral Status','Referred','Referrer','Actions'],rows,'referrals-table')}${pag}</section>`;
     }
     if(current==='Administration') {
       const users=await api('admin/users');window.currentUsers=users;
@@ -700,14 +720,28 @@ document.addEventListener('click',async event=>{
     }
     if(a==='draft-jd'){
       const form=$('#edit-form');
+      const title=String(form.elements.title.value||'').trim();
+      if(!title){
+        const el=$('#title-error');if(el)el.textContent='Enter a position title before drafting a job description.';
+        form.elements.title.focus();
+        throw new Error('Enter a position title before drafting a job description.');
+      }
       const sErr=checkSkills(form.elements.skills.value);
       if(sErr){
         const el=$('#skills-error');if(el)el.textContent=sErr;
         const inp=form.elements.skills;if(inp){inp.setCustomValidity(sErr);inp.reportValidity();}
         throw new Error(sErr);
       }
-      const result=await api('jd/draft','POST',{title:form.elements.title.value,skills:skills(form.elements.skills.value)});
-      form.elements.description.value=result.draft;notice(result.method||'Job description draft generated successfully.','success');
+      if(!String(form.elements.skills.value||'').trim()){
+        const el=$('#skills-error');if(el)el.textContent='Add at least one required skill before drafting a job description.';
+        const inp=form.elements.skills;if(inp){inp.setCustomValidity('Add at least one required skill before drafting a job description.');inp.reportValidity();inp.focus();}
+        throw new Error('Add at least one required skill before drafting a job description.');
+      }
+      if(String(form.elements.description.value||'').trim()&&!window.confirm('Replace the current job description with a new draft? Select Cancel to keep the existing description.'))return;
+      const result=await api('jd/draft','POST',{title,skills:skills(form.elements.skills.value)});
+      form.elements.description.value=result.draft;
+      form.elements.description.dispatchEvent(new Event('input',{bubbles:true}));
+      notice(result.message||'Job description drafted. Please review before saving.','success');
     }
     if(a==='submit-req'){await api(`requisitions/${id}/submit`,'POST',{});notice('Submitted for manager approval.','success');await render();}
     if(a==='approve-req'){
@@ -767,7 +801,7 @@ document.addEventListener('click',async event=>{
       const r=reqs.find(item=>item.id===id)||await api(`requisitions/${id}`);
       if(!r)throw new Error('Requisition not found.');
       if(!['draft','open'].includes(r.status)&&!(allows('admin')&&['pending_manager','pending_finance'].includes(r.status)))throw new Error(`Cannot edit requisition with status ${r.status}.`);
-      modal('Edit requisition',`<div class="form-grid">${field('Position title','title','text',r.title)}${teamSelect('Team','team',r.team||'Dev',false)}${field('Headcount','headcount','number',String(r.headcount))}${field('Currency','currency','text',r.currency)}${field('Minimum annual salary','salary_min','number',String(r.salary_min??0))}${field('Maximum annual salary','salary_max','number',String(r.salary_max??0))}${field('Required skills, comma separated','skills','text',(r.skills||[]).join(', '),false)}${area('Job description','description',r.description,true)}</div>${button('Draft description from title & skills','draft-jd','','class="secondary"')}`,async v=>{
+      modal('Edit requisition',`<div class="form-grid">${field('Position title','title','text',r.title)}${teamSelect('Team','team',r.team||'Dev',false)}${field('Headcount','headcount','number',String(r.headcount))}${field('Currency','currency','text',r.currency)}${field('Minimum annual salary','salary_min','number',String(r.salary_min??0))}${field('Maximum annual salary','salary_max','number',String(r.salary_max??0))}${field('Required skills, comma separated','skills','text',(r.skills||[]).join(', '),false)}${area('Job description','description',r.description,true)}</div>${button('Draft description from title & skills','draft-jd','','class="secondary"')}${button('Delete requisition','delete-req',r.id,'class="danger"')}`,async v=>{
         const cErr=checkCurrency(v.currency);
         if(cErr){
           const el=$('#currency-error');if(el)el.textContent=cErr;
@@ -789,6 +823,12 @@ document.addEventListener('click',async event=>{
       bindValidation('skills',checkSkills);
       bindSalaryInput('salary_min');
       bindSalaryInput('salary_max');
+    }
+    if(a==='delete-req'){
+      const r=(await api('requisitions')).find(item=>item.id===id)||await api(`requisitions/${id}`);
+      if(!r)throw new Error('Requisition not found.');
+      if(!['draft','open'].includes(r.status))throw new Error(`Requisitions with status ${r.status} cannot be deleted because workflow history or approvals must be retained.`);
+      deleteDialog('requisition',`${r.title} (${r.team})`,'This removes the requisition from active lists. Applications, interviews, approvals and referrals are dependencies and will block deletion rather than be removed silently.',`requisitions/${id}`,'Requisition deleted successfully.');
     }
     if(a==='new-candidate'){
       modal('Add candidate',`<div class="form-grid">${field('Full name','name')}${field('Email','email','email')}${field('Phone','phone','tel','',false)}${teamSelect('Team','team',me.team||'Dev',false)}${field('Skills, comma separated','skills','text','',false)}${field('Source','source','text','Direct')}${area('Experience / Resume text','resume_text')}</div>${button('Extract email and phone','parse-resume','','class="secondary"')}`,async v=>{
@@ -819,7 +859,7 @@ document.addEventListener('click',async event=>{
     if(a==='edit-candidate'){
       const c=(await api('candidates')).find(c=>c.id===id)||await api(`candidates/${id}`);
       if(!c)throw new Error('Candidate not found.');
-      modal('Edit candidate',`<div class="form-grid">${field('Full name','name','text',c.name)}${field('Email','email','email',c.email)}${field('Phone','phone','tel',c.phone||'',false)}${teamSelect('Team','team',c.team||me.team||'Dev',false)}${field('Skills, comma separated','skills','text',(c.skills||[]).join(', '),false)}${field('Source','source','text',c.source||'Direct')}${area('Experience / Resume text','resume_text',c.resume_text||c.experience||'')}</div>${button('Extract email and phone','parse-resume','','class="secondary"')}`,async v=>{
+      modal('Edit candidate',`<div class="form-grid">${field('Full name','name','text',c.name)}${field('Email','email','email',c.email)}${field('Phone','phone','tel',c.phone||'',false)}${teamSelect('Team','team',c.team||me.team||'Dev',false)}${field('Skills, comma separated','skills','text',(c.skills||[]).join(', '),false)}${field('Source','source','text',c.source||'Direct')}${area('Experience / Resume text','resume_text',c.resume_text||c.experience||'')}</div>${button('Extract email and phone','parse-resume','','class="secondary"')}${button('Delete candidate','delete-candidate',c.id,'class="danger"')}`,async v=>{
         const eErr=checkEmail(v.email);
         if(eErr){
           const el=$('#email-error');if(el)el.textContent=eErr;
@@ -843,6 +883,11 @@ document.addEventListener('click',async event=>{
       bindValidation('email',checkEmail);
       bindValidation('phone',checkPhone);
       bindValidation('skills',checkSkills);
+    }
+    if(a==='delete-candidate'){
+      const c=(await api('candidates')).find(item=>item.id===id)||await api(`candidates/${id}`);
+      if(!c)throw new Error('Candidate not found.');
+      deleteDialog('candidate',`${c.name} (${c.email})`,'This removes the candidate from active lists. Applications and interviews are dependencies and will block deletion rather than be removed silently.',`candidates/${id}`,'Candidate deleted successfully.');
     }
     if(a==='parse-resume'){
       const form=$('#edit-form');
@@ -904,7 +949,71 @@ document.addEventListener('click',async event=>{
       const r=await api(`interviews/${id}/scorecards`);
       modal('Interview feedback',`${r.blinded?'<div class="notice-inline">Other reviewers’ feedback is hidden until you submit all your assigned scorecards for this application.</div>':''}${r.scorecards.map(s=>`<article class="panel"><h3>${escape(s.recommendation)}</h3>${s.proxy_for?`<p class="muted" style="margin-bottom:6px"><strong>Proxy Submission:</strong> Submitted by ${escape(s.author_name||'Administrator')} on behalf of ${escape(s.proxy_for_name||'Interviewer')}${s.proxy_reason?` · Reason: ${escape(s.proxy_reason)}`:''}</p>`:(s.author_name?`<p class="muted" style="margin-bottom:6px">By: ${escape(s.author_name)}</p>`:'')}<p>${escape(Object.entries(JSON.parse(s.ratings)).map(([k,v])=>`${k}: ${v}/5`).join(' · '))}</p><p class="score-note">${escape(s.notes)}</p></article>`).join('')||empty('No feedback is available to you yet.')}`);
     }
-    if(a==='new-referral'){const rs=(await api('requisitions')).filter(r=>r.status==='open');if(!rs.length)throw new Error('No open requisitions in your team.');modal('Make a referral',field('Candidate name','name')+field('Candidate email','email','email')+searchableSelect('Open position','requisition_id',rs.map(r=>[r.id,`${r.title} — ${r.id} — ${r.team}`]),'',true,'Search by title, ID or team')+area('Referral note','note'),v=>api('referrals','POST',v));bindSearchableSelect('requisition_id');}
+    if(a==='new-referral'){
+      const rs=(await api('requisitions')).filter(r=>r.status==='open');
+      if(!rs.length)throw new Error('No open requisitions in your team.');
+      modal('Make a referral',field('Candidate name','name')+field('Candidate email','email','email')+searchableSelect('Job position','requisition_id',rs.map(r=>[r.id,`${r.title} — ${r.id} — ${r.team}`]),'',true,'Search by title, ID or team')+area('Referral note','note'),async v=>{
+        const eErr=checkEmail(v.email);
+        if(eErr){const el=$('#email-error');if(el)el.textContent=eErr;const inp=$('#edit-form [name="email"]');if(inp){inp.setCustomValidity(eErr);inp.reportValidity();}throw new Error(eErr);}
+        if(!v.requisition_id)throw new Error('Select a job position for this referral.');
+        await api('referrals','POST',v);
+        return 'Referral submitted successfully.';
+      });
+      bindValidation('email',checkEmail);
+      bindSearchableSelect('requisition_id');
+    }
+    if(a==='referral-details'){
+      const r=await api(`referrals/${id}`);
+      const position=r.requisition_title
+        ? `<strong>${escape(r.requisition_title)}</strong>${r.requisition_id?`<br><small class="mono">Requisition ${escape(r.requisition_id)}</small>`:''}`
+        : (r.requisition_restricted?'<span class="muted">Restricted by team scope</span>':'<span class="muted">Not linked</span>');
+      const reqAction=r.can_view_requisition?`<div class="actions" style="margin-top:8px">${button('View requisition','req-details',r.requisition_id,'class="secondary"')}</div>`:'';
+      const actions=[];
+      if(r.can_edit)actions.push(button('Edit','edit-referral',r.id,'class="secondary"'));
+      if(r.can_process)actions.push(button('Process referral','process-referral',r.id));
+      if(r.can_withdraw)actions.push(button('Withdraw referral','withdraw-referral',r.id,'class="secondary"'));
+      modal(`Referral: ${r.name}`,`<dl class="detail-list"><dt>Candidate</dt><dd><strong>${escape(r.name)}</strong><br>${escape(r.email)}</dd><dt>Job Position</dt><dd>${position}${reqAction}</dd><dt>Referral Status</dt><dd>${badge(r.status)}${r.application_id?`<br><small>Linked application ${escape(r.application_id)}</small>`:''}</dd><dt>Referral Date</dt><dd>${escape(new Date(r.at).toLocaleString())}</dd><dt>Referrer</dt><dd>${escape(r.referrer_name||'You')}${r.referrer_email?`<br><small>${escape(r.referrer_email)}</small>`:''}</dd><dt>Referral Note</dt><dd class="score-note">${escape(r.note||'No referral note provided.')}</dd></dl>${actions.length?`<div class="actions" style="margin-top:16px">${actions.join('')}</div>`:''}`);
+    }
+    if(a==='edit-referral'){
+      const r=await api(`referrals/${id}`);
+      if(!r.can_edit)throw new Error('You cannot edit this referral at its current stage.');
+      const rs=await api('requisitions');
+      const options=rs.filter(x=>x.status==='open'||x.id===r.requisition_id).map(x=>[x.id,`${x.title} — ${x.id} — ${x.team}`]);
+      if(r.requisition_id&&!options.some(([rid])=>rid===r.requisition_id))options.unshift([r.requisition_id,`${r.requisition_title||'Current position'} — ${r.requisition_id}`]);
+      modal('Edit referral',`<div class="form-grid">${field('Candidate name','name','text',r.name)}${field('Candidate email','email','email',r.email)}${searchableSelect('Job position','requisition_id',options,r.requisition_id||'',true,'Search by title, ID or team')}${area('Referral note','note',r.note||'')}</div>${r.can_delete?button('Delete referral','delete-referral',r.id,'class="danger"'):''}`,async v=>{
+        const eErr=checkEmail(v.email);
+        if(eErr){const el=$('#email-error');if(el)el.textContent=eErr;const inp=$('#edit-form [name="email"]');if(inp){inp.setCustomValidity(eErr);inp.reportValidity();}throw new Error(eErr);}
+        if(!v.requisition_id)throw new Error('Select a job position for this referral.');
+        await api(`referrals/${id}`,'PUT',v);
+        return 'Referral updated successfully.';
+      });
+      bindValidation('email',checkEmail);
+      bindSearchableSelect('requisition_id');
+    }
+    if(a==='process-referral'){
+      const r=await api(`referrals/${id}`);
+      if(!r.can_process)throw new Error('This referral cannot be processed. It may already be linked, outside your team, or the requisition is not open.');
+      modal('Process referral',`<p>Process the referral for <strong>${escape(r.name)}</strong> (${escape(r.email)}) for <strong>${escape(r.requisition_title||'the linked position')}</strong>?</p><p class="muted">A candidate and application will be reused when they already exist. The original referrer and referral record are preserved.</p>`,async()=>{
+        const result=await api(`referrals/${id}/process`,'POST',{});
+        if(result.candidate_created||result.application_created)return `Referral processed. ${result.candidate_created?'Candidate created.':'Existing candidate reused.'} ${result.application_created?'Application created.':'Existing application reused.'}`;
+        return 'Referral processed. The existing candidate and application were reused.';
+      });
+      const submit=$('#edit-form [type="submit"]');if(submit)submit.textContent='Process referral';
+    }
+    if(a==='withdraw-referral'){
+      const r=await api(`referrals/${id}`);
+      if(!r.can_withdraw)throw new Error(r.withdraw_block_reason||'This referral cannot be withdrawn at its current stage.');
+      modal('Withdraw referral',`<p>Withdraw the referral for <strong>${escape(r.name)}</strong> for <strong>${escape(r.requisition_title||'the linked position')}</strong>?</p><div class="notice-inline">The referral record and history will be retained with a Withdrawn status. Any linked candidate or application will not be deleted or rejected automatically.</div>`,async()=>{
+        await api(`referrals/${id}/withdraw`,'POST',{});
+        return r.application_id?'Referral withdrawn. The linked candidate and application were left unchanged.':'Referral withdrawn. The record and history were retained.';
+      });
+      const submit=$('#edit-form [type="submit"]');if(submit){submit.textContent='Withdraw referral';submit.classList.add('danger');}
+    }
+    if(a==='delete-referral'){
+      const r=await api(`referrals/${id}`);
+      if(!r.can_delete)throw new Error(r.status==='Withdrawn'?'Withdrawn referrals are retained for history and cannot be deleted.':'This referral cannot be deleted because it is linked to a candidate or application, or you do not have permission.');
+      deleteDialog('referral',`Referral for ${r.name}`,'This removes the referral from active lists. Linked candidates and applications would be blocked from deletion and are never removed silently.',`referrals/${id}`,'Referral deleted successfully.');
+    }
     if(a==='new-user'){const roles=(await api('me')).roles.filter(r=>r!=='Agency');modal('Add Microsoft 365 user',field('Full name','name')+field('Microsoft email','email','email')+field('Entra object ID','oid')+field('Entra tenant ID','tenant')+select('Role','role',roles,'Employee/Referral')+teamSelect('Team','team','',true)+'<p class="muted">This grants approved access to the exact Entra identity. It does not create a Microsoft account or an ATS password.</p>',v=>api('admin/users','POST',v));}
     if(a==='manage-user'){const u=window.currentUsers.find(u=>u.id===id);const roles=(await api('me')).roles.filter(r=>r!=='Agency');const actions=u.status==='pending'?['approve','reject']:u.status==='active'?['update','disable','force-logout']:['reactivate','update'];modal(`Manage ${u.name}`,`<p>${escape(u.email)} · ${badge(u.status)}</p><p class="mono">Entra object: ${escape(u.oid)}</p>`+select('Action','action',actions)+select('Role','role',roles,u.role)+teamSelect('Team','team',u.team||'',true)+'<p class="muted">Access changes revoke all current ATS sessions.</p>',v=>api(`admin/users/${id}/${v.action}`,'POST',v));}
     if(a==='edit-pipeline'){const stages=await api('pipeline');modal('Edit pipeline',area('Stages, one per line','stages',stages.join('\n'),true),v=>api('pipeline','PUT',{stages:v.stages.split('\n').map(s=>s.trim()).filter(Boolean)}));}
