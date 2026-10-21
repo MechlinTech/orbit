@@ -55,13 +55,62 @@ export function openDb(path = 'data/talentos.sqlite') {
     CREATE TABLE IF NOT EXISTS scorecards(id TEXT PRIMARY KEY, interview_id TEXT NOT NULL UNIQUE REFERENCES interviews(id),
       author TEXT NOT NULL REFERENCES users(id), ratings TEXT NOT NULL, recommendation TEXT NOT NULL, notes TEXT NOT NULL, submitted_at TEXT NOT NULL,
       proxy_for TEXT REFERENCES users(id), proxy_reason TEXT);
-    CREATE TABLE IF NOT EXISTS referrals(id TEXT PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL, requisition_id TEXT NOT NULL REFERENCES requisitions(id),
-      note TEXT NOT NULL, created_by TEXT NOT NULL REFERENCES users(id), at TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS referrals(id TEXT PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL,
+      requisition_id TEXT REFERENCES requisitions(id), note TEXT NOT NULL, created_by TEXT NOT NULL REFERENCES users(id), at TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'Submitted', candidate_id TEXT REFERENCES candidates(id),
+      application_id TEXT REFERENCES applications(id), withdrawn_at TEXT, withdrawn_by TEXT REFERENCES users(id),
+      deleted_at TEXT, deleted_by TEXT REFERENCES users(id), updated_at TEXT);
     CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
     INSERT OR IGNORE INTO settings VALUES('pipeline','["Applied","Screening","Interview","Offer","Hired","Rejected"]');
     INSERT OR IGNORE INTO schema_migrations VALUES(1,datetime('now'));`);
   try { db.exec('ALTER TABLE scorecards ADD COLUMN proxy_for TEXT REFERENCES users(id);'); } catch {}
   try { db.exec('ALTER TABLE scorecards ADD COLUMN proxy_reason TEXT;'); } catch {}
+
+  // v0.2 referrals required a requisition. Existing databases are rebuilt in
+  // place so historic referrals without a linked requisition remain readable
+  // and future records can be stored with "Not linked" until processed.
+  const referralColumns = db.prepare('PRAGMA table_info(referrals)').all();
+  const requisitionColumn = referralColumns.find(column => column.name === 'requisition_id');
+  if (requisitionColumn && Number(requisitionColumn.notnull) === 1) {
+    db.exec('PRAGMA foreign_keys=OFF');
+    try {
+      db.exec(`BEGIN;
+        CREATE TABLE referrals_migrated(id TEXT PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL,
+          requisition_id TEXT REFERENCES requisitions(id), note TEXT NOT NULL, created_by TEXT NOT NULL REFERENCES users(id), at TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'Submitted', candidate_id TEXT REFERENCES candidates(id),
+          application_id TEXT REFERENCES applications(id), withdrawn_at TEXT, withdrawn_by TEXT REFERENCES users(id),
+          deleted_at TEXT, deleted_by TEXT REFERENCES users(id), updated_at TEXT);
+        INSERT INTO referrals_migrated(id,name,email,requisition_id,note,created_by,at,status)
+          SELECT id,name,email,requisition_id,note,created_by,at,'Submitted' FROM referrals;
+        DROP TABLE referrals;
+        ALTER TABLE referrals_migrated RENAME TO referrals;
+        COMMIT;`);
+    } catch (error) {
+      try { db.exec('ROLLBACK'); } catch {}
+      throw error;
+    } finally {
+      db.exec('PRAGMA foreign_keys=ON');
+    }
+  }
+
+  const addColumn = (table, definition) => {
+    try { db.exec(`ALTER TABLE ${table} ADD COLUMN ${definition}`); } catch {}
+  };
+  for (const definition of [
+    "status TEXT NOT NULL DEFAULT 'Submitted'",
+    'candidate_id TEXT REFERENCES candidates(id)',
+    'application_id TEXT REFERENCES applications(id)',
+    'withdrawn_at TEXT',
+    'withdrawn_by TEXT REFERENCES users(id)',
+    'deleted_at TEXT',
+    'deleted_by TEXT REFERENCES users(id)',
+    'updated_at TEXT'
+  ]) addColumn('referrals', definition);
+  for (const table of ['candidates', 'requisitions']) {
+    addColumn(table, 'deleted_at TEXT');
+    addColumn(table, 'deleted_by TEXT REFERENCES users(id)');
+    addColumn(table, 'updated_at TEXT');
+  }
   return db;
 }
 export function audit(db, actor, event, target = '', detail = {}) {

@@ -66,7 +66,8 @@ export function createApp({db = openDb(process.env.DATABASE_PATH), c = config(),
       }
       if (path.startsWith('/api/')) {
         const user = sessionUser(db,cookies.session); actor = user.id;
-        if (!['GET','POST','PUT'].includes(req.method)) throw new HttpError(405,'Method not allowed.');
+        if (!['GET','POST','PUT','DELETE'].includes(req.method)) throw new HttpError(405,'Method not allowed.');
+        if (req.method === 'DELETE' && !/^\/api\/(?:referrals|candidates|requisitions)\/[^/]+$/.test(path)) throw new HttpError(405,'Method not allowed.');
         let body = {};
         if (req.method !== 'GET') {
           if (req.headers.origin !== c.origin || req.headers['x-csrf-token'] !== user.csrf) throw new HttpError(403,'Request validation failed. Refresh and retry.');
