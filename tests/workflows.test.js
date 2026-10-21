@@ -79,7 +79,12 @@ test('plain text parser and job template return honest methods',()=>{
 
   assert.throws(()=>call(f,f.recruiter,'POST','resume/parse',{text:''}),e=>e.status===400);
 
-  assert.match(call(f,f.recruiter,'POST','jd/draft',{title:'Engineer',skills:['SQL']}).method,/not generative AI/);
+  const draft=call(f,f.recruiter,'POST','jd/draft',{title:'Engineer',skills:['SQL']});
+  assert.equal(draft.message,'Job description drafted. Please review before saving.');
+  assert.doesNotMatch(JSON.stringify(draft),/not generative AI/i);
+  assert.match(draft.draft,/Engineer/);
+  assert.match(draft.draft,/SQL/);
+  assert.throws(()=>call(f,f.recruiter,'POST','jd/draft',{title:'Engineer',skills:[]}),e=>e.status===400);
   f.db.close();
 });
 test('candidate editing updates candidate details, experience and enforces permissions and duplicate checks',()=>{
