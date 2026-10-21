@@ -36,7 +36,7 @@ The initial administrator is provisioned with an exact object ID by an explicit 
 
 `src/adapters.js` specifies scheduling/cancel, send, signature request/webhook verification, HRMS handoff, resume parsing, matching explanation and fraud review entry points. All reject with `ADAPTER_NOT_CONFIGURED`. Implement a durable outbox, idempotency storage, retry/dead-letter workers, secret/token encryption, least-privilege OAuth consent, signed webhook verification and contract tests before connecting them. Never return “sent” merely because an adapter accepted a call.
 
-Scheduling providers: Microsoft Graph events + Teams, or Google Calendar events + Meet. Store provider IDs separately from internal interview IDs; handle timezone/DST, cancellations, retries and collision detection. ATS sign-in must remain Microsoft-only even if a Google calendar connector is added.
+Scheduling provider: Microsoft Graph events + Teams. Store provider IDs separately from internal interview IDs; handle timezone/DST, cancellations, retries and collision detection. ATS sign-in and scheduling are standardized on Microsoft 365 / Entra.
 
 ## Deliberate boundaries
 
