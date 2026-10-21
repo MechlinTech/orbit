@@ -81,6 +81,40 @@ export function getOrCreateDemoUser(db, c, inputRole, inputTeam = '') {
   });
 }
 
+function getOrCreateSampleRecruiter(db, team, tenant = 'demo-tenant') {
+  const userTeam = team || 'Dev';
+  let recruiter = db.prepare("SELECT * FROM users WHERE role='Recruiter' AND team=?").get(userTeam);
+  if (!recruiter) {
+    const recId = id();
+    const teamSlug = userTeam.toLowerCase().replace(/[^a-z0-9]/g, '_');
+    const email = `demo.recruiter.${teamSlug}@orbit.local`;
+    const name = `Riley Brooks (Demo Recruiter) · ${userTeam}`;
+    const oid = `demo-oid-recruiter-${teamSlug}`;
+    db.prepare(
+      'INSERT INTO users(id,email,name,oid,tenant,role,team,status,created_at) VALUES(?,?,?,?,?,?,?,?,?)'
+    ).run(recId, email, name, oid, tenant, 'Recruiter', userTeam, 'active', now());
+    recruiter = db.prepare('SELECT * FROM users WHERE id=?').get(recId);
+  }
+  return recruiter;
+}
+
+function getOrCreateSampleManager(db, team, tenant = 'demo-tenant') {
+  const userTeam = team || 'Dev';
+  let manager = db.prepare("SELECT * FROM users WHERE role IN ('TA Manager', 'Hiring Manager') AND team=?").get(userTeam);
+  if (!manager) {
+    const mgrId = id();
+    const teamSlug = userTeam.toLowerCase().replace(/[^a-z0-9]/g, '_');
+    const email = `demo.ta_manager.${teamSlug}@orbit.local`;
+    const name = `Marcus Thorne (Demo TA Manager) · ${userTeam}`;
+    const oid = `demo-oid-ta_manager-${teamSlug}`;
+    db.prepare(
+      'INSERT INTO users(id,email,name,oid,tenant,role,team,status,created_at) VALUES(?,?,?,?,?,?,?,?,?)'
+    ).run(mgrId, email, name, oid, tenant, 'TA Manager', userTeam, 'active', now());
+    manager = db.prepare('SELECT * FROM users WHERE id=?').get(mgrId);
+  }
+  return manager;
+}
+
 function ensureRoleSampleData(db, user) {
   const userTeam = user.team || 'Dev';
 
@@ -103,11 +137,12 @@ function ensureRoleSampleData(db, user) {
     }
   }
 
-  if (user.role === 'Hiring Manager') {
+  if (['Hiring Manager', 'TA Manager'].includes(user.role)) {
     const pendingReq = db.prepare("SELECT id FROM requisitions WHERE team=? AND status='pending_manager'").get(userTeam);
     if (!pendingReq) {
       const count = db.prepare('SELECT count(*) n FROM requisitions WHERE team=?').get(userTeam).n;
       if (count < 6) {
+        const recruiter = getOrCreateSampleRecruiter(db, userTeam, user.tenant);
         const rid = id();
         db.prepare(`
           INSERT INTO requisitions(id,title,team,headcount,salary_min,salary_max,currency,description,skills,status,created_by,created_at)
@@ -123,11 +158,11 @@ function ensureRoleSampleData(db, user) {
           'Design distributed microservices.',
           JSON.stringify(['Go', 'Kubernetes']),
           'pending_manager',
-          user.id,
+          recruiter.id,
           now()
         );
         db.prepare('INSERT OR IGNORE INTO approvals VALUES(?,?,?,?,?,?,?)')
-          .run(id(), rid, user.id, 'requester', 'approved', 'Requisition submitted for approval.', now());
+          .run(id(), rid, recruiter.id, 'requester', 'approved', 'Requisition submitted for approval.', now());
       }
     }
   }
@@ -135,6 +170,8 @@ function ensureRoleSampleData(db, user) {
   if (user.role === 'Finance Approver') {
     const pendingFinance = db.prepare("SELECT id FROM requisitions WHERE status='pending_finance'").get();
     if (!pendingFinance) {
+      const recruiter = getOrCreateSampleRecruiter(db, userTeam, user.tenant);
+      const manager = getOrCreateSampleManager(db, userTeam, user.tenant);
       const rid = id();
       db.prepare(`
         INSERT INTO requisitions(id,title,team,headcount,salary_min,salary_max,currency,description,skills,status,created_by,created_at)
@@ -150,13 +187,14 @@ function ensureRoleSampleData(db, user) {
         'Lead core cloud architecture and budget planning.',
         JSON.stringify(['Cloud', 'Architecture']),
         'pending_finance',
-        user.id,
+        recruiter.id,
         now()
       );
       db.prepare('INSERT OR IGNORE INTO approvals VALUES(?,?,?,?,?,?,?)')
-        .run(id(), rid, user.id, 'requester', 'approved', 'Submitted for approvals.', now());
+        .run(id(), rid, recruiter.id, 'requester', 'approved', 'Submitted for approvals.', now());
       db.prepare('INSERT OR IGNORE INTO approvals VALUES(?,?,?,?,?,?,?)')
-        .run(id(), rid, user.id, 'manager', 'approved', 'Hiring manager approved.', now());
+        .run(id(), rid, manager.id, 'manager', 'approved', 'Manager approved.', now());
     }
   }
 }
+
