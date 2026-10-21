@@ -551,7 +551,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       averageApplicationAgeDays:apps.length ? Math.round(apps.reduce((n,a)=>n+(Date.now()-Date.parse(a.created_at))/86400000,0)/apps.length) : 0};
   }
   if (path === 'integrations' && method === 'GET') {
-    permit(user,'admin','recruit'); return ['Microsoft calendar / Teams','Google calendar / Meet','Candidate email / SMS','Offer e-signature','Preboarding / HRMS','AI matching','PDF / DOCX resume parsing','Fraud signal review','Agency portal'].map(name=>({name,status:'Not configured',phase:name.includes('Agency')?'4':'3',externalWrites:false}));
+    permit(user,'admin','recruit'); return ['Microsoft calendar / Teams','Candidate email','Offer e-signature','AI matching','PDF / DOCX resume parsing','Fraud signal review','Agency portal','Preboarding / HRMS'].map(name=>({name,status:'Not configured',phase:name.includes('Agency')?'4':'3',externalWrites:false}));
   }
   throw new HttpError(404,'Endpoint not found.');
 }
