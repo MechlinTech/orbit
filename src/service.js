@@ -469,6 +469,10 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
         if (!isAssigned && !isAdmin) {
           throw new HttpError(403,'Only the assigned interviewer can submit this scorecard.');
         }
+        const scheduledTime = Date.parse(interview.scheduled_at);
+        if (!Number.isFinite(scheduledTime) || scheduledTime > Date.now()) {
+          throw new HttpError(409,'Feedback can be submitted after the scheduled interview time.');
+        }
         let isProxy = false;
         let proxyReason = null;
         if (!isAssigned && isAdmin) {
