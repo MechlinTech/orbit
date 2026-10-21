@@ -281,3 +281,54 @@ test('HTML injection: index.html includes data-demo-login attribute only when en
   const htmlDisabled = await (await fetch(`${fDisabled.url}/`)).text();
   assert.doesNotMatch(htmlDisabled, /data-demo-login="true"/);
 });
+
+test('Demo sample data: TA Manager receives sample pending requisition and can review and approve it', async t => {
+  const f = await createTestServer(t, { demoLogin: true });
+
+  // Log in as TA Manager in Dev
+  const loginRes = await fetch(`${f.url}/auth/demo-login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: f.c.origin },
+    body: JSON.stringify({ role: 'TA Manager', team: 'Dev' })
+  });
+  assert.equal(loginRes.status, 200);
+  const loginData = await loginRes.json();
+  const cookie = loginRes.headers.get('set-cookie').split(';')[0];
+  const csrf = loginData.csrf;
+
+  // TA Manager fetches requisitions
+  const reqsRes = await fetch(`${f.url}/api/requisitions`, {
+    headers: { Cookie: cookie }
+  });
+  assert.equal(reqsRes.status, 200);
+  const reqs = await reqsRes.json();
+  const pendingReq = reqs.find(r => r.status === 'pending_manager');
+  assert.ok(pendingReq, 'Sample requisition in pending_manager status should exist for TA Manager');
+  assert.equal(pendingReq.team, 'Dev');
+  assert.notEqual(pendingReq.created_by, loginData.user.id, 'Creator must be distinct from approving TA Manager');
+
+  // TA Manager reviews and approves the requisition
+  const approveRes = await fetch(`${f.url}/api/requisitions/${pendingReq.id}/approve`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Origin: f.c.origin,
+      Cookie: cookie,
+      'X-CSRF-Token': csrf
+    },
+    body: JSON.stringify({ note: 'Looks good to proceed' })
+  });
+  assert.equal(approveRes.status, 200);
+  const approveData = await approveRes.json();
+  assert.equal(approveData.status, 'pending_finance');
+
+  // Verify DB state
+  const updatedReq = f.db.prepare('SELECT status FROM requisitions WHERE id=?').get(pendingReq.id);
+  assert.equal(updatedReq.status, 'pending_finance');
+
+  const approval = f.db.prepare("SELECT * FROM approvals WHERE requisition_id=? AND step='manager'").get(pendingReq.id);
+  assert.ok(approval);
+  assert.equal(approval.actor, loginData.user.id);
+  assert.equal(approval.decision, 'approve');
+});
+
