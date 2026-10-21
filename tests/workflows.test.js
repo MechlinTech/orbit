@@ -5,6 +5,7 @@ import { can,roles } from '../src/policy.js';
 import { audit } from '../src/db.js';
 import { fixture,user,reqBody,candidateBody } from './helpers.js';
 const call=(f,u,m,p,b)=>service(f.db,u,m,p,b);
+const markInterviewReady=(f,interview)=>f.db.prepare('UPDATE interviews SET scheduled_at=? WHERE id=?').run(new Date(Date.now()-60000).toISOString(),interview.id);
 function hiringFixture(){const f=fixture();f.req=call(f,f.recruiter,'POST','requisitions',reqBody);call(f,f.recruiter,'POST',`requisitions/${f.req.id}/submit`);call(f,f.manager,'POST',`requisitions/${f.req.id}/approve`,{});call(f,f.finance,'POST',`requisitions/${f.req.id}/approve`,{});f.candidate=call(f,f.recruiter,'POST','candidates',candidateBody);f.app=call(f,f.recruiter,'POST','applications',{candidate_id:f.candidate.id,requisition_id:f.req.id});return f;}
 test('requester, manager and finance approval sequence opens headcount',()=>{const f=fixture();const req=call(f,f.recruiter,'POST','requisitions',reqBody);assert.equal(req.status,'draft');assert.throws(()=>call(f,f.recruiter,'POST',`requisitions/${req.id}/approve`));call(f,f.recruiter,'POST',`requisitions/${req.id}/submit`);assert.throws(()=>call(f,f.finance,'POST',`requisitions/${req.id}/approve`,{}));assert.equal(call(f,f.manager,'POST',`requisitions/${req.id}/approve`,{}).status,'pending_finance');assert.equal(call(f,f.finance,'POST',`requisitions/${req.id}/approve`,{}).status,'open');assert.equal(f.db.prepare('SELECT count(*) n FROM approvals').get().n,2);f.db.close();});
 test('self approval and same person at both steps are forbidden even for admin',()=>{const f=fixture();const r=call(f,f.admin,'POST','requisitions',reqBody);call(f,f.admin,'POST',`requisitions/${r.id}/submit`);assert.throws(()=>call(f,f.admin,'POST',`requisitions/${r.id}/approve`,{}));const r2=call(f,f.recruiter,'POST','requisitions',reqBody);call(f,f.recruiter,'POST',`requisitions/${r2.id}/submit`);call(f,f.admin,'POST',`requisitions/${r2.id}/approve`,{});assert.throws(()=>call(f,f.admin,'POST',`requisitions/${r2.id}/approve`,{}));f.db.close();});
@@ -16,8 +17,51 @@ test('manual user provisioning requires Entra IDs and rejects optional agency ro
 test('pipeline records transitions, prevents skipping and enforces terminal stages/headcount',()=>{const f=hiringFixture();assert.throws(()=>call(f,f.recruiter,'POST',`applications/${f.app.id}/stage`,{stage:'Hired'}));for(const stage of ['Screening','Interview','Offer','Hired'])call(f,f.recruiter,'POST',`applications/${f.app.id}/stage`,{stage});assert.throws(()=>call(f,f.recruiter,'POST',`applications/${f.app.id}/stage`,{stage:'Rejected'}));const c=call(f,f.recruiter,'POST','candidates',{...candidateBody,email:'second@example.com'}),a=call(f,f.recruiter,'POST','applications',{candidate_id:c.id,requisition_id:f.req.id});for(const stage of ['Screening','Interview','Offer'])call(f,f.recruiter,'POST',`applications/${a.id}/stage`,{stage});assert.throws(()=>call(f,f.recruiter,'POST',`applications/${a.id}/stage`,{stage:'Hired'}));assert.equal(f.db.prepare('SELECT count(*) n FROM stage_events').get().n,7);f.db.close();});
 test('pipeline configuration rejects removal of occupied stages',()=>{const f=hiringFixture();call(f,f.recruiter,'POST',`applications/${f.app.id}/stage`,{stage:'Screening'});assert.throws(()=>call(f,f.admin,'PUT','pipeline',{stages:['Applied','Hired','Rejected']}));assert.throws(()=>call(f,f.recruiter,'PUT','pipeline',{stages:['Applied','Hired','Rejected']}));assert.deepEqual(call(f,f.admin,'PUT','pipeline',{stages:['Applied','Screening','Assessment','Interview','Offer','Hired','Rejected']}).slice(0,3),['Applied','Screening','Assessment']);f.db.close();});
 test('matching explanation uses explicit skills and handles absent job criteria',()=>{const f=hiringFixture(),r=call(f,f.recruiter,'GET',`applications/${f.app.id}/match`);assert.equal(r.score,50);assert.deepEqual(r.missing,['JavaScript']);assert.equal(matchSkills(f.candidate,{skills:'[]'}).score,null);f.db.close();});
-test('interview assignment, structured scorecard, feedback blinding and immutable submission',()=>{const f=hiringFixture(),second=user(f.db,'Interviewer'),unassigned=user(f.db,'Interviewer');const schedule=u=>call(f,f.recruiter,'POST','interviews',{application_id:f.app.id,interviewer_id:u.id,scheduled_at:new Date(Date.now()+86400000).toISOString(),competencies:['Technical','Communication']});const one=schedule(f.interviewer),two=schedule(second),score={ratings:{Technical:4,Communication:3},recommendation:'Yes',notes:'Solved the exercise and explained the tradeoffs.'};call(f,f.interviewer,'POST',`interviews/${one.id}/scorecards`,score);assert.throws(()=>call(f,f.interviewer,'POST',`interviews/${one.id}/scorecards`,score));assert.throws(()=>call(f,second,'POST',`interviews/${one.id}/scorecards`,score));assert.throws(()=>call(f,unassigned,'GET',`interviews/${one.id}/scorecards`));let view=call(f,second,'GET',`interviews/${two.id}/scorecards`);assert.equal(view.blinded,true);assert.equal(view.scorecards.length,0);call(f,second,'POST',`interviews/${two.id}/scorecards`,score);view=call(f,second,'GET',`interviews/${two.id}/scorecards`);assert.equal(view.blinded,false);assert.equal(view.scorecards.length,2);f.db.close();});
+test('interview assignment, structured scorecard, feedback blinding and immutable submission',()=>{const f=hiringFixture(),second=user(f.db,'Interviewer'),unassigned=user(f.db,'Interviewer');const schedule=u=>{const i=call(f,f.recruiter,'POST','interviews',{application_id:f.app.id,interviewer_id:u.id,scheduled_at:new Date(Date.now()+86400000).toISOString(),competencies:['Technical','Communication']});markInterviewReady(f,i);return i;};const one=schedule(f.interviewer),two=schedule(second),score={ratings:{Technical:4,Communication:3},recommendation:'Yes',notes:'Solved the exercise and explained the tradeoffs.'};call(f,f.interviewer,'POST',`interviews/${one.id}/scorecards`,score);assert.throws(()=>call(f,f.interviewer,'POST',`interviews/${one.id}/scorecards`,score));assert.throws(()=>call(f,second,'POST',`interviews/${one.id}/scorecards`,score));assert.throws(()=>call(f,unassigned,'GET',`interviews/${one.id}/scorecards`));let view=call(f,second,'GET',`interviews/${two.id}/scorecards`);assert.equal(view.blinded,true);assert.equal(view.scorecards.length,0);call(f,second,'POST',`interviews/${two.id}/scorecards`,score);view=call(f,second,'GET',`interviews/${two.id}/scorecards`);assert.equal(view.blinded,false);assert.equal(view.scorecards.length,2);f.db.close();});
 test('invalid scorecards and past interview dates fail validation',()=>{const f=hiringFixture();assert.throws(()=>call(f,f.recruiter,'POST','interviews',{application_id:f.app.id,interviewer_id:f.interviewer.id,scheduled_at:'2000-01-01',competencies:['Skill']}));const i=call(f,f.recruiter,'POST','interviews',{application_id:f.app.id,interviewer_id:f.interviewer.id,scheduled_at:new Date(Date.now()+86400000).toISOString(),competencies:['Skill']});assert.throws(()=>call(f,f.interviewer,'POST',`interviews/${i.id}/scorecards`,{ratings:{Skill:6},recommendation:'Yes',notes:'Evidence'}));f.db.close();});
+test('scorecards are blocked before the scheduled interview time and leave the interview planned',()=>{
+  const f=hiringFixture();
+  const scheduledAt=new Date(Date.now()+3600000).toISOString();
+  const interview=call(f,f.recruiter,'POST','interviews',{
+    application_id:f.app.id,
+    interviewer_id:f.interviewer.id,
+    scheduled_at:scheduledAt,
+    competencies:['Technical','Communication']
+  });
+  const score={ratings:{Technical:4,Communication:3},recommendation:'Yes',notes:'Evidence submitted too early.'};
+  assert.throws(
+    ()=>call(f,f.interviewer,'POST',`interviews/${interview.id}/scorecards`,score),
+    e=>e.status===409&&e.message==='Feedback can be submitted after the scheduled interview time.'
+  );
+  assert.equal(call(f,f.recruiter,'GET',`interviews/${interview.id}`).status,'planned');
+  assert.equal(f.db.prepare('SELECT count(*) n FROM scorecards WHERE interview_id=?').get(interview.id).n,0);
+
+  // Once the timezone-aware scheduled timestamp has passed, submission completes the interview.
+  markInterviewReady(f,interview);
+  const submitted=call(f,f.interviewer,'POST',`interviews/${interview.id}/scorecards`,score);
+  assert.ok(submitted.id);
+  assert.equal(call(f,f.recruiter,'GET',`interviews/${interview.id}`).status,'completed');
+  f.db.close();
+});
+
+test('Agency role remains limited to its portal and is denied internal ATS APIs',()=>{
+  const f=fixture();
+  const agency=user(f.db,'Agency','QA');
+  const me=call(f,agency,'GET','me');
+  assert.deepEqual(me.permissions,[]);
+  for(const path of ['requisitions','candidates','applications','interviews','analytics']){
+    assert.throws(
+      ()=>call(f,agency,'GET',path),
+      e=>e.status===403&&e.message==='Your role cannot perform this action.'
+    );
+  }
+  assert.throws(
+    ()=>call(f,agency,'POST','referrals',{requisition_id:'missing',name:'Agency Candidate',email:'agency@example.com'}),
+    e=>e.status===403
+  );
+  f.db.close();
+});
+
 test('referrals reveal only the submitting employee records',()=>{const f=hiringFixture(),employee=user(f.db,'Employee/Referral'),other=user(f.db,'Employee/Referral');call(f,employee,'POST','referrals',{requisition_id:f.req.id,name:'Referral',email:'ref@example.com',note:'Worked together'});assert.equal(call(f,employee,'GET','referrals').length,1);assert.equal(call(f,other,'GET','referrals').length,0);assert.equal(call(f,employee,'GET','requisitions')[0].salary_max,undefined);f.db.close();});
 test('analytics are scoped to the actor team',()=>{const f=hiringFixture(),other=user(f.db,'Recruiter','Sales');assert.equal(call(f,f.recruiter,'GET','analytics').candidates,1);assert.equal(call(f,other,'GET','analytics').candidates,0);f.db.close();});
 test('audit records are append-only and admin-only',()=>{const f=fixture();audit(f.db,f.admin.id,'test.event','target');assert.throws(()=>f.db.exec("UPDATE audit SET event='changed'"));assert.throws(()=>f.db.exec('DELETE FROM audit'));assert.throws(()=>call(f,f.recruiter,'GET','admin/audit'));assert.equal(call(f,f.admin,'GET','admin/audit')[0].event,'test.event');f.db.close();});
@@ -299,6 +343,7 @@ test('interview editing updates scheduled date and time and validates future dat
   );
 
   // Completed interview cannot be edited
+  markInterviewReady(f, created);
   call(f,secondInterviewer,'POST',`interviews/${created.id}/scorecards`,{
     ratings:{'Technical analysis':4},
     recommendation:'Yes',
@@ -589,6 +634,7 @@ test('System Admin permission enhancements, overrides, proxy scorecard, and team
     scheduled_at: scheduledTime,
     competencies: ['JavaScript', 'SQL']
   });
+  markInterviewReady(f, interview2);
 
   // Non-assigned non-admin user cannot submit scorecard
   const otherInterviewer = user(f.db, 'Interviewer', 'Dev');

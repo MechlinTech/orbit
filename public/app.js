@@ -2,15 +2,18 @@ const $ = s => document.querySelector(s);
 const escape = v => String(v ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let me, csrf, permissions = [], current = 'Overview', renderVersion = 0, reqPage = 1, candidateQuery = '';
 const pageState = { Requisitions: 1, Candidates: 1, Interviews: 1, Referrals: 1, Administration: 1, 'Audit log': 1 };
-const getNavList = () => [
-  ...(allows('analytics') ? ['Overview'] : []),
-  'Requisitions',
-  ...(allows('review') || allows('recruit') ? ['Candidates', 'Pipeline'] : []),
-  ...(allows('review') || allows('recruit') || allows('interview') ? ['Interviews'] : []),
-  ...(allows('refer') ? ['Referrals'] : []),
-  ...(allows('admin') ? ['Administration', 'Settings', 'Audit log', 'Pipeline settings'] : []),
-  ...(allows('admin') || allows('recruit') ? ['Integrations'] : [])
-];
+const getNavList = () => {
+  if (me?.role === 'Agency') return ['Agency portal'];
+  return [
+    ...(allows('analytics') ? ['Overview'] : []),
+    ...(allows('jobs') ? ['Requisitions'] : []),
+    ...(allows('review') || allows('recruit') ? ['Candidates', 'Pipeline'] : []),
+    ...(allows('review') || allows('recruit') || allows('interview') ? ['Interviews'] : []),
+    ...(allows('refer') ? ['Referrals'] : []),
+    ...(allows('admin') ? ['Administration', 'Settings', 'Audit log', 'Pipeline settings'] : []),
+    ...(allows('admin') || allows('recruit') ? ['Integrations'] : [])
+  ];
+};
 const parseNavFromHash = (nav) => {
   const raw = location.hash.replace(/^#\/?/, '').trim();
   if (!raw) return null;
@@ -58,7 +61,7 @@ const loadSavedPages = () => {
   } catch {}
 };
 let appearance={theme:document.documentElement.dataset.theme || 'mechlin',themes:[]};
-const iconPaths={Overview:'M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z',Requisitions:'M8 6V4h8v2 M3 7h18v13H3z M3 12h18 M10 11v3h4v-3',Candidates:'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M9 3a4 4 0 1 0 0 8a4 4 0 0 0 0-8 M17 4a4 4 0 0 1 0 8 M22 21v-2a4 4 0 0 0-3-4',Pipeline:'M4 4h4v16H4z M10 4h4v11h-4z M16 4h4v7h-4z',Interviews:'M4 5h16v16H4z M8 2v6 M16 2v6 M4 10h16 M8 14h3 M14 14h2 M8 17h3',Referrals:'M12 20V10 M7 15l5-5 5 5 M4 4h16v4H4z',Administration:'M12 3l8 4v6c0 4-4 7-8 9-4-2-8-5-8-9V7z M8 12l3 3 5-6','Audit log':'M6 3h12v18H6z M9 7h6 M9 11h6 M9 15h4','Pipeline settings':'M4 7h16 M4 17h16 M8 4v6 M16 14v6',Settings:'M12 8a4 4 0 1 0 0 8a4 4 0 0 0 0-8 M12 2v3 M12 19v3 M2 12h3 M19 12h3 M5 5l2 2 M17 17l2 2 M5 19l2-2 M17 7l2-2',Integrations:'M8 3v5 M16 3v5 M5 8h14v4a7 7 0 0 1-14 0z M12 19v3'};
+const iconPaths={Overview:'M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z',Requisitions:'M8 6V4h8v2 M3 7h18v13H3z M3 12h18 M10 11v3h4v-3',Candidates:'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M9 3a4 4 0 1 0 0 8a4 4 0 0 0 0-8 M17 4a4 4 0 0 1 0 8 M22 21v-2a4 4 0 0 0-3-4',Pipeline:'M4 4h4v16H4z M10 4h4v11h-4z M16 4h4v7h-4z',Interviews:'M4 5h16v16H4z M8 2v6 M16 2v6 M4 10h16 M8 14h3 M14 14h2 M8 17h3',Referrals:'M12 20V10 M7 15l5-5 5 5 M4 4h16v4H4z',Administration:'M12 3l8 4v6c0 4-4 7-8 9-4-2-8-5-8-9V7z M8 12l3 3 5-6','Audit log':'M6 3h12v18H6z M9 7h6 M9 11h6 M9 15h4','Pipeline settings':'M4 7h16 M4 17h16 M8 4v6 M16 14v6',Settings:'M12 8a4 4 0 1 0 0 8a4 4 0 0 0 0-8 M12 2v3 M12 19v3 M2 12h3 M19 12h3 M5 5l2 2 M17 17l2 2 M5 19l2-2 M17 7l2-2',Integrations:'M8 3v5 M16 3v5 M5 8h14v4a7 7 0 0 1-14 0z M12 19v3','Agency portal':'M4 21v-8a8 8 0 0 1 16 0v8 M9 21v-4a3 3 0 0 1 6 0v4 M2 21h20'};
 const icon=name=>`<svg class="ui-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${iconPaths[name]||iconPaths.Overview}"/></svg>`;
 const initials=name=>escape(String(name).split(/\s+/).filter(Boolean).slice(0,2).map(n=>n[0]).join('').toUpperCase());
 const applyTheme=theme=>{document.documentElement.dataset.theme=theme;document.querySelector('meta[name="theme-color"]').content=theme==='midnight'?'#0b1322':'#111f35';};
@@ -92,6 +95,27 @@ const formatLabel = (label, required) => {
 const field = (label,name,type='text',value='',required=true,extra='') => `<label>${formatLabel(label, required)}<input name="${name}" type="${type}" value="${escape(value)}" ${required?'required aria-required="true"':''} ${extra}><span class="field-error error" id="${name}-error" role="alert"></span></label>`;
 const area = (label,name,value='',required=false) => `<label class="full">${formatLabel(label, required)}<textarea name="${name}" ${required?'required aria-required="true"':''}>${escape(value)}</textarea></label>`;
 const select = (label,name,values,selected='',required=true) => `<label>${formatLabel(label, required)}<select name="${name}" ${required?'required aria-required="true"':''}>${values.map(v=>{const [id,title]=Array.isArray(v)?v:[v,v];return `<option value="${escape(id)}" ${id===selected?'selected':''}>${escape(title)}</option>`;}).join('')}</select></label>`;
+const searchableSelect = (label,name,values,selected='',required=true,placeholder='Search options') => `<label>${formatLabel(label, required)}<input type="search" class="select-search" data-search-select="${name}" placeholder="${escape(placeholder)}" aria-label="${escape(`Search ${label}`)}" autocomplete="off"><select name="${name}" ${required?'required aria-required="true"':''}>${values.map(v=>{const [id,title]=Array.isArray(v)?v:[v,v];return `<option value="${escape(id)}" data-search="${escape(String(title).toLowerCase())}" ${id===selected?'selected':''}>${escape(title)}</option>`;}).join('')}</select></label>`;
+const bindSearchableSelect = name => {
+  const input = $(`#edit-form [data-search-select="${name}"]`);
+  const el = $(`#edit-form select[name="${name}"]`);
+  if(!input || !el) return;
+  const options = Array.from(el.options).map(o=>({value:o.value,text:o.textContent,search:(o.dataset.search||o.textContent).toLowerCase()}));
+  input.oninput = () => {
+    const query = input.value.trim().toLowerCase();
+    const current = el.value;
+    const matches = options.filter(o=>!query||o.search.includes(query));
+    el.innerHTML = matches.length
+      ? matches.map(o=>`<option value="${escape(o.value)}" data-search="${escape(o.search)}">${escape(o.text)}</option>`).join('')
+      : '<option value="" disabled selected>No matching options</option>';
+    if(matches.some(o=>o.value===current)) el.value = current;
+  };
+};
+const FEEDBACK_LOCKED_MESSAGE = 'Feedback can be submitted after the scheduled interview time.';
+const feedbackReady = interview => {
+  const scheduled = Date.parse(interview?.scheduled_at);
+  return Number.isFinite(scheduled) && scheduled <= Date.now();
+};
 const standardTeams = ['Dev','QA','BD','DevOps','HR','Product','Design','Operations','Sales','Other','PM','TL'];
 const teamSelect = (label,name,selected='',allowOrg=false) => {
   const options = [];
@@ -362,25 +386,34 @@ async function render() {
       const pag=renderPagination('Requisitions',page,totalPages,total,start,10);
       html=heading('Headcount, job descriptions and approval decisions.',allows('recruit')||allows('requisition')?button('+ New requisition','new-req'):'')+`<section class="panel">${reqTable(paged)}${pag}</section>`;
     }
+    if(current==='Agency portal') {
+      html=heading('External agency collaboration is not available in this workspace yet.')+`<section class="panel"><h2>Agency portal is not available yet</h2><p class="muted">Agency functionality has not been enabled for this workspace. Your Agency role does not have access to the internal ATS. Contact your Talent Acquisition administrator if you need help with a submission.</p></section>`;
+    }
     if(current==='Candidates') {
       const candidates=await api('candidates');
       const renderCandidateTable=(q=candidateQuery)=>{
         candidateQuery=q;
-        const filtered=q?candidates.filter(c=>{
+        const query=q.trim();
+        const filtered=query?candidates.filter(c=>{
           const appText=(c.applications||[]).map(a=>`${a.title} ${a.stage}`).join(' ');
-          return `${c.name} ${c.email} ${c.skills} ${c.resume_text} ${appText}`.toLowerCase().includes(q);
+          return `${c.name} ${c.email} ${c.skills} ${c.resume_text} ${appText}`.toLowerCase().includes(query);
         }):candidates;
         const {paged,page,totalPages,total,start}=paginate(filtered,pageState.Candidates||1,10);
         pageState.Candidates=page;
+        if(!filtered.length){
+          return query
+            ? `<div class="empty"><p>No matching candidates found.</p>${button('Clear Search','clear-candidate-search','','class="secondary"')}</div>`
+            : empty('No candidates added yet');
+        }
         const pag=renderPagination('Candidates',page,totalPages,total,start,10);
         return `${candidateTable(paged)}${pag}`;
       };
-      html=heading('Search skills, experience and candidate records.',allows('recruit')?button('+ Add candidate','new-candidate'):'')+`<section class="panel"><div class="panel-head"><h2>Candidate directory</h2><label class="search">Search<input id="candidate-search" type="search" placeholder="Candidate or skill" value="${escape(candidateQuery)}"></label></div><div id="candidate-table">${renderCandidateTable()}</div></section>`;
+      html=heading('Search skills, experience and candidate records.',allows('recruit')?button('+ Add candidate','new-candidate'):'')+`<section class="panel"><div class="panel-head"><h2>Candidate directory</h2><label class="search">Search<input id="candidate-search" type="search" placeholder="Search name, email or skill" value="${escape(candidateQuery)}"></label></div><div id="candidate-table">${renderCandidateTable()}</div></section>`;
       queueMicrotask(()=>{
         const el=$('#candidate-search');
         if(el)el.oninput=()=>{
           pageState.Candidates=1;
-          $('#candidate-table').innerHTML=renderCandidateTable(el.value.toLowerCase());
+          $('#candidate-table').innerHTML=renderCandidateTable(el.value.trim().toLowerCase());
         };
       });
     }
@@ -397,7 +430,14 @@ async function render() {
       const {paged,page,totalPages,total,start}=paginate(interviews,pageState.Interviews||1,10);
       pageState.Interviews=page;
       const pag=renderPagination('Interviews',page,totalPages,total,start,10);
-      html=heading('Structured interviews, independent feedback.',allows('recruit')?button('+ Plan interview','new-interview'):'')+`<div class="notice-inline">Interview plans are stored here. Calendar invitations and Teams/Meet links require a calendar adapter.</div><section class="panel">${table(['Candidate / role','Interviewer','Scheduled','Status','Feedback'],paged.map(i=>`<tr><td><strong>${escape(i.name)}</strong>${escape(i.title)}</td><td>${escape(i.interviewer)}</td><td>${escape(new Date(i.scheduled_at).toLocaleString())}</td><td>${badge(i.status)}</td><td><div class="actions">${i.interviewer_id===me.id&&i.status!=='completed'?button('Submit scorecard','scorecard',i.id):''}${allows('admin')&&i.interviewer_id!==me.id&&i.status!=='completed'?button('Proxy scorecard','scorecard-proxy',i.id,'class="secondary"'):''}${i.status!=='completed'&&(allows('recruit')||allows('admin')||i.interviewer_id===me.id)?button('Edit','edit-interview',i.id,'class="secondary"'):''}${button('View feedback','feedback',i.id,'class="secondary"')}</div></td></tr>`))}${pag}</section>`;
+      const rows=paged.map(i=>{
+        const ready=feedbackReady(i);
+        const canSubmit=i.interviewer_id===me.id&&i.status!=='completed';
+        const canProxy=allows('admin')&&i.interviewer_id!==me.id&&i.status!=='completed';
+        const showLock=(canSubmit||canProxy)&&!ready;
+        return `<tr><td><strong>${escape(i.name)}</strong>${escape(i.title)}</td><td>${escape(i.interviewer)}</td><td>${escape(new Date(i.scheduled_at).toLocaleString())}</td><td>${badge(i.status)}</td><td><div class="actions">${canSubmit&&ready?button('Submit scorecard','scorecard',i.id):''}${canProxy&&ready?button('Proxy scorecard','scorecard-proxy',i.id,'class="secondary"'):''}${i.status!=='completed'&&(allows('recruit')||allows('admin')||i.interviewer_id===me.id)?button('Edit','edit-interview',i.id,'class="secondary"'):''}${button('View feedback','feedback',i.id,'class="secondary"')}${showLock?`<span class="muted feedback-locked">${FEEDBACK_LOCKED_MESSAGE}</span>`:''}</div></td></tr>`;
+      });
+      html=heading('Structured interviews, independent feedback.',allows('recruit')?button('+ Plan interview','new-interview'):'')+`<div class="notice-inline">Interview plans are stored here. Calendar invitations and Teams/Meet links require a calendar adapter.</div><section class="panel">${table(['Candidate / role','Interviewer','Scheduled','Status','Feedback'],rows)}${pag}</section>`;
     }
     if(current==='Referrals') {
       const refs=await api('referrals');
@@ -461,6 +501,7 @@ document.addEventListener('click',async event=>{
     if(a==='switch-demo-role'){await openDemoModal(true);return;}
     if(a==='req-page'||a==='page'){const view=b.dataset.view||'Requisitions';const p=Number(b.dataset.page);const total=Number(b.dataset.totalPages||Infinity);if(p>=1&&p<=total&&p!==(pageState[view]||1)){pageState[view]=p;reqPage=pageState.Requisitions;await render();}return;}
     if(a==='navigate'){if(current!==b.dataset.view){reqPage=1;pageState[b.dataset.view]=1;if(b.dataset.view==='Candidates')candidateQuery='';}current=b.dataset.view;await render();return;}
+    if(a==='clear-candidate-search'){candidateQuery='';pageState.Candidates=1;await render();return;}
     if(a==='reset-theme'){applyTheme(appearance.theme);document.querySelector(`#appearance-form input[value="${appearance.theme}"]`).checked=true;$('#save-theme').disabled=true;$('#appearance-status').textContent='Preview reset to the saved workspace theme.';return;}
     if(a==='logout'){
       await api('logout','POST',{});
@@ -630,7 +671,7 @@ document.addEventListener('click',async event=>{
     }
     if(a==='parse-resume'){const form=$('#edit-form');const r=await api('resume/parse','POST',{text:form.elements.resume_text.value});if(r.email){form.elements.email.value=r.email;form.elements.email.dispatchEvent(new Event('input'));}if(r.phone){form.elements.phone.value=r.phone;form.elements.phone.dispatchEvent(new Event('input'));}notice((r.email||r.phone)?'Email and phone number extracted successfully.':(r.message||'No email or phone number found in resume text.'));}
     if(a==='candidate-details'){const c=(await api('candidates')).find(c=>c.id===id)||await api(`candidates/${id}`);const appsHtml=(c.applications&&c.applications.length)?`<h3>Applications & Status</h3><div class="candidate-status-list" style="margin-bottom:14px;">${c.applications.map(app=>{const title=escape(app.title||'General Application');return `<div class="candidate-status-pair"><span class="candidate-status-role" title="${title}">${title}</span> <span class="status-sep" aria-hidden="true">—</span> ${badge(app.stage||'Applied')}</div>`;}).join('')}</div>`:'';modal(c.name,`<p>${escape(c.email)}${c.phone?` · ${escape(c.phone)}`:''}</p><p>${escape((c.skills||[]).join(', '))}</p>${appsHtml}<h3>Experience / Resume</h3><p class="score-note">${escape(c.resume_text||c.experience||'No resume text provided.')}</p>${allows('recruit')?`<div class="actions" style="margin-top:16px">${button('Edit','edit-candidate',c.id)}</div>`:''}`);}
-    if(a==='new-application'){const [cs,rs]=await Promise.all([api('candidates'),api('requisitions')]);if(!cs.length||!rs.some(r=>r.status==='open'))throw new Error('Add a candidate and approve a requisition first.');modal('Add application',select('Candidate','candidate_id',cs.map(c=>[c.id,c.name]))+select('Open requisition','requisition_id',rs.filter(r=>r.status==='open').map(r=>[r.id,r.title])),v=>api('applications','POST',v));}
+    if(a==='new-application'){const [cs,rs]=await Promise.all([api('candidates'),api('requisitions')]);const openReqs=rs.filter(r=>r.status==='open');if(!cs.length||!openReqs.length)throw new Error('Add a candidate and approve a requisition first.');modal('Add application',searchableSelect('Candidate','candidate_id',cs.map(c=>[c.id,`${c.name} — ${c.email}`]),'',true,'Search by name or email')+searchableSelect('Open requisition','requisition_id',openReqs.map(r=>[r.id,`${r.title} — ${r.id} — ${r.team}`]),'',true,'Search by title, ID or team'),v=>api('applications','POST',v));bindSearchableSelect('candidate_id');bindSearchableSelect('requisition_id');}
     if(a==='move'||a==='reject-app'){const stage=a==='move'?b.dataset.stage:'Rejected';modal('Change application stage',`<p>Move this application to <strong>${escape(stage)}</strong>?</p>`,()=>api(`applications/${id}/stage`,'POST',{stage}));}
     if(a==='match'){const r=await api(`applications/${id}/match`);modal('Skill match explanation',`<p class="eyebrow">${escape(r.method)}</p><h1>${r.score===null?'Unscored':r.score+'%'}</h1><p>${escape(r.explanation)}</p><h3>Matched</h3><p>${escape(r.matched.join(', ')||'None')}</p><h3>Not found in skills</h3><p>${escape(r.missing.join(', ')||'None')}</p><p class="muted">This does not assess ability, potential or suitability. Never use this score as an automatic rejection rule.</p>`);}
     if(a==='new-interview'){const [apps,users]=await Promise.all([api('applications'),api('interviewers')]);const active=apps.filter(a=>!['Hired','Rejected'].includes(a.stage));if(!active.length||!users.length)throw new Error('An active application and interviewer are required.');const todayMin=getLocalTodayMin();modal('Plan interview',select('Application','application_id',active.map(a=>[a.id,`${a.name} · ${a.title}`]))+select('Interviewer','interviewer_id',users.map(u=>[u.id,u.name]))+field('Date and time (your timezone)','scheduled_at','datetime-local','',true,`min="${todayMin}"`)+field('Competencies, comma separated','competencies','text','Role knowledge, Problem solving')+'<p class="status-note">This stores an interview plan. It does not send a calendar invitation.</p>',v=>{const scheduledDate=new Date(v.scheduled_at);if(!Number.isFinite(scheduledDate.getTime())||scheduledDate.getTime()<Date.now()){throw new Error('Enter a future interview date.');}return api('interviews','POST',{...v,scheduled_at:scheduledDate.toISOString(),competencies:skills(v.competencies)});});const dateInp=$('#edit-form [name="scheduled_at"]');if(dateInp)dateInp.min=todayMin;}
@@ -665,12 +706,14 @@ document.addEventListener('click',async event=>{
         return api(`interviews/${id}`,'PUT',payload);
       });
     }
-    if(a==='scorecard'){const i=(await api('interviews')).find(i=>i.id===id), comps=JSON.parse(i.competencies);modal('Submit independent feedback',comps.map((c,n)=>select(`${escape(c)} (1 low – 5 high)`,`rating${n}`,['1','2','3','4','5'],'3')).join('')+select('Recommendation','recommendation',['Strong yes','Yes','No','Strong no'])+area('Job-related evidence','notes','',true)+'<p class="muted">Submitted feedback is final in this phase. Other feedback stays hidden until you submit your assigned scorecards.</p>',v=>api(`interviews/${id}/scorecards`,'POST',{ratings:Object.fromEntries(comps.map((c,n)=>[c,Number(v[`rating${n}`])])),recommendation:v.recommendation,notes:v.notes}));}
+    if(a==='scorecard'){const i=(await api('interviews')).find(i=>i.id===id);if(!i)throw new Error('Interview not found.');if(!feedbackReady(i))throw new Error(FEEDBACK_LOCKED_MESSAGE);const comps=JSON.parse(i.competencies);modal('Submit independent feedback',comps.map((c,n)=>select(`${escape(c)} (1 low – 5 high)`,`rating${n}`,['1','2','3','4','5'],'3')).join('')+select('Recommendation','recommendation',['Strong yes','Yes','No','Strong no'])+area('Job-related evidence','notes','',true)+'<p class="muted">Submitted feedback is final in this phase. Other feedback stays hidden until you submit your assigned scorecards.</p>',v=>{if(!feedbackReady(i))throw new Error(FEEDBACK_LOCKED_MESSAGE);return api(`interviews/${id}/scorecards`,'POST',{ratings:Object.fromEntries(comps.map((c,n)=>[c,Number(v[`rating${n}`])])),recommendation:v.recommendation,notes:v.notes});});}
     if(a==='scorecard-proxy'){
       const i=(await api('interviews')).find(i=>i.id===id)||await api(`interviews/${id}`);
+      if(!feedbackReady(i))throw new Error(FEEDBACK_LOCKED_MESSAGE);
       const comps=JSON.parse(i.competencies);
       modal(`Submit proxy scorecard on behalf of ${escape(i.interviewer)}`,`<div class="notice-inline"><strong>Administrative Proxy Submission:</strong> You are submitting this scorecard on behalf of the assigned interviewer (${escape(i.interviewer)}). An audit log entry will record your action and reason.</div>`+comps.map((c,n)=>select(`${escape(c)} (1 low – 5 high)`,`rating${n}`,['1','2','3','4','5'],'3')).join('')+select('Recommendation','recommendation',['Strong yes','Yes','No','Strong no'])+area('Job-related evidence','notes','',true)+area('Reason for proxy submission','proxy_reason','',true),v=>{
         if(!v.proxy_reason||!v.proxy_reason.trim())throw new Error('A reason for proxy submission is required.');
+        if(!feedbackReady(i))throw new Error(FEEDBACK_LOCKED_MESSAGE);
         return api(`interviews/${id}/scorecards`,'POST',{ratings:Object.fromEntries(comps.map((c,n)=>[c,Number(v[`rating${n}`])])),recommendation:v.recommendation,notes:v.notes,proxy_reason:v.proxy_reason});
       });
     }
@@ -678,7 +721,7 @@ document.addEventListener('click',async event=>{
       const r=await api(`interviews/${id}/scorecards`);
       modal('Interview feedback',`${r.blinded?'<div class="notice-inline">Other reviewers’ feedback is hidden until you submit all your assigned scorecards for this application.</div>':''}${r.scorecards.map(s=>`<article class="panel"><h3>${escape(s.recommendation)}</h3>${s.proxy_for?`<p class="muted" style="margin-bottom:6px"><strong>Proxy Submission:</strong> Submitted by ${escape(s.author_name||'Administrator')} on behalf of ${escape(s.proxy_for_name||'Interviewer')}${s.proxy_reason?` · Reason: ${escape(s.proxy_reason)}`:''}</p>`:(s.author_name?`<p class="muted" style="margin-bottom:6px">By: ${escape(s.author_name)}</p>`:'')}<p>${escape(Object.entries(JSON.parse(s.ratings)).map(([k,v])=>`${k}: ${v}/5`).join(' · '))}</p><p class="score-note">${escape(s.notes)}</p></article>`).join('')||empty('No feedback is available to you yet.')}`);
     }
-    if(a==='new-referral'){const rs=(await api('requisitions')).filter(r=>r.status==='open');if(!rs.length)throw new Error('No open requisitions in your team.');modal('Make a referral',field('Candidate name','name')+field('Candidate email','email','email')+select('Open position','requisition_id',rs.map(r=>[r.id,r.title]))+area('Referral note','note'),v=>api('referrals','POST',v));}
+    if(a==='new-referral'){const rs=(await api('requisitions')).filter(r=>r.status==='open');if(!rs.length)throw new Error('No open requisitions in your team.');modal('Make a referral',field('Candidate name','name')+field('Candidate email','email','email')+searchableSelect('Open position','requisition_id',rs.map(r=>[r.id,`${r.title} — ${r.id} — ${r.team}`]),'',true,'Search by title, ID or team')+area('Referral note','note'),v=>api('referrals','POST',v));bindSearchableSelect('requisition_id');}
     if(a==='new-user'){const roles=(await api('me')).roles.filter(r=>r!=='Agency');modal('Add Microsoft 365 user',field('Full name','name')+field('Microsoft email','email','email')+field('Entra object ID','oid')+field('Entra tenant ID','tenant')+select('Role','role',roles,'Employee/Referral')+teamSelect('Team','team','',true)+'<p class="muted">This grants approved access to the exact Entra identity. It does not create a Microsoft account or an ATS password.</p>',v=>api('admin/users','POST',v));}
     if(a==='manage-user'){const u=window.currentUsers.find(u=>u.id===id);const roles=(await api('me')).roles.filter(r=>r!=='Agency');const actions=u.status==='pending'?['approve','reject']:u.status==='active'?['update','disable','force-logout']:['reactivate','update'];modal(`Manage ${u.name}`,`<p>${escape(u.email)} · ${badge(u.status)}</p><p class="mono">Entra object: ${escape(u.oid)}</p>`+select('Action','action',actions)+select('Role','role',roles,u.role)+teamSelect('Team','team',u.team||'',true)+'<p class="muted">Access changes revoke all current ATS sessions.</p>',v=>api(`admin/users/${id}/${v.action}`,'POST',v));}
     if(a==='edit-pipeline'){const stages=await api('pipeline');modal('Edit pipeline',area('Stages, one per line','stages',stages.join('\n'),true),v=>api('pipeline','PUT',{stages:v.stages.split('\n').map(s=>s.trim()).filter(Boolean)}));}

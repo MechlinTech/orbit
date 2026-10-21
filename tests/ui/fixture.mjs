@@ -24,4 +24,4 @@ const c={...testConfig(),origin:`http://localhost:${port}`},s=createSession(f.db
 // Review harness injects synthetic identity only on a loopback, in-memory server.
 app.prependListener('request',req=>{req.headers.cookie=req.headers.cookie||`session=${s.value}`;});
 app.listen(port,'127.0.0.1',()=>console.log(`Synthetic UI review server on http://localhost:${port}`));
-export {app};
+export {app,f};
