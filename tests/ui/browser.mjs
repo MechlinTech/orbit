@@ -13,7 +13,7 @@ let seq=0,session;const pending=new Map(),exceptions=[];
 ws.onmessage=e=>{const m=JSON.parse(e.data);if(m.id){const p=pending.get(m.id);if(!p)return;pending.delete(m.id);clearTimeout(p.timer);if(m.error)p.reject(new Error(JSON.stringify(m.error)));else p.resolve(m.result);}if(m.method==='Runtime.exceptionThrown')exceptions.push(m.params.exceptionDetails);};
 const send=(method,params={},sid=session)=>new Promise((resolve,reject)=>{const id=++seq;const timer=setTimeout(()=>{pending.delete(id);reject(new Error(`Browser command timed out: ${method}`));},10000);pending.set(id,{resolve,reject,timer});ws.send(JSON.stringify({id,method,params,...(sid?{sessionId:sid}:{})}));});
 const evaluate=async expression=>{const r=await send('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(r.exceptionDetails)throw new Error(JSON.stringify(r.exceptionDetails));return r.result.value;};
-const waitFor=async expression=>{for(let n=0;n<100;n++){if(await evaluate(expression))return;await new Promise(r=>setTimeout(r,50));}throw new Error('Timeout: '+expression);};
+const waitFor=async expression=>{for(let n=0;n<100;n++){try{if(await evaluate(expression))return;}catch{}await new Promise(r=>setTimeout(r,50));}throw new Error('Timeout: '+expression);};
 const click=async expression=>{await evaluate(`${expression}.click()`);};
 const results=[];const check=(label,condition)=>{if(!condition)throw new Error('FAIL '+label);results.push('PASS '+label);console.log(results.at(-1));};
 try{
@@ -542,7 +542,7 @@ try{
   check('Correcting currency clears the currency validation error message',await evaluate("document.querySelector('#currency-error').textContent===''"));
 
   await evaluate(`{document.querySelector('#edit-form').requestSubmit();}`);
-  await waitFor("!document.querySelector('dialog').open && document.querySelector('.requisitions-table').innerText.includes('Platform Engineer')");
+  await waitFor("!document.querySelector('dialog').open && document.querySelector('.requisitions-table')?.innerText.includes('Platform Engineer')");
   check('New Requisition with valid currency USD is created successfully',await evaluate("document.querySelector('.requisitions-table').innerText.includes('Platform Engineer')"));
 
   await click(`document.querySelector('[data-nav="Administration"]')`);

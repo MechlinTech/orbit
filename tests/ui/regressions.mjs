@@ -48,7 +48,9 @@ const evaluate = async expression => {
 };
 const waitFor = async expression => {
   for (let n = 0; n < 120; n++) {
-    if (await evaluate(expression)) return;
+    try {
+      if (await evaluate(expression)) return;
+    } catch {}
     await new Promise(resolve => setTimeout(resolve, 50));
   }
   throw new Error('Timeout: ' + expression);
@@ -153,6 +155,117 @@ try {
   })()`));
   await click(`document.querySelector('#close-modal')`);
 
+  // Referral position, status, details, processing, withdrawal and deletion.
+  const referralSeed = await evaluate(`(async () => {
+    const req = (await api('requisitions')).find(r => r.status === 'open');
+    const ref = await api('referrals', 'POST', { requisition_id: req.id, name: 'UI Referral Candidate', email: 'ui.referral@example.com', note: 'UI referral note for review.' });
+    await render();
+    return { reqId: req.id, refId: ref.id, title: req.title };
+  })()`);
+  await startView('Referrals');
+  await waitFor("document.querySelector('.referrals-table') !== null");
+  check('Referral table shows Job Position and Referral Status headers', await evaluate(`(() => {
+    const headers = [...document.querySelectorAll('.referrals-table thead th')].map(th => th.textContent.trim());
+    return headers.includes('Job Position') && headers.includes('Referral Status') && headers.includes('Referrer') && headers.includes('Actions');
+  })()`));
+  check('Referral row shows linked position, Submitted status and permitted actions', await evaluate(`(() => {
+    const row = [...document.querySelectorAll('.referrals-table tbody tr')].find(r => r.innerText.includes('UI Referral Candidate'));
+    return Boolean(row) && row.innerText.includes(${JSON.stringify(referralSeed.title)}) && row.innerText.includes('Submitted') &&
+      Boolean(row.querySelector('[data-action="referral-details"]')) && Boolean(row.querySelector('[data-action="edit-referral"]')) &&
+      Boolean(row.querySelector('[data-action="process-referral"]')) && Boolean(row.querySelector('[data-action="withdraw-referral"]'));
+  })()`));
+  await click(`(() => { const row = [...document.querySelectorAll('.referrals-table tbody tr')].find(r => r.innerText.includes('UI Referral Candidate')); return row.querySelector('[data-action="referral-details"]'); })()`);
+  await waitFor("document.querySelector('dialog').open && document.querySelector('#modal-body h2')?.textContent === 'Referral: UI Referral Candidate'");
+  check('Referral details show the selected candidate, position, requisition reference, date, referrer, note and status', await evaluate(`(() => {
+    const text = document.querySelector('dialog').innerText;
+    return text.includes('UI Referral Candidate') && text.includes('ui.referral@example.com') && text.includes(${JSON.stringify(referralSeed.title)}) &&
+      text.includes(${JSON.stringify(referralSeed.reqId)}) && text.includes('Referral Date') && text.includes('Referrer') &&
+      text.includes('UI referral note for review.') && text.includes('Submitted');
+  })()`));
+  await click(`document.querySelector('#close-modal')`);
+  await click(`(() => { const row = [...document.querySelectorAll('.referrals-table tbody tr')].find(r => r.innerText.includes('UI Referral Candidate')); return row.querySelector('[data-action="edit-referral"]'); })()`);
+  await waitFor("document.querySelector('dialog').open && document.querySelector('#modal-body h2')?.textContent === 'Edit referral'");
+  check('Referral edit pre-populates saved values and shows Delete', await evaluate(`(() => {
+    const form = document.querySelector('#edit-form');
+    return form.elements.name.value === 'UI Referral Candidate' && form.elements.email.value === 'ui.referral@example.com' &&
+      form.elements.requisition_id.value === ${JSON.stringify(referralSeed.reqId)} && form.elements.note.value === 'UI referral note for review.' &&
+      Boolean(document.querySelector('[data-action="delete-referral"]'));
+  })()`));
+  await click(`document.querySelector('#close-modal')`);
+  await click(`(() => { const row = [...document.querySelectorAll('.referrals-table tbody tr')].find(r => r.innerText.includes('UI Referral Candidate')); return row.querySelector('[data-action="process-referral"]'); })()`);
+  await waitFor("document.querySelector('dialog').open && document.querySelector('#modal-body h2')?.textContent === 'Process referral'");
+  await click(`document.querySelector('#edit-form [type="submit"]')`);
+  await waitFor("!document.querySelector('dialog').open && document.querySelector('.referrals-table')?.innerText.includes('Application linked')");
+  check('Processed referral shows the linked application workflow status', await evaluate(`(() => {
+    const row = [...document.querySelectorAll('.referrals-table tbody tr')].find(r => r.innerText.includes('UI Referral Candidate'));
+    return Boolean(row) && row.innerText.includes('Applied') && !row.querySelector('[data-action="process-referral"]');
+  })()`));
+  const candidatesBefore = await evaluate("(async () => (await api('candidates')).length)()");
+  await click(`(() => { const row = [...document.querySelectorAll('.referrals-table tbody tr')].find(r => r.innerText.includes('UI Referral Candidate')); return row.querySelector('[data-action="withdraw-referral"]'); })()`);
+  await waitFor("document.querySelector('dialog').open && document.querySelector('#modal-body h2')?.textContent === 'Withdraw referral'");
+  check('Withdrawal confirmation explains candidate/application records are retained', await evaluate("document.querySelector('dialog').innerText.includes('will not be deleted or rejected automatically')"));
+  await click(`document.querySelector('#edit-form [type="submit"]')`);
+  await waitFor("!document.querySelector('dialog').open && document.querySelector('.referrals-table')?.innerText.includes('Withdrawn')");
+  check('Withdrawn referral keeps its linked candidate and cannot be deleted', await evaluate(`(() => {
+    const row = [...document.querySelectorAll('.referrals-table tbody tr')].find(r => r.innerText.includes('UI Referral Candidate'));
+    return Boolean(row) && row.innerText.includes('Withdrawn') && !row.querySelector('[data-action="edit-referral"]') && !row.querySelector('[data-action="withdraw-referral"]');
+  })()`));
+  check('Withdrawal did not remove the linked candidate', (await evaluate("(async () => (await api('candidates')).length)()")) === candidatesBefore);
+
+  const deleteSeed = await evaluate(`(async () => {
+    const req = (await api('requisitions')).find(r => r.status === 'open');
+    const ref = await api('referrals', 'POST', { requisition_id: req.id, name: 'UI Delete Referral', email: 'ui.delete.referral@example.com', note: 'Delete me.' });
+    await render();
+    return ref.id;
+  })()`);
+  await startView('Referrals');
+  await waitFor(`(() => {
+    const row = [...document.querySelectorAll('.referrals-table tbody tr')].find(r => r.innerText.includes('UI Delete Referral'));
+    return Boolean(row?.querySelector('[data-action="edit-referral"]'));
+  })()`);
+  await click(`(() => { const row = [...document.querySelectorAll('.referrals-table tbody tr')].find(r => r.innerText.includes('UI Delete Referral')); return row.querySelector('[data-action="edit-referral"]'); })()`);
+  await waitFor("document.querySelector('dialog').open && document.querySelector('#modal-body h2')?.textContent === 'Edit referral'");
+  await click(`document.querySelector('[data-action="delete-referral"]')`);
+  await waitFor("document.querySelector('dialog').open && document.querySelector('#modal-body h2')?.textContent === 'Delete referral'");
+  check('Delete confirmation identifies the referral and explains the impact', await evaluate("document.querySelector('dialog').innerText.includes('UI Delete Referral') && document.querySelector('dialog').innerText.includes('recoverable soft deletion') && document.querySelector('dialog').innerText.includes('never silently deleted')"));
+  await click(`document.querySelector('#edit-form [type="submit"]')`);
+  await waitFor("!document.querySelector('dialog').open && !document.querySelector('.referrals-table')?.innerText.includes('UI Delete Referral')");
+  check('Deleting a referral refreshes the referral list', true);
+
+  // Description drafting in both Create and Edit Requisition forms.
+  await startView('Requisitions');
+  await click(`document.querySelector('[data-action="new-req"]')`);
+  await waitFor("document.querySelector('dialog').open && document.querySelector('#modal-body h2')?.textContent === 'New requisition'");
+  await evaluate(`(() => {
+    const form = document.querySelector('#edit-form');
+    form.elements.title.value = 'Orbit Draft Role';
+    form.elements.skills.value = 'SQL, JavaScript';
+    document.querySelector('[data-action="draft-jd"]').click();
+  })()`);
+  await waitFor("document.querySelector('#edit-form [name=description]').value.includes('Orbit Draft Role')");
+  check('Create Requisition drafts a description from title and skills', await evaluate("document.querySelector('#edit-form [name=description]').value.includes('SQL') && document.querySelector('#edit-form [name=description]').value.includes('JavaScript')"));
+  check('Draft success message tells the user to review before saving', await evaluate("document.querySelector('#notice')?.innerText.includes('Job description drafted. Please review before saving.')"));
+  check('Draft response no longer says not generative AI', await evaluate("!document.querySelector('#main').innerText.includes('not generative AI') && !document.querySelector('#notice')?.innerText.includes('not generative AI')"));
+  await click(`document.querySelector('#close-modal')`);
+
+  await click(`document.querySelector('.requisitions-table [data-action="edit-req"]')`);
+  await waitFor("document.querySelector('dialog').open && document.querySelector('#modal-body h2')?.textContent === 'Edit requisition'");
+  await evaluate(`(() => {
+    window._confirmCalls = 0;
+    window.confirm = () => { window._confirmCalls++; return true; };
+    document.querySelector('[data-action="draft-jd"]').click();
+  })()`);
+  await waitFor("document.querySelector('#edit-form [name=description]').value.includes('Role overview')");
+  check('Edit Requisition asks before replacing a non-empty description and applies the draft', await evaluate("window._confirmCalls === 1 && document.querySelector('#edit-form [name=description]').value.includes('Required skills and experience')"));
+  const descriptionBeforeCancel = await evaluate("document.querySelector('#edit-form [name=description]').value");
+  await evaluate(`(() => {
+    window.confirm = () => { window._confirmCalls++; return false; };
+    document.querySelector('[data-action="draft-jd"]').click();
+  })()`);
+  await new Promise(resolve => setTimeout(resolve, 100));
+  check('Cancelling the replacement prompt keeps the existing description', (await evaluate("document.querySelector('#edit-form [name=description]').value")) === descriptionBeforeCancel);
+  await click(`document.querySelector('#close-modal')`);
+
   // Candidate search empty states.
   await startView('Candidates');
   await waitFor("document.querySelector('#candidate-search') !== null");
@@ -169,7 +282,7 @@ try {
   check('Clear Search restores the candidate directory', true);
 
   // Empty directory without an active search.
-  f.db.exec('DELETE FROM stage_events; DELETE FROM scorecards; DELETE FROM interviews; DELETE FROM applications; DELETE FROM referrals; DELETE FROM candidates;');
+  f.db.exec('DELETE FROM stage_events; DELETE FROM scorecards; DELETE FROM interviews; DELETE FROM referrals; DELETE FROM applications; DELETE FROM candidates;');
   await evaluate('render()');
   await waitFor("document.querySelector('#candidate-table')?.innerText.includes('No candidates added yet')");
   check('empty directory with no active search shows No candidates added yet',

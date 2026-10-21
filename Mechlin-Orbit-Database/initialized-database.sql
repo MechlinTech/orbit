@@ -23,8 +23,11 @@ CREATE TABLE interviews(id TEXT PRIMARY KEY, application_id TEXT NOT NULL REFERE
 
 CREATE TABLE oauth_states(state_hash TEXT PRIMARY KEY, verifier TEXT NOT NULL, nonce TEXT NOT NULL, expires INTEGER NOT NULL);
 
-CREATE TABLE referrals(id TEXT PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL, requisition_id TEXT NOT NULL REFERENCES requisitions(id),
-      note TEXT NOT NULL, created_by TEXT NOT NULL REFERENCES users(id), at TEXT NOT NULL);
+CREATE TABLE referrals(id TEXT PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL,
+      requisition_id TEXT REFERENCES requisitions(id), note TEXT NOT NULL, created_by TEXT NOT NULL REFERENCES users(id), at TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'Submitted', candidate_id TEXT REFERENCES candidates(id),
+      application_id TEXT REFERENCES applications(id), withdrawn_at TEXT, withdrawn_by TEXT REFERENCES users(id),
+      deleted_at TEXT, deleted_by TEXT REFERENCES users(id), updated_at TEXT);
 
 CREATE TABLE requisitions(id TEXT PRIMARY KEY, title TEXT NOT NULL, team TEXT NOT NULL, headcount INTEGER NOT NULL CHECK(headcount>0),
       salary_min INTEGER NOT NULL, salary_max INTEGER NOT NULL, currency TEXT NOT NULL, description TEXT NOT NULL, skills TEXT NOT NULL,
