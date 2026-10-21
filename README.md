@@ -35,7 +35,7 @@ No marketing site, sales CRM, billing or public registration is included. “Age
 |---|---|---|
 | 1: identity and operations | Implemented foundation | Entra integration code, approval workflow, users, roles, teams, sessions, audit, deployment |
 | 2: core recruiting | Implemented foundation | Requisitions, two-stage approvals, candidates, applications, pipeline, interviews/scorecards, referrals, basic analytics |
-| 3: external workflows | Contracts only | Microsoft/Google scheduling, Teams/Meet, candidate communications, offers/e-signatures, preboarding/HRMS, document parsing, AI assistance, fraud review |
+| 3: external workflows | Contracts only | Microsoft scheduling & Teams, candidate communications, offers/e-signatures, document parsing, AI assistance, fraud review, preboarding/HRMS |
 | 4: enterprise depth | Planned | Agency portal, advanced intelligence/semantic search, custom approval graphs, retention automation, richer reporting, HRIS sync, availability/load hardening |
 
 See [ROADMAP.md](ROADMAP.md) for acceptance gates and [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md) for what is deliberately incomplete. The scope was derived from the supplied plan referencing Workday, Greenhouse, Lever, iCIMS, SmartRecruiters, Ashby, SAP SuccessFactors, Oracle Recruiting, Jobvite and BambooHR. This handoff does not claim feature parity or a newly verified market ranking.
