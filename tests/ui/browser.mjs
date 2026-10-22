@@ -35,6 +35,18 @@ try{
     check(view+' renders without load error',!(await evaluate("document.querySelector('#main').innerText.includes('Could not load')")));
     if(['Pipeline','Administration','Candidates','Settings'].includes(view))await snap('desktop-'+view.toLowerCase());
   }
+  await waitFor("document.querySelectorAll('.integration-card').length >= 8");
+  check('system admin sees 8 configured integration cards', await evaluate("document.querySelectorAll('.integration-card').length === 8"));
+  check('integration cards include HRMS, Microsoft Calendar, Resend, AI, and In-house modules', await evaluate("['microsoft_calendar', 'email_communication', 'multi_ai', 'resume_scanner', 'signature', 'fraud_review', 'agency_portal', 'hrms'].every(id => Boolean(document.querySelector('[data-integration-id=\"' + id + '\"]')))") );
+  check('integrations management displays status metrics summary', await evaluate("document.querySelectorAll('.metrics .metric').length === 4"));
+  await click("document.querySelector('[data-action=\"configure-integration\"][data-id=\"hrms\"]')");
+  await waitFor("document.querySelector('dialog').open && document.querySelector('#modal-body h2')?.textContent?.includes('In-house HRMS')");
+  check('configure modal opens for HRMS integration with form fields', await evaluate("Boolean(document.querySelector('input[name=\"cfg_baseUrl\"]'))"));
+  check('secret fields have secret masking and password type', await evaluate("document.querySelector('input[name=\"sec_apiKey\"]').type === 'password'"));
+  await click("document.querySelector('#close-modal')");
+  await waitFor("!document.querySelector('dialog').open");
+  check('configure modal closes on cancel', await evaluate("!document.querySelector('dialog').open"));
+  await snap('desktop-integrations');
   await click(`document.querySelector('[data-nav="Settings"]')`);await waitFor("document.querySelector('#appearance-form')!==null");
   check('admin sees three labeled theme controls',await evaluate("document.querySelectorAll('#appearance-form input[type=radio]').length===3 && [...document.querySelectorAll('#appearance-form input')].every(i=>i.closest('label'))"));
   await click(`document.querySelector('input[value="midnight"]')`);
@@ -691,6 +703,81 @@ try{
   await evaluate("applyTheme('mechlin')");
   check('sidebar profile indicates QA Demo User identity',await evaluate("Boolean(document.querySelector('.profile .qa-badge')) && document.querySelector('.profile').innerText.includes('Recruiter')"));
 
+  // --- E-Signature Workflow in Browser ---
+  await click(`document.querySelector('[data-nav="Candidates"]')`);
+  await waitFor("document.querySelector('#candidate-table')!==null");
+  await click("document.querySelector('[data-action=\"candidate-details\"]')");
+  await waitFor("document.querySelector('dialog').open && document.querySelector('.signature-agreements-card')!==null");
+  check('candidate profile displays E-Signature agreements section', await evaluate("Boolean(document.querySelector('.signature-agreements-card'))"));
+
+  await click("document.querySelector('[data-action=\"new-signature-request\"]')");
+  await waitFor("document.querySelector('#modal-body h2')?.textContent.includes('Create Offer & E-Signature Request')");
+  check('new signature request modal opens with offer defaults', await evaluate("Boolean(document.querySelector('#edit-form input[name=\"title\"]'))"));
+
+  await evaluate(`document.querySelector('#edit-form').requestSubmit()`);
+  await waitFor("!document.querySelector('dialog').open");
+
+  // Re-open candidate details to obtain the created request's sign token
+  await click("document.querySelector('[data-action=\"candidate-details\"]')");
+  await waitFor("document.querySelector('dialog').open && document.querySelector('[data-action=\"copy-sig-link\"]')!==null");
+  const signingToken = await evaluate("document.querySelector('[data-action=\"copy-sig-link\"]').dataset.token");
+  check('signature request created with valid security token', Boolean(signingToken && signingToken.length === 64));
+
+  // Navigate to dedicated electronic signing portal
+  await send('Page.navigate', { url: `http://localhost:${port}/sign/${signingToken}` });
+  await waitFor("document.querySelector('.signing-portal')!==null && document.querySelector('.sig-tabs')!==null");
+  check('signing portal renders offer details and 3 signature creation tabs', await evaluate(`
+    document.querySelector('.signing-doc-info h1')?.textContent==='Employment Offer Letter' &&
+    document.querySelectorAll('[data-sig-tab]').length === 3
+  `));
+  check('signing portal provides 4 distinct selectable styles with previews', await evaluate("document.querySelectorAll('[data-style]').length === 4"));
+  check('type signature tab strictly isolates typed controls and hides upload and canvas', await evaluate(`
+    window.getComputedStyle(document.querySelector('#tab-typed-content')).display !== 'none' &&
+    window.getComputedStyle(document.querySelector('#tab-upload-content')).display === 'none' &&
+    window.getComputedStyle(document.querySelector('#tab-drawn-content')).display === 'none'
+  `));
+
+  // Verify switching tabs strictly isolates panels
+  await click("document.querySelector('[data-sig-tab=\"upload\"]')");
+  check('upload signature tab displays upload controls and hides typed and canvas', await evaluate(`
+    window.getComputedStyle(document.querySelector('#tab-typed-content')).display === 'none' &&
+    window.getComputedStyle(document.querySelector('#tab-upload-content')).display !== 'none' &&
+    window.getComputedStyle(document.querySelector('#tab-drawn-content')).display === 'none'
+  `));
+
+  await click("document.querySelector('[data-sig-tab=\"drawn\"]')");
+  check('draw signature tab displays canvas and hides typed and upload', await evaluate(`
+    window.getComputedStyle(document.querySelector('#tab-typed-content')).display === 'none' &&
+    window.getComputedStyle(document.querySelector('#tab-upload-content')).display === 'none' &&
+    window.getComputedStyle(document.querySelector('#tab-drawn-content')).display !== 'none'
+  `));
+
+  // Switch back to typed signature tab
+  await click("document.querySelector('[data-sig-tab=\"typed\"]')");
+  check('switching back to typed signature restores typed controls exclusively', await evaluate(`
+    window.getComputedStyle(document.querySelector('#tab-typed-content')).display !== 'none' &&
+    window.getComputedStyle(document.querySelector('#tab-upload-content')).display === 'none' &&
+    window.getComputedStyle(document.querySelector('#tab-drawn-content')).display === 'none'
+  `));
+
+  // Select 'formal' style and verify selection
+  await click("document.querySelector('[data-style=\"formal\"]')");
+  check('signature style switches to formal serif', await evaluate("document.querySelector('[data-style=\"formal\"]').classList.contains('selected')"));
+
+  // Confirm affirmative consent and execute signature
+  check('affirmative consent checkbox is present for ESIGN compliance', await evaluate("document.querySelector('#sig-consent-checkbox')!==null && !document.querySelector('#sig-consent-checkbox').checked"));
+  await evaluate("document.querySelector('#sig-consent-checkbox').checked = true");
+  await click("document.querySelector('#submit-sig-btn')");
+  await waitFor("document.querySelector('.signing-doc-info h2')?.textContent==='Document Successfully Signed'");
+  check('document signed successfully and certificate download link rendered', await evaluate(`
+    document.querySelector('.signing-doc-info').innerText.includes('Document Successfully Signed') &&
+    document.querySelector('a[href*="/document"]').innerText.includes('Download Completed Document')
+  `));
+
+  // Navigate back to main workspace for remaining QA tests
+  await send('Page.navigate', { url: `http://localhost:${port}/#/Overview` });
+  await waitFor("document.querySelector('.topbar')!==null");
+
   await click("document.querySelector('[data-action=\"switch-demo-role\"]')");
   await waitFor("document.querySelector('dialog').open && document.querySelector('#modal-body h2')?.textContent==='Switch QA Demo Persona'");
   check('switch demo modal opens for active demo session',await evaluate("document.querySelector('dialog').open"));
@@ -704,7 +791,57 @@ try{
   }`);
   await waitFor("!document.querySelector('dialog').open && document.querySelector('.profile').innerText.includes('Hiring Manager')");
   check('switching demo identity updates active profile role to Hiring Manager and team to QA',await evaluate("document.querySelector('.profile').innerText.includes('Hiring Manager') && document.querySelector('.profile').innerText.includes('QA')"));
-  check('navigation updates to match new role permissions',await evaluate("Boolean(document.querySelector('[data-nav=\"Requisitions\"]')) && !document.querySelector('[data-nav=\"Administration\"]')"));
+  check('navigation updates to match new role permissions',await evaluate("Boolean(document.querySelector('[data-nav=\"Requisitions\"]')) && !document.querySelector('[data-nav=\"Administration\"]') && !document.querySelector('[data-nav=\"Integrations\"]')"));
+
+  // Switch to External Agency Recruiter Persona
+  await click("document.querySelector('[data-action=\"switch-demo-role\"]')");
+  await waitFor("document.querySelector('dialog').open");
+  await evaluate(`{
+    const f=document.querySelector('#edit-form');
+    f.elements['role'].value='Agency';
+    f.elements['role'].dispatchEvent(new Event('change'));
+    f.requestSubmit();
+  }`);
+  await waitFor("!document.querySelector('dialog').open && document.querySelector('.agency-scope-banner')!==null");
+  check('agency demo session opens isolated partner portal', await evaluate("Boolean(document.querySelector('.agency-scope-banner'))"));
+  check('agency navigation restricts access to external portal tabs only', await evaluate(`
+    Boolean(document.querySelector('[data-nav="Portal Dashboard"]')) &&
+    Boolean(document.querySelector('[data-nav="Assigned Roles"]')) &&
+    Boolean(document.querySelector('[data-nav="Submissions"]')) &&
+    !document.querySelector('[data-nav="Candidates"]') &&
+    !document.querySelector('[data-nav="Pipeline"]') &&
+    !document.querySelector('[data-nav="Administration"]') &&
+    !document.querySelector('[data-nav="Integrations"]')
+  `));
+  check('agency dashboard displays real-time submission metrics grid', await evaluate("document.querySelectorAll('.agency-stat-card').length >= 4"));
+
+  // Open Assigned Roles view
+  await click("document.querySelector('[data-nav=\"Assigned Roles\"]')");
+  await waitFor("document.querySelector('h1')?.textContent==='Assigned Roles' && document.querySelector('[data-action=\"agency-submit-candidate\"]')!==null");
+  check('assigned requisitions table displays assigned open roles for agency', await evaluate("document.querySelectorAll('table tbody tr').length > 0"));
+
+  // Open candidate submission modal
+  await click("document.querySelector('[data-action=\"agency-submit-candidate\"]')");
+  await waitFor("document.querySelector('dialog').open && document.querySelector('input[name=\"representation_confirmed\"]')!==null");
+  check('candidate submission modal requires affirmative representation authorization', await evaluate("Boolean(document.querySelector('input[name=\"representation_confirmed\"]').required)"));
+
+  // Fill and submit candidate
+  await evaluate(`{
+    const f = document.querySelector('#edit-form');
+    f.elements['name'].value = 'Morgan Taylor (Agency)';
+    f.elements['email'].value = 'morgan.taylor.agency@example.com';
+    f.elements['skills'].value = 'Node.js, TypeScript, Cloud Architecture';
+    f.elements['resume_text'].value = 'Experienced cloud and backend software engineer with 8 years building scalable services.';
+    f.elements['representation_confirmed'].checked = true;
+    f.requestSubmit();
+  }`);
+  await waitFor("!document.querySelector('dialog').open");
+
+  // Navigate to Submissions view
+  await click("document.querySelector('[data-nav=\"Submissions\"]')");
+  await waitFor("document.querySelector('h1')?.textContent==='Submissions' && document.querySelector('table tbody tr')!==null");
+  check('candidate submission appears in agency submissions dashboard', await evaluate("document.body.innerText.includes('Morgan Taylor (Agency)')"));
+  check('submission status maps to approved agency status badge', await evaluate("Boolean(document.querySelector('.badge-submitted') || document.body.innerText.includes('Submitted'))"));
 
   await click("document.querySelector('[data-action=\"logout\"]')");
   await waitFor("document.querySelector('.login-card')!==null");

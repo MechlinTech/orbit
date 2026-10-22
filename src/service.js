@@ -1,7 +1,32 @@
 import { audit, id, now, transaction } from './db.js';
-import { HttpError, roles, teams, requirePermission as permit, requireTeam, inTeam, can, text, email, phone as validatePhone, currency as validateCurrency, list, validateSkills, integer } from './policy.js';
+import { HttpError, roles, teams, requirePermission as permit, requireTeam, inTeam, can, text, email, phone as validatePhone, currency as validateCurrency, list, validateSkills, integer, isAgencyRole } from './policy.js';
 import { getAppearance, setAppearance } from './appearance.js';
 import { isDemoUser } from './demo.js';
+import { ResumeAdapter, CommunicationAdapter, CalendarAdapter, MatchingAdapter, FraudAdapter } from './adapters.js';
+import { isEmailConfigured, listCandidateCommunications, setCandidateConsent, getCandidateConsent, sendCandidateCommunication } from './communication/service.js';
+import { getAvailableTemplates } from './communication/templates.js';
+import { isCalendarConfigured, syncScheduleMeeting, syncRescheduleMeeting, syncCancelMeeting } from './calendar/service.js';
+import { evaluateCandidateMatch } from './matching/engine.js';
+import { isAiMatchingConfigured, matchWithAi } from './matching/ai.js';
+import { getOrRunFraudReview, resolveFraudReview } from './fraud/service.js';
+import { draftJobDescription } from './ai/draft.js';
+import { getAvailableAiProviders } from './ai/provider.js';
+import { createSignatureRequest, getSignatureRequest, listSignatureRequests, cancelSignatureRequest, downloadSignatureDocument, resendSignatureInvitation } from './signature/service.js';
+import {
+  listAgencies, getAgency, createAgency, updateAgency, setAgencyStatus, addAgencyMember,
+  assignRequisitionToAgency, revokeRequisitionFromAgency, publishAgencyFeedback,
+  getAgencyDashboard, listAssignedRequisitions, getAssignedRequisition, submitAgencyCandidate,
+  listAgencySubmissions, getAgencySubmission, listAgencyMembers, addAgencyRecruiter,
+  updateAgencyRecruiterStatus, getAgencyContextForUser
+} from './agency/service.js';
+import {
+  listIntegrationsForAdmin,
+  getIntegrationForAdmin,
+  updateIntegrationForAdmin,
+  testIntegrationForAdmin,
+  toggleIntegrationForAdmin
+} from './integrations/service.js';
+import { getEffectiveIntegrationConfig } from './integrations/storage.js';
 
 const get = (db, table, key) => {
   const row = db.prepare(`SELECT * FROM ${table} WHERE id=?`).get(key);
@@ -11,12 +36,7 @@ const get = (db, table, key) => {
 const publicUser = u => ({ id:u.id, name:u.name, email:u.email, role:u.role, team:u.team, status:u.status, oid:u.oid, tenant:u.tenant, created_at:u.created_at, last_login:u.last_login });
 export const pipeline = db => JSON.parse(db.prepare("SELECT value FROM settings WHERE key='pipeline'").get().value);
 export function matchSkills(candidate, requisition) {
-  const required = Array.isArray(requisition.skills) ? requisition.skills : JSON.parse(requisition.skills);
-  const candSkills = Array.isArray(candidate.skills) ? candidate.skills : JSON.parse(candidate.skills);
-  const present = new Set(candSkills.map(s => s.toLowerCase()));
-  const matched = required.filter(s => present.has(s.toLowerCase())), missing = required.filter(s => !present.has(s.toLowerCase()));
-  return { method:'Deterministic skill overlap; not AI', score: required.length ? Math.round(100 * matched.length / required.length) : null,
-    matched, missing, explanation: required.length ? `${matched.length} of ${required.length} explicitly required skills found. Human review required.` : 'No required skills defined. No score calculated.' };
+  return evaluateCandidateMatch(candidate, requisition);
 }
 const referralQuery = `SELECT r.*, u.name referrer_name, u.email referrer_email, u.team referrer_team,
     q.title requisition_title, q.team requisition_team, q.status requisition_status
@@ -104,9 +124,53 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
   const parts = path.split('/').filter(Boolean), key = parts[1], action = parts[2];
   if (path === 'appearance' && method === 'GET') return getAppearance(db);
   if (path === 'admin/appearance' && method === 'PUT') return setAppearance(db,user,body);
-  if (method === 'GET' && path === 'me') return { user: { ...publicUser(user), isDemoUser: isDemoUser(user) }, csrf: user.csrf, roles, teams, demoLogin: Boolean(c?.demoLogin), isDemoUser: isDemoUser(user), permissions: ['admin','recruit','requisition','approve_manager','approve_finance','review','analytics','refer','jobs','interview'].filter(p => can(user,p)) };
+  if (method === 'GET' && path === 'me') {
+    const agencyMember = db.prepare(`
+      SELECT m.id, m.agency_id, m.role as agency_role, m.status as member_status,
+             a.name as agency_name, a.code as agency_code, a.status as agency_status
+      FROM agency_members m
+      JOIN agencies a ON a.id = m.agency_id
+      WHERE m.user_id = ?
+    `).get(user.id);
+    return {
+      user: {
+        ...publicUser(user),
+        isDemoUser: isDemoUser(user),
+        isAgency: Boolean(agencyMember || isAgencyRole(user.role))
+      },
+      agency: agencyMember ? {
+        id: agencyMember.agency_id,
+        name: agencyMember.agency_name,
+        code: agencyMember.agency_code,
+        role: agencyMember.agency_role,
+        status: agencyMember.agency_status
+      } : null,
+      csrf: user.csrf,
+      roles,
+      teams,
+      demoLogin: Boolean(c?.demoLogin),
+      isDemoUser: isDemoUser(user),
+      permissions: ['admin','recruit','requisition','approve_manager','approve_finance','review','analytics','refer','jobs','interview'].filter(p => can(user,p))
+    };
+  }
   if (parts[0] === 'admin') {
     permit(user,'admin');
+    if (key === 'integrations') {
+      if (!action && method === 'GET') {
+        return listIntegrationsForAdmin(db, user);
+      }
+      if (action && !parts[3]) {
+        if (method === 'GET') return getIntegrationForAdmin(db, user, action);
+        if (method === 'PUT') return updateIntegrationForAdmin(db, user, action, body);
+      }
+      if (action && parts[3] === 'test' && method === 'POST') {
+        return testIntegrationForAdmin(db, user, action, body, c?.transport || fetch);
+      }
+      if (action && parts[3] === 'toggle' && method === 'POST') {
+        return toggleIntegrationForAdmin(db, user, action, body);
+      }
+      throw new HttpError(404, 'Unknown integrations admin endpoint.');
+    }
     if (method === 'GET' && key === 'users') return db.prepare('SELECT * FROM users ORDER BY created_at DESC').all().map(publicUser);
     if (method === 'GET' && key === 'audit') {
       const limit = Math.min(500, Math.max(1, Number(query.get('limit')) || 200));
@@ -114,7 +178,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
     }
     if (method === 'POST' && key === 'users' && !action) {
       const address = email(body.email), name = text(body.name,'Name',200), team = text(body.team ?? '','Team',100,true);
-      if (!roles.includes(body.role) || body.role === 'Agency') throw new HttpError(400,'Select a supported role. Agency access is not enabled.');
+      if (!roles.includes(body.role) || isAgencyRole(body.role)) throw new HttpError(400,'Select a supported role. Agency access is not enabled.');
       const oid = text(body.oid,'Entra object ID',36), tenant = text(body.tenant,'Entra tenant ID',36);
       if (!/^[a-f0-9-]{36}$/i.test(oid) || !/^[a-f0-9-]{36}$/i.test(tenant)) throw new HttpError(400,'Entra object and tenant IDs must be GUIDs.');
       const uid = id();
@@ -133,7 +197,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       if (op === 'reactivate' && !['disabled','rejected'].includes(target.status)) throw new HttpError(409,'Only disabled or rejected users can be reactivated.');
       if (op === 'disable' && target.status !== 'active') throw new HttpError(409,'Only active users can be disabled.');
       if (['approve','update'].includes(op)) {
-        if (!roles.includes(body.role) || body.role === 'Agency') throw new HttpError(400,'Select a supported role.');
+        if (!roles.includes(body.role) || isAgencyRole(body.role)) throw new HttpError(400,'Select a supported role.');
         role = body.role; team = text(body.team ?? '', 'Team',100,true);
       }
       if (['approve','reactivate'].includes(op)) status = 'active';
@@ -336,6 +400,69 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
   }
   if (parts[0] === 'candidates') {
     permit(user,'recruit','review');
+    if (key && action === 'communications') {
+      if (method === 'GET') {
+        return listCandidateCommunications(db, user, key);
+      }
+      if (method === 'POST') {
+        return (async () => {
+          const commAdapter = c?.communicationAdapter || new CommunicationAdapter({ fromEnv: true, transport: c?.transport });
+          return await sendCandidateCommunication(db, user, { ...body, candidate_id: key }, commAdapter);
+        })();
+      }
+    }
+    if (key && action === 'consent') {
+      if (method === 'GET') {
+        permit(user, 'recruit', 'review');
+        return getCandidateConsent(db, key);
+      }
+      if (method === 'POST' || method === 'PUT') {
+        return setCandidateConsent(db, user, key, body.opted_out, body.reason);
+      }
+    }
+    if (key && action === 'signatures') {
+      if (method === 'GET') {
+        permit(user, 'recruit', 'review', 'admin');
+        const cand = get(db, 'candidates', key);
+        requireTeam(user, cand.team);
+        return listSignatureRequests(db, user, { candidateId: key });
+      }
+    }
+    if (key && (action === 'fraud-review' || action === 'fraud')) {
+      const cand = get(db, 'candidates', key);
+      requireTeam(user, cand.team);
+      if (method === 'GET') {
+        permit(user, 'recruit', 'review');
+        return getOrRunFraudReview(db, cand.id, { refresh: query.get('refresh') === 'true' });
+      }
+      if (method === 'POST') {
+        permit(user, 'recruit', 'admin');
+        if (parts[3] === 'resolve' || body.action === 'resolve' || body.status) {
+          return resolveFraudReview(db, user, cand.id, body);
+        }
+        return getOrRunFraudReview(db, cand.id, { refresh: true });
+      }
+    }
+    if (key && action === 'templates') {
+      if (method === 'GET') {
+        permit(user, 'recruit');
+        const cand = get(db, 'candidates', key);
+        requireTeam(user, cand.team);
+        const apps = db.prepare('SELECT a.id, a.requisition_id, a.stage, r.title, r.team FROM applications a JOIN requisitions r ON r.id=a.requisition_id WHERE a.candidate_id=?').all(key);
+        const interviews = db.prepare('SELECT i.id, i.scheduled_at, u.name interviewer FROM interviews i JOIN applications a ON a.id=i.application_id JOIN users u ON u.id=i.interviewer_id WHERE a.candidate_id=? ORDER BY i.scheduled_at DESC').all(key);
+        return {
+          templates: getAvailableTemplates(),
+          candidate: {
+            id: cand.id,
+            name: cand.name,
+            email: cand.email,
+            team: cand.team
+          },
+          applications: apps,
+          interviews
+        };
+      }
+    }
     if (method === 'GET') {
       if (key) {
         const c = get(db, 'candidates', key);
@@ -349,7 +476,8 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
           team: a.team,
           created_at: a.created_at
         }));
-        return { ...c, skills: JSON.parse(c.skills), experience: c.resume_text, applications: apps };
+        const resumeMeta = db.prepare('SELECT id, filename, file_format, file_size, scan_status, extraction_status, created_at FROM candidate_resumes WHERE candidate_id=? ORDER BY created_at DESC LIMIT 1').get(key);
+        return { ...c, skills: JSON.parse(c.skills), experience: c.resume_text, applications: apps, resume: resumeMeta || null };
       }
       const search = (query.get('q') || '').toLowerCase();
       const cands = db.prepare('SELECT * FROM candidates WHERE deleted_at IS NULL ORDER BY created_at DESC').all().filter(c => inTeam(user,c.team));
@@ -388,15 +516,24 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       const resumeVal = body.resume_text !== undefined ? body.resume_text : body.experience !== undefined ? body.experience : '';
       const resume = text(resumeVal, 'Resume text', 50000, true);
       const skills = validateSkills(body.skills), source = text(body.source || 'Direct','Source',100), cid = id();
+      const resumeId = body.resume_id ? String(body.resume_id) : null;
       if (db.prepare('SELECT id FROM candidates WHERE email=?').get(address)) throw new HttpError(409,'A candidate with this email already exists. Ask TA operations to resolve the duplicate.');
       return transaction(db, () => {
         db.prepare('INSERT INTO candidates(id,name,email,phone,skills,resume_text,source,team,created_by,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)').run(cid,name,address,phone,JSON.stringify(skills),resume,source,team,user.id,now());
+        if (resumeId) {
+          const resRow = db.prepare('SELECT * FROM candidate_resumes WHERE id=?').get(resumeId);
+          if (resRow) {
+            db.prepare('UPDATE candidate_resumes SET candidate_id=?, updated_at=? WHERE id=?').run(cid, now(), resumeId);
+            audit(db, user.id, 'candidate.resume_attached', cid, { resume_id: resumeId, filename: resRow.filename, format: resRow.file_format });
+          }
+        }
         audit(db,user.id,'candidate.created',cid);
         const created = get(db,'candidates',cid);
-        return {...created,skills:JSON.parse(created.skills),experience:created.resume_text,applications:[]};
+        const resumeMeta = db.prepare('SELECT id, filename, file_format, file_size, scan_status, extraction_status, created_at FROM candidate_resumes WHERE candidate_id=? ORDER BY created_at DESC LIMIT 1').get(cid);
+        return {...created,skills:JSON.parse(created.skills),experience:created.resume_text,applications:[],resume:resumeMeta||null};
       });
     }
-    if ((method === 'PUT' || method === 'POST') && key) {
+    if ((method === 'PUT' || method === 'POST') && key && !action) {
       permit(user,'recruit');
       const candidate = get(db,'candidates',key);
       if (candidate.deleted_at) throw new HttpError(404, 'Candidate not found.');
@@ -411,8 +548,17 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       const source = text(body.source || candidate.source || 'Direct','Source',100);
       const duplicate = db.prepare('SELECT id FROM candidates WHERE email=? AND id!=?').get(address,key);
       if (duplicate) throw new HttpError(409,'A candidate with this email already exists. Ask TA operations to resolve the duplicate.');
+      const resumeId = body.resume_id ? String(body.resume_id) : null;
       return transaction(db, () => {
         db.prepare('UPDATE candidates SET name=?,email=?,phone=?,skills=?,resume_text=?,source=?,team=? WHERE id=?').run(name,address,phone,JSON.stringify(skills),resume,source,team,key);
+        if (resumeId) {
+          const resRow = db.prepare('SELECT * FROM candidate_resumes WHERE id=?').get(resumeId);
+          if (resRow && resRow.candidate_id !== key) {
+            const prev = db.prepare('SELECT id, filename FROM candidate_resumes WHERE candidate_id=? ORDER BY created_at DESC LIMIT 1').get(key);
+            db.prepare('UPDATE candidate_resumes SET candidate_id=?, updated_at=? WHERE id=?').run(key, now(), resumeId);
+            audit(db, user.id, 'candidate.resume_updated', key, { new_resume_id: resumeId, previous_resume_id: prev?.id || null, filename: resRow.filename });
+          }
+        }
         audit(db,user.id,'candidate.updated',key,{name,email:address,team});
         const updated = get(db,'candidates',key);
         const apps = db.prepare('SELECT a.id, a.candidate_id, a.requisition_id, a.stage, a.created_at, r.title, r.team FROM applications a JOIN requisitions r ON r.id=a.requisition_id WHERE a.candidate_id=? ORDER BY a.created_at ASC').all(key).filter(a => inTeam(user, a.team)).map(a => ({
@@ -423,7 +569,8 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
           team: a.team,
           created_at: a.created_at
         }));
-        return {...updated,skills:JSON.parse(updated.skills),experience:updated.resume_text,applications:apps};
+        const resumeMeta = db.prepare('SELECT id, filename, file_format, file_size, scan_status, extraction_status, created_at FROM candidate_resumes WHERE candidate_id=? ORDER BY created_at DESC LIMIT 1').get(key);
+        return {...updated,skills:JSON.parse(updated.skills),experience:updated.resume_text,applications:apps,resume:resumeMeta||null};
       });
     }
     if (method === 'DELETE' && key && !action) {
@@ -445,6 +592,79 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       });
     }
   }
+  if (path === 'resume/upload' && method === 'POST') {
+    permit(user, 'recruit');
+    if (!body.buffer || !Buffer.isBuffer(body.buffer)) {
+      throw new HttpError(400, 'Uploaded file content is missing or invalid.');
+    }
+    const adapter = c?.resumeAdapter || new ResumeAdapter({
+      enabled: true,
+      maxSizeBytes: c?.maxResumeSizeBytes,
+      antivirusRequired: c?.antivirusRequired,
+      antivirusProvider: c?.antivirusProvider
+    });
+
+    return (async () => {
+      try {
+        const result = await adapter.processUpload({
+          buffer: body.buffer,
+          filename: body.filename || 'resume',
+          mimeType: body.mimeType || ''
+        });
+
+        const email = result.text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0] || '';
+        const phone = result.text.match(/\+?[\d][\d ()-]{8,20}\d/)?.[0] || '';
+        const resumeId = id();
+        const nowStr = now();
+
+        db.prepare(`
+          INSERT INTO candidate_resumes(id, candidate_id, storage_id, filename, file_format, file_size, mime_type, scan_status, extraction_status, error_message, uploaded_by, created_at, updated_at)
+          VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+        `).run(
+          resumeId,
+          null,
+          result.storageId,
+          result.filename,
+          result.format,
+          result.size,
+          body.mimeType || (result.format === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'),
+          result.scanStatus,
+          result.text ? 'success' : (result.ocrRequired ? 'ocr_required' : 'empty'),
+          result.warnings.join('; ') || null,
+          user.id,
+          nowStr,
+          nowStr
+        );
+
+        audit(db, user.id, 'resume.uploaded', resumeId, {
+          filename: result.filename,
+          format: result.format,
+          size: result.size,
+          scan_status: result.scanStatus,
+          extraction_status: result.text ? 'success' : (result.ocrRequired ? 'ocr_required' : 'empty')
+        });
+
+        return {
+          resume_id: resumeId,
+          text: result.text,
+          email,
+          phone,
+          filename: result.filename,
+          format: result.format,
+          size: result.size,
+          scan_status: result.scanStatus,
+          ocr_required: result.ocrRequired,
+          warnings: result.warnings
+        };
+      } catch (err) {
+        audit(db, user.id, 'resume.upload_rejected', '', {
+          filename: body.filename || 'unknown',
+          reason: err.message
+        });
+        throw err;
+      }
+    })();
+  }
   if (path === 'resume/parse' && method === 'POST') {
     permit(user,'recruit'); const resume = text(body.text,'Resume text',50000);
     const email = resume.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0] || '';
@@ -456,6 +676,19 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
     permit(user,'recruit','requisition');
     const title = text(body.title,'Title',200), skills = validateSkills(body.skills);
     if (!skills.length) throw new HttpError(400, 'Add at least one required skill before drafting a job description.');
+    if (isAiMatchingConfigured(c) || body.provider) {
+      return (async () => {
+        return draftJobDescription({
+          title,
+          skills,
+          team: body.team || user.team,
+          context: body.context || '',
+          provider: body.provider,
+          model: body.model,
+          config: c
+        });
+      })();
+    }
     return {
       method: 'Draft generated from the job title and required skills.',
       message: 'Job description drafted. Please review before saving.',
@@ -484,7 +717,48 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
         return get(db,'applications',aid);
       });
     }
-    if (method === 'GET' && key && action === 'match') { const {app,req} = appContext(db,user,key); return matchSkills(get(db,'candidates',app.candidate_id),req); }
+    if ((method === 'GET' || method === 'POST') && key && action === 'match') {
+      const {app,req} = appContext(db,user,key);
+      const cand = get(db,'candidates',app.candidate_id);
+      if (isAiMatchingConfigured(c) || body.provider) {
+        return (async () => {
+          const res = await matchWithAi(cand, req, { config: c, provider: body.provider, model: body.model });
+          try {
+            db.prepare('INSERT INTO application_matches (id,application_id,score,matched_skills,missing_skills,experience_score,method,explanation,breakdown,evidence,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(
+              id(), app.id, res.score, JSON.stringify(res.matched || []), JSON.stringify(res.missing || []),
+              res.breakdown?.experience_score || null, res.method || 'AI', res.explanation || '',
+              JSON.stringify(res.breakdown || {}), JSON.stringify(res.evidence || []), now()
+            );
+          } catch {}
+          if (method === 'POST') audit(db, user.id, 'application.match_calculated', app.id, { score: res.score, method: res.method });
+          return res;
+        })();
+      }
+      const res = evaluateCandidateMatch(cand, req);
+      try {
+        db.prepare('INSERT INTO application_matches (id,application_id,score,matched_skills,missing_skills,experience_score,method,explanation,breakdown,evidence,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(
+          id(), app.id, res.score, JSON.stringify(res.matched || []), JSON.stringify(res.missing || []),
+          res.breakdown?.experience_score || null, res.method || 'Deterministic', res.explanation || '',
+          JSON.stringify(res.breakdown || {}), JSON.stringify(res.evidence || []), now()
+        );
+      } catch {}
+      if (method === 'POST') audit(db, user.id, 'application.match_calculated', app.id, { score: res.score, method: res.method });
+      return res;
+    }
+    if (key && (action === 'fraud-review' || action === 'fraud')) {
+      const {app,req} = appContext(db,user,key);
+      if (method === 'GET') {
+        permit(user, 'recruit', 'review');
+        return getOrRunFraudReview(db, app.candidate_id, { application_id: app.id, refresh: query.get('refresh') === 'true' });
+      }
+      if (method === 'POST') {
+        permit(user, 'recruit', 'admin');
+        if (parts[3] === 'resolve' || body.action === 'resolve' || body.status) {
+          return resolveFraudReview(db, user, app.candidate_id, body);
+        }
+        return getOrRunFraudReview(db, app.candidate_id, { application_id: app.id, refresh: true });
+      }
+    }
     if (method === 'POST' && action === 'stage') {
       permit(user,'recruit'); const {app,req} = appContext(db,user,key), stages = pipeline(db);
       if (!stages.includes(body.stage)) throw new HttpError(400,'Unknown pipeline stage.');
@@ -550,7 +824,51 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       if (interviewer.status !== 'active' || !['Interviewer','Hiring Manager','Recruiter','TA Manager','TA Director','System Admin'].includes(interviewer.role) || !inTeam(interviewer,req.team)) throw new HttpError(400,'Choose an active interviewer who can access this team.');
       const scheduled = new Date(body.scheduled_at); if (!Number.isFinite(scheduled.getTime()) || scheduled.getTime() < Date.now()) throw new HttpError(400,'Enter a future interview date.');
       const competencies = list(body.competencies,'Competencies',10); if (!competencies.length) throw new HttpError(400,'At least one competency is required.');
-      const iid = id(); return transaction(db, () => { db.prepare('INSERT INTO interviews(id,application_id,interviewer_id,scheduled_at,competencies,created_at) VALUES(?,?,?,?,?,?)').run(iid,app.id,interviewer.id,scheduled.toISOString(),JSON.stringify(competencies),now()); audit(db,user.id,'interview.planned',iid); return {...get(db,'interviews',iid),calendar_status:'Not synced; provider adapter required'}; });
+      const duration = body.duration_minutes !== undefined ? integer(body.duration_minutes, 'Duration', 15, 480) : 45;
+      const timezone = body.timezone ? text(body.timezone, 'Timezone', 100, false) : 'UTC';
+      const notes = body.notes ? text(body.notes, 'Notes', 5000, false) : '';
+      const cand = get(db, 'candidates', app.candidate_id);
+      const title = body.title ? text(body.title, 'Title', 200, false) : `Interview: ${cand.name} — ${req.title}`;
+      const iid = id();
+      transaction(db, () => {
+        db.prepare('INSERT INTO interviews(id,application_id,interviewer_id,scheduled_at,competencies,title,duration_minutes,timezone,notes,status,calendar_status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run(
+          iid, app.id, interviewer.id, scheduled.toISOString(), JSON.stringify(competencies), title, duration, timezone, notes, 'planned', 'not_synced', now()
+        );
+        audit(db, user.id, 'interview.planned', iid, { scheduled_at: scheduled.toISOString(), interviewer_id: interviewer.id, duration_minutes: duration, timezone });
+      });
+      const calConfigured = isCalendarConfigured(c) || Boolean(c?.calendarAdapter);
+      const emailConfigured = (isEmailConfigured() || Boolean(c?.communicationAdapter)) && body.send_invitation !== false;
+      if (calConfigured || emailConfigured) {
+        return (async () => {
+          let meetingUrl = null;
+          if (calConfigured) {
+            const calResult = await syncScheduleMeeting({
+              db, user, interviewId: iid, scheduledAt: scheduled.toISOString(), durationMinutes: duration, timezone, title, notes, candidate: cand, req, interviewer, transport: c?.calendarAdapter?.transport || c?.transport || fetch, config: c
+            });
+            meetingUrl = calResult.meeting_url;
+          }
+          if (emailConfigured) {
+            try {
+              const commAdapter = c?.communicationAdapter || new CommunicationAdapter({ fromEnv: true, transport: c?.transport });
+              await sendCandidateCommunication(db, user, {
+                candidate_id: cand.id,
+                requisition_id: req.id,
+                template_id: 'interview_invitation',
+                scheduled_at: scheduled.toISOString(),
+                interviewer_name: interviewer.name,
+                meeting_url: meetingUrl || undefined,
+                notes: notes || undefined,
+                idempotency_key: `interview_invite_${iid}`
+              }, commAdapter);
+            } catch (emailErr) {
+              audit(db, user.id, 'communication.invitation_failed', iid, { error: emailErr.message });
+            }
+          }
+          const row = get(db, 'interviews', iid);
+          return { ...row, calendar_status: row.calendar_status || 'Not synced; provider adapter required' };
+        })();
+      }
+      return { ...get(db, 'interviews', iid), calendar_status: 'Not synced; provider adapter required' };
     }
     if (method === 'PUT' && key && !action) {
       const interview = get(db, 'interviews', key);
@@ -561,10 +879,14 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       if (interview.status === 'completed') {
         throw new HttpError(409, 'Completed interviews cannot be edited.');
       }
+      if (interview.status === 'cancelled') {
+        throw new HttpError(409, 'Cancelled interviews cannot be edited.');
+      }
       if (['Hired', 'Rejected'].includes(app.stage)) {
         throw new HttpError(409, 'Cannot edit an interview for a closed application.');
       }
       let interviewerId = interview.interviewer_id;
+      let assignedInterviewer = get(db, 'users', interview.interviewer_id);
       if (body.interviewer_id && body.interviewer_id !== interview.interviewer_id) {
         permit(user, 'recruit', 'admin');
         const interviewer = get(db, 'users', body.interviewer_id);
@@ -572,6 +894,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
           throw new HttpError(400, 'Choose an active interviewer who can access this team.');
         }
         interviewerId = interviewer.id;
+        assignedInterviewer = interviewer;
       }
       const scheduled = new Date(body.scheduled_at);
       if (!Number.isFinite(scheduled.getTime()) || scheduled.getTime() < Date.now()) {
@@ -583,11 +906,101 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
         competencies = list(body.competencies, 'Competencies', 10);
         if (!competencies.length) throw new HttpError(400, 'At least one competency is required.');
       }
-      return transaction(db, () => {
-        db.prepare('UPDATE interviews SET scheduled_at=?, interviewer_id=?, competencies=? WHERE id=?').run(scheduled.toISOString(), interviewerId, JSON.stringify(competencies), key);
-        audit(db, user.id, 'interview.updated', key, { scheduled_at: scheduled.toISOString(), interviewer_id: interviewerId });
-        return { ...get(db, 'interviews', key), calendar_status: 'Not synced; provider adapter required' };
+      const duration = body.duration_minutes !== undefined ? integer(body.duration_minutes, 'Duration', 15, 480) : (interview.duration_minutes || 45);
+      const timezone = body.timezone !== undefined ? text(body.timezone, 'Timezone', 100, false) : (interview.timezone || 'UTC');
+      const notes = body.notes !== undefined ? text(body.notes, 'Notes', 5000, false) : (interview.notes || '');
+      const title = body.title !== undefined ? text(body.title, 'Title', 200, false) : (interview.title || '');
+      const cand = get(db, 'candidates', app.candidate_id);
+
+      transaction(db, () => {
+        db.prepare('UPDATE interviews SET scheduled_at=?, interviewer_id=?, competencies=?, duration_minutes=?, timezone=?, notes=?, title=? WHERE id=?').run(
+          scheduled.toISOString(), interviewerId, JSON.stringify(competencies), duration, timezone, notes, title, key
+        );
+        audit(db, user.id, 'interview.updated', key, { scheduled_at: scheduled.toISOString(), interviewer_id: interviewerId, duration_minutes: duration });
       });
+
+      const calConfigured = isCalendarConfigured(c) || Boolean(c?.calendarAdapter);
+      const emailConfigured = (isEmailConfigured() || Boolean(c?.communicationAdapter)) && body.send_notification !== false;
+      if (calConfigured || emailConfigured) {
+        return (async () => {
+          let meetingUrl = interview.meeting_url;
+          if (calConfigured) {
+            const calResult = await syncRescheduleMeeting({
+              db, user, interviewId: key, scheduledAt: scheduled.toISOString(), durationMinutes: duration, timezone, title, notes, candidate: cand, req, interviewer: assignedInterviewer, transport: c?.calendarAdapter?.transport || c?.transport || fetch, config: c
+            });
+            meetingUrl = calResult.meeting_url || meetingUrl;
+          }
+          if (emailConfigured) {
+            try {
+              const commAdapter = c?.communicationAdapter || new CommunicationAdapter({ fromEnv: true, transport: c?.transport });
+              await sendCandidateCommunication(db, user, {
+                candidate_id: cand.id,
+                requisition_id: req.id,
+                template_id: 'interview_update',
+                scheduled_at: scheduled.toISOString(),
+                interviewer_name: assignedInterviewer.name,
+                meeting_url: meetingUrl || undefined,
+                notes: notes || undefined,
+                idempotency_key: `interview_update_${key}_${scheduled.getTime()}`
+              }, commAdapter);
+            } catch (emailErr) {
+              audit(db, user.id, 'communication.update_failed', key, { error: emailErr.message });
+            }
+          }
+          const row = get(db, 'interviews', key);
+          return { ...row, calendar_status: row.calendar_status || 'Not synced; provider adapter required' };
+        })();
+      }
+      return { ...get(db, 'interviews', key), calendar_status: 'Not synced; provider adapter required' };
+    }
+    if (key && action === 'cancel' && method === 'POST') {
+      const interview = get(db, 'interviews', key);
+      const {app, req} = appContext(db, user, interview.application_id, true);
+      if (!can(user, 'recruit') && !can(user, 'admin') && interview.interviewer_id !== user.id) {
+        throw new HttpError(403, 'Your role cannot perform this action.');
+      }
+      if (interview.status === 'completed') {
+        throw new HttpError(409, 'Completed interviews cannot be cancelled.');
+      }
+      if (interview.status === 'cancelled') {
+        throw new HttpError(409, 'Interview is already cancelled.');
+      }
+      const reason = body.reason ? text(body.reason, 'Cancellation reason', 2000, false) : '';
+      const cand = get(db, 'candidates', app.candidate_id);
+
+      transaction(db, () => {
+        db.prepare("UPDATE interviews SET status='cancelled', calendar_status='cancelled' WHERE id=?").run(key);
+        audit(db, user.id, 'interview.cancelled', key, { reason });
+      });
+
+      const calConfigured = isCalendarConfigured(c) || Boolean(c?.calendarAdapter);
+      const emailConfigured = (isEmailConfigured() || Boolean(c?.communicationAdapter)) && body.send_notification !== false;
+      if (calConfigured || emailConfigured) {
+        return (async () => {
+          if (calConfigured) {
+            await syncCancelMeeting({
+              db, user, interviewId: key, comment: reason || 'Interview cancelled', transport: c?.calendarAdapter?.transport || c?.transport || fetch, config: c
+            });
+          }
+          if (emailConfigured) {
+            try {
+              const commAdapter = c?.communicationAdapter || new CommunicationAdapter({ fromEnv: true, transport: c?.transport });
+              await sendCandidateCommunication(db, user, {
+                candidate_id: cand.id,
+                requisition_id: req.id,
+                template_id: 'interview_cancellation',
+                scheduled_at: interview.scheduled_at,
+                notes: reason || undefined,
+                idempotency_key: `interview_cancel_${key}`
+              }, commAdapter);
+            } catch (emailErr) {
+              audit(db, user.id, 'communication.cancellation_failed', key, { error: emailErr.message });
+            }
+          }
+          return get(db, 'interviews', key);
+        })();
+      }
+      return get(db, 'interviews', key);
     }
     if (key && action === 'scorecards') {
       const interview = get(db,'interviews',key); appContext(db,user,interview.application_id,true);
@@ -777,6 +1190,182 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
     }
     throw new HttpError(404,'Unknown referral action.');
   }
+  if (parts[0] === 'fraud-reviews') {
+    permit(user, 'recruit', 'admin');
+    if (key && (action === 'resolve' || !action) && method === 'POST') {
+      const review = get(db, 'fraud_reviews', key);
+      const cand = get(db, 'candidates', review.candidate_id);
+      requireTeam(user, cand.team);
+      return resolveFraudReview(db, user, cand.id, body);
+    }
+  }
+  if (parts[0] === 'signatures') {
+    if (method === 'GET' && !key) {
+      permit(user, 'recruit', 'review', 'admin');
+      const candidateId = query.get('candidate_id') || query.get('candidateId');
+      const applicationId = query.get('application_id') || query.get('applicationId');
+      const status = query.get('status');
+      return listSignatureRequests(db, user, { candidateId, applicationId, status });
+    }
+    if (method === 'POST' && !key) {
+      permit(user, 'recruit', 'admin');
+      let docBuffer = null;
+      if (body.document_buffer) {
+        docBuffer = Buffer.isBuffer(body.document_buffer) ? body.document_buffer : Buffer.from(body.document_buffer, 'base64');
+      } else if (body.document_data) {
+        docBuffer = Buffer.from(body.document_data, 'base64');
+      }
+      return createSignatureRequest(db, user, {
+        title: body.title,
+        candidateId: body.candidate_id || body.candidateId,
+        applicationId: body.application_id || body.applicationId,
+        requisitionId: body.requisition_id || body.requisitionId,
+        documentType: body.document_type || body.documentType || 'offer',
+        documentBuffer: docBuffer,
+        filename: body.filename,
+        signers: body.signers,
+        expiresDays: body.expires_days || body.expiresDays || 7,
+        salary: body.salary,
+        currency: body.currency,
+        startDate: body.start_date || body.startDate
+      }, {
+        origin: c?.origin,
+        communicationAdapter: c?.communicationAdapter
+      });
+    }
+    if (key && !action && method === 'GET') {
+      permit(user, 'recruit', 'review', 'admin');
+      return getSignatureRequest(db, user, key);
+    }
+    if (key && action === 'document' && method === 'GET') {
+      permit(user, 'recruit', 'review', 'admin');
+      const version = query.get('version') || 'signed';
+      return downloadSignatureDocument(db, user, key, version);
+    }
+    if (key && (action === 'send-email' || action === 'resend') && method === 'POST') {
+      permit(user, 'recruit', 'admin');
+      return resendSignatureInvitation(db, user, key, body?.signer_id, {
+        origin: c?.origin,
+        communicationAdapter: c?.communicationAdapter
+      });
+    }
+    if (key && action === 'cancel' && method === 'POST') {
+      permit(user, 'recruit', 'admin');
+      return cancelSignatureRequest(db, user, key, { reason: body.reason });
+    }
+  }
+  if (parts[0] === 'agencies') {
+    permit(user, 'admin', 'recruit');
+    if (method === 'GET' && !key) {
+      return listAgencies(db, user, query);
+    }
+    if (method === 'POST' && !key) {
+      permit(user, 'admin');
+      return createAgency(db, user, body);
+    }
+    if (key && !action) {
+      if (method === 'GET') return getAgency(db, user, key);
+      if (method === 'PUT') {
+        permit(user, 'admin');
+        return updateAgency(db, user, key, body);
+      }
+    }
+    if (key && action === 'status' && method === 'POST') {
+      permit(user, 'admin');
+      return setAgencyStatus(db, user, key, body.status, body.reason);
+    }
+    if (key && action === 'members' && method === 'POST') {
+      permit(user, 'admin');
+      return addAgencyMember(db, user, key, body);
+    }
+    if (key && action === 'requisitions') {
+      if (method === 'POST') {
+        permit(user, 'recruit', 'admin');
+        return assignRequisitionToAgency(db, user, key, {
+          requisitionId: body.requisition_id,
+          instructions: body.instructions,
+          deadline: body.deadline
+        });
+      }
+      if (method === 'DELETE' || (method === 'POST' && parts[3] && parts[4] === 'revoke')) {
+        permit(user, 'recruit', 'admin');
+        const reqId = parts[3];
+        return revokeRequisitionFromAgency(db, user, key, reqId);
+      }
+    }
+  }
+  if (parts[0] === 'agency') {
+    if (parts[1] === 'submissions' && parts[2] && parts[3] === 'feedback' && method === 'POST') {
+      permit(user, 'recruit', 'admin');
+      return publishAgencyFeedback(db, user, parts[2], body.feedback);
+    }
+    if (key === 'me' && method === 'GET') {
+      return getAgencyContextForUser(db, user);
+    }
+    if (key === 'dashboard' && method === 'GET') {
+      return getAgencyDashboard(db, user);
+    }
+    if (key === 'requisitions') {
+      if (action && method === 'GET') return getAssignedRequisition(db, user, action);
+      if (method === 'GET') return listAssignedRequisitions(db, user, query);
+    }
+    if (key === 'submissions') {
+      if (!action && method === 'POST') {
+        return submitAgencyCandidate(db, user, body, { resumeAdapter: c?.resumeAdapter });
+      }
+      if (action && method === 'GET') {
+        return getAgencySubmission(db, user, action);
+      }
+      if (method === 'GET') {
+        return listAgencySubmissions(db, user, query);
+      }
+    }
+    if (key === 'members') {
+      if (method === 'GET') return listAgencyMembers(db, user);
+      if (method === 'POST' && !action) return addAgencyRecruiter(db, user, body);
+      if (action && parts[3] === 'status' && method === 'POST') {
+        return updateAgencyRecruiterStatus(db, user, action, body.status);
+      }
+    }
+    if (key === 'resume' && action === 'upload' && method === 'POST') {
+      if (!body.buffer || !Buffer.isBuffer(body.buffer)) {
+        throw new HttpError(400, 'Uploaded file content is missing or invalid.');
+      }
+      const adapter = c?.resumeAdapter || new ResumeAdapter({ enabled: true });
+      return (async () => {
+        const result = await adapter.processUpload({
+          buffer: body.buffer,
+          filename: body.filename || 'resume',
+          mimeType: body.mimeType || ''
+        });
+        const resumeId = id();
+        const nowStr = now();
+        db.prepare(`
+          INSERT INTO candidate_resumes(id, candidate_id, storage_id, filename, file_format, file_size, mime_type, scan_status, extraction_status, error_message, uploaded_by, created_at, updated_at)
+          VALUES(?,?,?,?,?,?,?,'clean','success',?,?,?,?)
+        `).run(
+          resumeId,
+          null,
+          result.storageId,
+          result.filename,
+          result.format,
+          result.size,
+          body.mimeType || (result.format === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'),
+          null,
+          user.id,
+          nowStr,
+          nowStr
+        );
+        return {
+          resume_id: resumeId,
+          text: result.text,
+          filename: result.filename,
+          format: result.format,
+          size: result.size
+        };
+      })();
+    }
+  }
   if (path === 'analytics' && method === 'GET') {
     permit(user,'analytics');
     const reqs = db.prepare('SELECT * FROM requisitions WHERE deleted_at IS NULL').all().filter(r=>inTeam(user,r.team)), ids = new Set(reqs.map(r=>r.id));
@@ -787,7 +1376,34 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       averageApplicationAgeDays:apps.length ? Math.round(apps.reduce((n,a)=>n+(Date.now()-Date.parse(a.created_at))/86400000,0)/apps.length) : 0};
   }
   if (path === 'integrations' && method === 'GET') {
-    permit(user,'admin','recruit'); return ['Microsoft calendar / Teams','Candidate email','Offer e-signature','AI matching','PDF / DOCX resume parsing','Fraud signal review','Agency portal','Preboarding / HRMS'].map(name=>({name,status:'Not configured',phase:name.includes('Agency')?'4':'3',externalWrites:false}));
+    permit(user,'admin','recruit');
+    const calEffective = getEffectiveIntegrationConfig(db, 'microsoft_calendar');
+    const emailEffective = getEffectiveIntegrationConfig(db, 'email_communication');
+    const hrmsEffective = getEffectiveIntegrationConfig(db, 'hrms');
+    const emailStatus = (emailEffective.enabled && emailEffective.isConfigured) || isEmailConfigured() ? 'Active (Resend provider configured)' : 'Not configured';
+    const calStatus = (calEffective.enabled && calEffective.isConfigured) || isCalendarConfigured(c) ? 'Active (Microsoft Graph / Teams configured)' : 'Not configured';
+    const aiProviders = getAvailableAiProviders(c);
+    const aiStatus = aiProviders.length > 0
+      ? `Active (${aiProviders.map(p => `${p.name} [${p.model}]`).join(', ')})`
+      : 'Active (Deterministic explainable fallback operational)';
+    const fraudStatus = 'Active (Rule-based inconsistency detector operational)';
+    const sigStatus = 'Active (In-house e-signature engine operational)';
+    const agencyStatus = 'Active (Isolated external recruiter portal operational)';
+    const hrmsStatus = (hrmsEffective.enabled && hrmsEffective.isConfigured) ? 'Active (Enterprise HRMS configured)' : 'Not configured';
+    return ['Microsoft calendar / Teams','Candidate email','Offer e-signature','AI matching','PDF / DOCX resume parsing','Fraud signal review','Agency portal','Preboarding / HRMS'].map(name=>({
+      name,
+      status: name === 'PDF / DOCX resume parsing' ? 'Active (Phase 1 operational)'
+        : (name === 'Candidate email' ? emailStatus
+        : (name === 'Microsoft calendar / Teams' ? calStatus
+        : (name === 'Offer e-signature' ? sigStatus
+        : (name === 'AI matching' ? aiStatus
+        : (name === 'Fraud signal review' ? fraudStatus
+        : (name === 'Agency portal' ? agencyStatus
+        : (name === 'Preboarding / HRMS' ? hrmsStatus
+        : 'Not configured'))))))),
+      phase: name.includes('Agency')?'4':'3',
+      externalWrites: name === 'Microsoft calendar / Teams' ? ((calEffective.enabled && calEffective.isConfigured) || isCalendarConfigured(c)) : (name === 'Candidate email' ? ((emailEffective.enabled && emailEffective.isConfigured) || isEmailConfigured()) : (name === 'AI matching' ? aiProviders.length > 0 : (name === 'Preboarding / HRMS' ? Boolean(hrmsEffective.enabled && hrmsEffective.isConfigured) : false)))
+    }));
   }
   throw new HttpError(404,'Endpoint not found.');
 }

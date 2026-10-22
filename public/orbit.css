@@ -25,17 +25,3 @@ input[type="checkbox"],input[type="radio"]{width:18px!important;min-height:18px!
 .detail-list{display:grid;grid-template-columns:minmax(110px,150px) minmax(0,1fr);gap:10px 18px;margin:0 0 8px}.detail-list dt{font-weight:650;color:var(--muted);font-size:.8rem}.detail-list dd{margin:0;min-width:0;overflow-wrap:anywhere;word-break:break-word}.danger-notice{background:var(--negative-bg);color:var(--negative);border-color:var(--negative)}.danger-notice strong{overflow-wrap:anywhere}
 @media(max-width:700px){.detail-list{grid-template-columns:1fr;gap:3px}.detail-list dd{margin-bottom:9px}}
 
-/* Consistent form actions: Delete is red, Save is green, both keyboard and mobile friendly. */
-:root{--action-delete:#a61b2b;--action-delete-hover:#c62f43;--action-save:#166534;--action-save-hover:#1f7a45}
-.form-actions{display:flex;align-items:stretch;justify-content:flex-end;gap:12px;margin-top:20px;padding-top:16px;border-top:1px solid var(--line);flex-wrap:nowrap}
-.form-actions.form-actions-end{justify-content:flex-end}
-.form-actions button{min-height:44px;height:44px;padding:0 20px;margin:0;font-size:.9rem;font-weight:600;border-radius:9px;white-space:nowrap}
-.form-actions .btn-delete,button.danger{background:var(--action-delete);border-color:transparent;color:#fff}
-.form-actions .btn-delete:hover,button.danger:hover{background:var(--action-delete-hover);border-color:transparent;color:#fff}
-.form-actions .btn-save{background:var(--action-save);border-color:transparent;color:#fff}
-.form-actions .btn-save:hover{background:var(--action-save-hover);border-color:transparent;color:#fff}
-.form-actions .btn-delete:focus-visible,.form-actions .btn-save:focus-visible{outline:3px solid var(--focus);outline-offset:3px}
-.form-actions .btn-delete:disabled,.form-actions .btn-save:disabled{opacity:.65;cursor:wait}
-.requisition-detail .detail-meta{margin-bottom:8px}.requisition-detail .detail-salary{font-weight:600;margin:0 0 10px}.requisition-detail .detail-section-title{font-size:1rem;font-weight:700;line-height:1.35;color:var(--ink);margin:20px 0 8px}.requisition-detail .detail-section-title:first-child{margin-top:0}.requisition-detail .detail-section-body{margin:0 0 12px;font-weight:400;line-height:1.6;color:var(--muted);overflow-wrap:anywhere}.requisition-detail .detail-section-list{margin:0 0 12px;padding-left:1.2rem;font-weight:400;line-height:1.6;color:var(--muted)}.requisition-detail .detail-section-list li{margin:4px 0}.requisition-detail .detail-section-list li::marker{color:var(--accent)}.requisition-detail .read-only-note{display:flex;align-items:flex-start;gap:9px;margin:18px 0 0;padding:12px 14px;border-radius:8px;background:var(--surface-alt);border:1px solid var(--line);color:var(--muted);font-size:.84rem}.requisition-detail .read-only-note .ui-icon{width:17px;height:17px;color:var(--accent);flex-shrink:0}.detail-actions{margin-top:16px}
-@media(max-width:520px){.form-actions{flex-wrap:nowrap}.form-actions button{flex:1;padding:0 12px}.requisition-detail .read-only-note{font-size:.8rem}}
-
