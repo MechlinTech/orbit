@@ -60,12 +60,118 @@ export function openDb(path = 'data/talentos.sqlite') {
       status TEXT NOT NULL DEFAULT 'Submitted', candidate_id TEXT REFERENCES candidates(id),
       application_id TEXT REFERENCES applications(id), withdrawn_at TEXT, withdrawn_by TEXT REFERENCES users(id),
       deleted_at TEXT, deleted_by TEXT REFERENCES users(id), updated_at TEXT);
+    CREATE TABLE IF NOT EXISTS candidate_resumes(id TEXT PRIMARY KEY, candidate_id TEXT REFERENCES candidates(id),
+      storage_id TEXT NOT NULL, filename TEXT NOT NULL, file_format TEXT NOT NULL, file_size INTEGER NOT NULL,
+      mime_type TEXT NOT NULL, scan_status TEXT NOT NULL, extraction_status TEXT NOT NULL, error_message TEXT,
+      uploaded_by TEXT NOT NULL REFERENCES users(id), created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS idx_candidate_resumes_candidate ON candidate_resumes(candidate_id);
+    CREATE TABLE IF NOT EXISTS candidate_communications(id TEXT PRIMARY KEY, candidate_id TEXT NOT NULL REFERENCES candidates(id),
+      requisition_id TEXT REFERENCES requisitions(id), channel TEXT NOT NULL DEFAULT 'email', template_id TEXT NOT NULL,
+      recipient_email TEXT NOT NULL, subject TEXT NOT NULL, idempotency_key TEXT UNIQUE, provider_message_id TEXT,
+      status TEXT NOT NULL CHECK(status IN ('queued','accepted','delivered','bounced','failed')), error_message TEXT,
+      metadata TEXT, sent_by TEXT NOT NULL REFERENCES users(id), created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS idx_candidate_comms_candidate ON candidate_communications(candidate_id);
+    CREATE INDEX IF NOT EXISTS idx_candidate_comms_provider_id ON candidate_communications(provider_message_id);
+    CREATE TABLE IF NOT EXISTS communication_consents(candidate_id TEXT PRIMARY KEY REFERENCES candidates(id),
+      opted_out INTEGER NOT NULL DEFAULT 0, opt_out_reason TEXT, updated_by TEXT NOT NULL REFERENCES users(id), updated_at TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS application_matches(
+      id TEXT PRIMARY KEY, application_id TEXT NOT NULL REFERENCES applications(id), score INTEGER,
+      matched_skills TEXT NOT NULL, missing_skills TEXT NOT NULL, experience_score INTEGER,
+      method TEXT NOT NULL, explanation TEXT NOT NULL, breakdown TEXT, evidence TEXT, created_at TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS idx_application_matches_app ON application_matches(application_id);
+    CREATE TABLE IF NOT EXISTS fraud_reviews(
+      id TEXT PRIMARY KEY, candidate_id TEXT NOT NULL REFERENCES candidates(id), application_id TEXT REFERENCES applications(id),
+      risk_level TEXT NOT NULL CHECK(risk_level IN ('low','medium','high')),
+      status TEXT NOT NULL CHECK(status IN ('pending','reviewed','resolved','cleared')),
+      flags TEXT NOT NULL, reviewer_id TEXT REFERENCES users(id), resolution_notes TEXT, resolved_at TEXT,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS idx_fraud_reviews_candidate ON fraud_reviews(candidate_id);
+    CREATE INDEX IF NOT EXISTS idx_fraud_reviews_application ON fraud_reviews(application_id);
+    CREATE TABLE IF NOT EXISTS signature_documents(
+      id TEXT PRIMARY KEY, filename TEXT NOT NULL, file_format TEXT NOT NULL DEFAULT 'pdf',
+      file_size INTEGER NOT NULL, storage_path TEXT NOT NULL, sha256_hash TEXT NOT NULL,
+      is_signed INTEGER DEFAULT 0, created_at TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS signature_requests(
+      id TEXT PRIMARY KEY, title TEXT NOT NULL, document_id TEXT NOT NULL REFERENCES signature_documents(id),
+      signed_document_id TEXT REFERENCES signature_documents(id), candidate_id TEXT REFERENCES candidates(id),
+      application_id TEXT REFERENCES applications(id), requisition_id TEXT REFERENCES requisitions(id),
+      status TEXT NOT NULL CHECK(status IN ('draft','pending','viewed','partially_signed','completed','declined','expired','cancelled')),
+      original_document_hash TEXT NOT NULL, signed_document_hash TEXT, created_by TEXT NOT NULL REFERENCES users(id),
+      expires_at TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS idx_signature_requests_candidate ON signature_requests(candidate_id);
+    CREATE INDEX IF NOT EXISTS idx_signature_requests_application ON signature_requests(application_id);
+    CREATE TABLE IF NOT EXISTS signature_signers(
+      id TEXT PRIMARY KEY, request_id TEXT NOT NULL REFERENCES signature_requests(id) ON DELETE CASCADE,
+      name TEXT NOT NULL, email TEXT NOT NULL COLLATE NOCASE, role TEXT NOT NULL DEFAULT 'Candidate',
+      status TEXT NOT NULL CHECK(status IN ('pending','viewed','signed','declined')),
+      token_hash TEXT UNIQUE, raw_token TEXT, token_expires_at TEXT, signature_type TEXT CHECK(signature_type IN ('typed','uploaded','drawn')),
+      signature_data TEXT, signature_style TEXT, placement_page INTEGER DEFAULT 1,
+      placement_x REAL DEFAULT 72, placement_y REAL DEFAULT 150, placement_width REAL DEFAULT 200, placement_height REAL DEFAULT 60,
+      signed_at TEXT, ip_address TEXT, user_agent TEXT, consent_confirmed INTEGER DEFAULT 0, declined_reason TEXT,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS idx_signature_signers_request ON signature_signers(request_id);
+    CREATE INDEX IF NOT EXISTS idx_signature_signers_token ON signature_signers(token_hash);
+    CREATE TABLE IF NOT EXISTS agencies (
+      id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE COLLATE NOCASE, code TEXT NOT NULL UNIQUE COLLATE NOCASE,
+      contact_name TEXT NOT NULL, contact_email TEXT NOT NULL COLLATE NOCASE, contact_phone TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL CHECK(status IN ('pending','active','suspended','deactivated')) DEFAULT 'active',
+      notes TEXT NOT NULL DEFAULT '', created_by TEXT REFERENCES users(id),
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS agency_members (
+      id TEXT PRIMARY KEY, agency_id TEXT NOT NULL REFERENCES agencies(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+      role TEXT NOT NULL CHECK(role IN ('Agency Admin','Agency Recruiter','Agency')) DEFAULT 'Agency Recruiter',
+      status TEXT NOT NULL CHECK(status IN ('active','suspended')) DEFAULT 'active',
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS idx_agency_members_agency ON agency_members(agency_id);
+    CREATE INDEX IF NOT EXISTS idx_agency_members_user ON agency_members(user_id);
+    CREATE TABLE IF NOT EXISTS agency_requisitions (
+      id TEXT PRIMARY KEY, agency_id TEXT NOT NULL REFERENCES agencies(id) ON DELETE CASCADE,
+      requisition_id TEXT NOT NULL REFERENCES requisitions(id) ON DELETE CASCADE,
+      assigned_by TEXT NOT NULL REFERENCES users(id),
+      status TEXT NOT NULL CHECK(status IN ('active','revoked')) DEFAULT 'active',
+      instructions TEXT NOT NULL DEFAULT '', deadline TEXT,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+      UNIQUE(agency_id, requisition_id));
+    CREATE INDEX IF NOT EXISTS idx_agency_reqs_agency ON agency_requisitions(agency_id);
+    CREATE INDEX IF NOT EXISTS idx_agency_reqs_req ON agency_requisitions(requisition_id);
+    CREATE TABLE IF NOT EXISTS agency_submissions (
+      id TEXT PRIMARY KEY, agency_id TEXT NOT NULL REFERENCES agencies(id) ON DELETE CASCADE,
+      requisition_id TEXT NOT NULL REFERENCES requisitions(id),
+      candidate_id TEXT NOT NULL REFERENCES candidates(id),
+      application_id TEXT NOT NULL REFERENCES applications(id),
+      submitted_by TEXT NOT NULL REFERENCES users(id),
+      resume_storage_id TEXT, resume_filename TEXT, notes TEXT NOT NULL DEFAULT '',
+      consent_confirmed INTEGER NOT NULL DEFAULT 1,
+      status TEXT NOT NULL DEFAULT 'Submitted',
+      ownership_status TEXT NOT NULL DEFAULT 'owned_by_agency' CHECK(ownership_status IN ('owned_by_agency','duplicate_conflict','existing_candidate')),
+      agency_feedback TEXT, feedback_published_at TEXT, feedback_published_by TEXT REFERENCES users(id),
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS idx_agency_submissions_agency ON agency_submissions(agency_id);
+    CREATE INDEX IF NOT EXISTS idx_agency_submissions_req ON agency_submissions(requisition_id);
+    CREATE INDEX IF NOT EXISTS idx_agency_submissions_cand ON agency_submissions(candidate_id);
+    CREATE INDEX IF NOT EXISTS idx_agency_submissions_app ON agency_submissions(application_id);
+    CREATE TABLE IF NOT EXISTS integration_configs (
+      id TEXT PRIMARY KEY,
+      category TEXT NOT NULL,
+      name TEXT NOT NULL,
+      enabled INTEGER DEFAULT 0,
+      config_json TEXT NOT NULL DEFAULT '{}',
+      encrypted_secrets_json TEXT NOT NULL DEFAULT '{}',
+      status TEXT NOT NULL DEFAULT 'unconfigured',
+      last_test_at TEXT,
+      last_test_status TEXT,
+      last_error TEXT,
+      updated_by TEXT REFERENCES users(id),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_integration_configs_category ON integration_configs(category);
     CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
     INSERT OR IGNORE INTO settings VALUES('pipeline','["Applied","Screening","Interview","Offer","Hired","Rejected"]');
     INSERT OR IGNORE INTO schema_migrations VALUES(1,datetime('now'));`);
   try { db.exec('ALTER TABLE scorecards ADD COLUMN proxy_for TEXT REFERENCES users(id);'); } catch {}
   try { db.exec('ALTER TABLE scorecards ADD COLUMN proxy_reason TEXT;'); } catch {}
-
   // v0.2 referrals required a requisition. Existing databases are rebuilt in
   // place so historic referrals without a linked requisition remain readable
   // and future records can be stored with "Not linked" until processed.
@@ -111,6 +217,15 @@ export function openDb(path = 'data/talentos.sqlite') {
     addColumn(table, 'deleted_by TEXT REFERENCES users(id)');
     addColumn(table, 'updated_at TEXT');
   }
+
+  try { db.exec('ALTER TABLE interviews ADD COLUMN title TEXT DEFAULT "";'); } catch {}
+  try { db.exec('ALTER TABLE interviews ADD COLUMN duration_minutes INTEGER DEFAULT 45;'); } catch {}
+  try { db.exec('ALTER TABLE interviews ADD COLUMN timezone TEXT DEFAULT "UTC";'); } catch {}
+  try { db.exec('ALTER TABLE interviews ADD COLUMN notes TEXT DEFAULT "";'); } catch {}
+  try { db.exec('ALTER TABLE interviews ADD COLUMN meeting_url TEXT;'); } catch {}
+  try { db.exec('ALTER TABLE interviews ADD COLUMN calendar_event_id TEXT;'); } catch {}
+  try { db.exec('ALTER TABLE interviews ADD COLUMN calendar_status TEXT DEFAULT "not_synced";'); } catch {}
+  addColumn('signature_signers', 'raw_token TEXT');
   return db;
 }
 export function audit(db, actor, event, target = '', detail = {}) {
