@@ -28,8 +28,10 @@ import {
   declineSignature,
   cancelSignatureRequest,
   downloadSignatureDocument,
+  resendSignatureInvitation,
   hashToken
 } from '../src/signature/service.js';
+import { isEmailConfigured } from '../src/communication/service.js';
 import { SignatureAdapter } from '../src/adapters.js';
 
 // --- PNG & JPEG Test Asset Generators ---
@@ -800,6 +802,173 @@ test('Priority Test 7: Electronic signature communication lifecycle: invitation 
     assert.equal(decMeta.reason, 'Pursuing independent venture');
   } finally {
     try { rmSync(testDir, { recursive: true, force: true }); } catch {}
+  }
+});
+
+test('Priority Test 8: Electronic signature email uses database-configured Resend integration when available (simulated: false)', async () => {
+  const f = fixture();
+  const testDir = `./tests/tmp_sig_db_comm_${Date.now()}`;
+  const storage = new SignatureStorageManager(testDir);
+  const recruiter = f.recruiter;
+  const admin = f.admin;
+
+  const originalFetch = globalThis.fetch;
+  const dispatchedRequests = [];
+
+  try {
+    // 1. Initially without DB configuration, isEmailConfigured(db) is false
+    assert.equal(isEmailConfigured(f.db), false);
+
+    // 2. Configure email_communication in DB via admin endpoint
+    await service(f.db, admin, 'PUT', 'admin/integrations/email_communication', {
+      enabled: true,
+      config: {
+        provider: 'resend',
+        fromEmail: 'recruiting@mechlin.com',
+        fromName: 'Mechlin Careers'
+      },
+      secrets: {
+        apiKey: 're_live_secret_key_12345'
+      }
+    });
+
+    // Verify isEmailConfigured(db) is now true
+    assert.equal(isEmailConfigured(f.db), true);
+
+    // 3. Mock fetch to intercept Resend API calls
+    let fetchHandler = async (url, opts) => {
+      dispatchedRequests.push({ url, opts, body: JSON.parse(opts.body) });
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ id: 're_msg_prod_998877' })
+      };
+    };
+    globalThis.fetch = (url, opts) => fetchHandler(url, opts);
+
+    // 4. Create candidate and signature request
+    const cand = service(f.db, recruiter, 'POST', 'candidates', {
+      name: 'Elena Rostova',
+      email: 'elena.rostova@example.com',
+      team: recruiter.team,
+      skills: 'Security, Cryptography'
+    });
+
+    const sigReq = await createSignatureRequest(f.db, recruiter, {
+      title: 'Principal Cryptographer Offer',
+      candidateId: cand.id,
+      salary: '210,000',
+      currency: 'USD',
+      expiresDays: 14,
+      signers: [{ name: cand.name, email: cand.email, role: 'Candidate' }]
+    }, { storage, origin: 'https://orbit.mechlin.com' });
+
+    assert.equal(sigReq.status, 'pending');
+    assert.equal(dispatchedRequests.length, 1, 'Initial invitation email dispatched via Resend');
+    assert.equal(dispatchedRequests[0].url, 'https://api.resend.com/emails');
+    assert.equal(dispatchedRequests[0].opts.headers.Authorization, 'Bearer re_live_secret_key_12345');
+    assert.equal(dispatchedRequests[0].body.from, 'recruiting@mechlin.com');
+    assert.deepEqual(dispatchedRequests[0].body.to, ['elena.rostova@example.com']);
+
+    // 5. Resend invitation email via POST /api/signatures/:id/send-email
+    const resendRes = await service(f.db, recruiter, 'POST', `signatures/${sigReq.id}/send-email`, {}, null, {
+      origin: 'https://orbit.mechlin.com'
+    });
+
+    assert.equal(resendRes.ok, true);
+    assert.equal(resendRes.results[0].simulated, false, 'Database configured Resend must NOT be simulated');
+    assert.equal(dispatchedRequests.length, 2, 'Resend invitation email dispatched via Resend');
+
+    // 6. Test error propagation when Resend API returns an error (e.g. 400 Invalid API Key)
+    fetchHandler = async () => {
+      return {
+        ok: false,
+        status: 400,
+        json: async () => ({ statusCode: 400, message: 'API key is invalid', name: 'validation_error' })
+      };
+    };
+
+    await assert.rejects(
+      async () => service(f.db, recruiter, 'POST', `signatures/${sigReq.id}/send-email`, {}),
+      err => {
+        assert.equal(err.status, 502);
+        assert.match(err.message, /API key is invalid/);
+        return true;
+      }
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    f.db.close();
+    try { rmSync(testDir, { recursive: true, force: true }); } catch {}
+  }
+});
+
+test('Priority Test 9: Adding candidate with requisition auto-advances to Applied stage, and rejected candidates block offer & signature requests', async () => {
+  const { db, recruiter } = fixture();
+  const storage = new SignatureStorageManager('data/test_signatures_t9');
+
+  try {
+    const req = service(db, recruiter, 'POST', 'requisitions', reqBody);
+    db.prepare("UPDATE requisitions SET status='open' WHERE id=?").run(req.id);
+
+    // 1. Add candidate with requisition_id -> automatically enrolls into Applied stage
+    const cand = service(db, recruiter, 'POST', 'candidates', {
+      ...candidateBody,
+      email: 'auto-applied@example.com',
+      requisition_id: req.id
+    });
+
+    assert.ok(cand.id);
+    assert.ok(cand.applications && cand.applications.length === 1);
+    const app = cand.applications[0];
+    assert.equal(app.requisition_id, req.id);
+    assert.equal(app.stage, 'Applied');
+
+    // 2. Can create signature request while application is active
+    const activeSigReq = await createSignatureRequest(db, recruiter, {
+      title: 'Active Offer Letter',
+      candidateId: cand.id,
+      requisitionId: req.id,
+      signers: [{ name: cand.name, email: cand.email, role: 'Candidate' }]
+    }, { storage });
+    assert.equal(activeSigReq.status, 'pending');
+
+    // 3. Move application to Rejected stage
+    service(db, recruiter, 'POST', `applications/${app.id}/stage`, { stage: 'Rejected' });
+    const updatedApp = db.prepare('SELECT stage FROM applications WHERE id = ?').get(app.id);
+    assert.equal(updatedApp.stage, 'Rejected');
+
+    // 4. Offer / signature request creation must be blocked with HTTP 409 for rejected application
+    await assert.rejects(
+      async () => createSignatureRequest(db, recruiter, {
+        title: 'Disallowed Offer Letter',
+        candidateId: cand.id,
+        requisitionId: req.id,
+        signers: [{ name: cand.name, email: cand.email, role: 'Candidate' }]
+      }, { storage }),
+      err => {
+        assert.equal(err.status, 409);
+        assert.match(err.message, /rejected application/i);
+        return true;
+      }
+    );
+
+    // 5. Without requisitionId specified, candidate with only rejected applications is also blocked
+    await assert.rejects(
+      async () => createSignatureRequest(db, recruiter, {
+        title: 'Disallowed Offer Letter General',
+        candidateId: cand.id,
+        signers: [{ name: cand.name, email: cand.email, role: 'Candidate' }]
+      }, { storage }),
+      err => {
+        assert.equal(err.status, 409);
+        assert.match(err.message, /rejected application/i);
+        return true;
+      }
+    );
+  } finally {
+    db.close();
+    try { rmSync('data/test_signatures_t9', { recursive: true, force: true }); } catch {}
   }
 });
 

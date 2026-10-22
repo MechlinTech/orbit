@@ -103,14 +103,22 @@ async function testMicrosoftCalendar({ config, secrets, transport }) {
 }
 
 async function testEmailCommunication({ config, secrets, transport }) {
-  const apiKey = secrets.apiKey;
-  const fromEmail = config.fromEmail;
+  let apiKey = String(secrets.apiKey || '').trim();
+  apiKey = apiKey.replace(/^Bearer\s+/i, '').trim().replace(/^['"]|['"]$/g, '').trim();
+  const fromEmail = String(config.fromEmail || '').trim();
 
   if (!apiKey) {
     return {
       ok: false,
       status: 'failed',
       message: 'Provider API key is required to test email connection.'
+    };
+  }
+  if (!apiKey.startsWith('re_')) {
+    return {
+      ok: false,
+      status: 'failed',
+      message: "Resend API keys must start with 're_' (e.g. re_123456789...). Please check your key from the Resend dashboard."
     };
   }
   if (!fromEmail) {
@@ -135,23 +143,80 @@ async function testEmailCommunication({ config, secrets, transport }) {
       return {
         ok: false,
         status: 'failed',
-        message: 'Resend API authentication failed: invalid or expired API key.'
+        message: 'Resend API authentication failed: invalid, expired or restricted API key.'
       };
     }
 
     if (!res.ok) {
       const errText = await res.text().catch(() => '');
+      let parsedMsg = errText.slice(0, 150);
+      try {
+        const json = JSON.parse(errText);
+        if (json.message) parsedMsg = json.message;
+      } catch {}
       return {
         ok: false,
         status: 'failed',
-        message: `Resend API returned HTTP ${res.status}: ${errText.slice(0, 150)}`
+        message: `Resend API returned HTTP ${res.status}: ${parsedMsg}`
       };
+    }
+
+    // Verify sender domain verification status via Resend's domains API
+    const fromDomain = fromEmail.split('@')[1]?.toLowerCase() || '';
+    if (fromDomain && fromDomain !== 'resend.dev') {
+      try {
+        const domRes = await transport('https://api.resend.com/domains', {
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json'
+          },
+          signal: AbortSignal.timeout(Number(config.timeoutMs || 8000))
+        });
+        if (domRes.ok) {
+          const domData = await domRes.json().catch(() => ({}));
+          const domainsList = Array.isArray(domData.data) ? domData.data : [];
+          if (domData.object === 'list' || domainsList.length > 0) {
+            const matched = domainsList.find(d => {
+              const dName = String(d.name || '').toLowerCase();
+              return dName === fromDomain || fromDomain.endsWith('.' + dName);
+            });
+            if (!matched) {
+              return {
+                ok: false,
+                status: 'failed',
+                message: `Resend API key is valid, but the domain "${fromDomain}" is not added or verified in your Resend account. Resend will reject candidate email delivery from this address. Please add and verify "${fromDomain}" at https://resend.com/domains (or use "onboarding@resend.dev" to test delivery to your account owner email).`,
+                details: {
+                  provider: 'resend',
+                  domainVerified: false,
+                  senderConfigured: fromEmail,
+                  domainsInAccount: domainsList.map(d => d.name)
+                }
+              };
+            }
+            if (matched.status !== 'verified') {
+              return {
+                ok: false,
+                status: 'failed',
+                message: `Resend API key is valid, but domain "${fromDomain}" status is "${matched.status}". Resend requires verified DNS records (DKIM, SPF) before sending. Please verify your domain at https://resend.com/domains.`,
+                details: {
+                  provider: 'resend',
+                  domainVerified: false,
+                  domainStatus: matched.status,
+                  senderConfigured: fromEmail
+                }
+              };
+            }
+          }
+        }
+      } catch {}
     }
 
     return {
       ok: true,
       status: 'connected',
-      message: `Resend API connection successful. Verified company sender: ${fromEmail}. No test emails were sent.`,
+      message: fromDomain === 'resend.dev'
+        ? `Resend API connection successful using sandbox sender (${fromEmail}). Sandbox only delivers test emails to your registered Resend account owner email.`
+        : `Resend API connection successful and verified for domain "${fromDomain}". Ready for live candidate email delivery.`,
       details: {
         provider: 'resend',
         senderConfigured: fromEmail,

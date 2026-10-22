@@ -6,12 +6,29 @@
 import { id, now, audit, transaction } from '../db.js';
 import { HttpError, requirePermission as permit, requireTeam, email as validateEmail, text as validateText } from '../policy.js';
 import { renderTemplate, escapeHtml } from './templates.js';
+import { getEffectiveIntegrationConfig } from '../integrations/storage.js';
 
-export function getFromAddress() {
+export function getFromAddress(db = null) {
+  if (db) {
+    try {
+      const eff = getEffectiveIntegrationConfig(db, 'email_communication');
+      if (eff.enabled && eff.isConfigured && eff.config?.fromEmail) {
+        return eff.config.fromEmail;
+      }
+    } catch {}
+  }
   return process.env.EMAIL_FROM || process.env.RESEND_FROM_EMAIL || null;
 }
 
-export function isEmailConfigured() {
+export function isEmailConfigured(db = null) {
+  if (db) {
+    try {
+      const eff = getEffectiveIntegrationConfig(db, 'email_communication');
+      if (eff.enabled && eff.isConfigured && eff.secrets?.apiKey && (eff.config?.fromEmail || getFromAddress(db))) {
+        return true;
+      }
+    } catch {}
+  }
   return Boolean(process.env.RESEND_API_KEY && getFromAddress());
 }
 
