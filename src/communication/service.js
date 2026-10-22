@@ -217,27 +217,40 @@ export async function sendCandidateCommunication(db, user, body, adapter) {
   const createdAt = now();
 
   // Create communication record in queued state
-  transaction(db, () => {
-    db.prepare(`
-      INSERT INTO candidate_communications(
-        id, candidate_id, requisition_id, channel, template_id,
-        recipient_email, subject, idempotency_key, provider_message_id,
-        status, error_message, metadata, sent_by, created_at, updated_at
-      ) VALUES(?, ?, ?, 'email', ?, ?, ?, ?, NULL, 'queued', NULL, ?, ?, ?, ?)
-    `).run(
-      commId,
-      candidateId,
-      reqId,
-      templateId,
-      recipient,
-      subject,
-      idempotencyKey,
-      JSON.stringify({ isEssential: rendered.isEssential, consentReference: consent.opted_out ? 'operational_exemption' : 'active_consent' }),
-      user.id,
-      createdAt,
-      createdAt
-    );
-  });
+  try {
+    transaction(db, () => {
+      db.prepare(`
+        INSERT INTO candidate_communications(
+          id, candidate_id, requisition_id, channel, template_id,
+          recipient_email, subject, idempotency_key, provider_message_id,
+          status, error_message, metadata, sent_by, created_at, updated_at
+        ) VALUES(?, ?, ?, 'email', ?, ?, ?, ?, NULL, 'queued', NULL, ?, ?, ?, ?)
+      `).run(
+        commId,
+        candidateId,
+        reqId,
+        templateId,
+        recipient,
+        subject,
+        idempotencyKey,
+        JSON.stringify({ isEssential: rendered.isEssential, consentReference: consent.opted_out ? 'operational_exemption' : 'active_consent' }),
+        user.id,
+        createdAt,
+        createdAt
+      );
+    });
+  } catch (insertErr) {
+    if (idempotencyKey && String(insertErr.message).includes('UNIQUE constraint')) {
+      const existing = db.prepare('SELECT * FROM candidate_communications WHERE idempotency_key = ?').get(idempotencyKey);
+      if (existing) {
+        return {
+          ...existing,
+          idempotent_replay: true
+        };
+      }
+    }
+    throw insertErr;
+  }
 
   // Execute delivery via communication adapter
   try {

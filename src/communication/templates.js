@@ -357,6 +357,67 @@ The Mechlin Talent Team`;
   }
 };
 
+export const EXTRA_TEMPLATES = {
+  stage_update: {
+    id: 'stage_update',
+    name: 'Pipeline Stage Update',
+    category: 'recruitment',
+    isEssential: true,
+    render(vars) {
+      const candidateName = vars.candidate_name || 'Candidate';
+      const reqTitle = vars.requisition_title || 'Position';
+      const stage = vars.stage || vars.new_stage || 'Updated Stage';
+      const previousStage = vars.previous_stage || vars.from_stage || '';
+      const team = vars.team ? ` with the ${vars.team} team` : '';
+      const notes = vars.notes ? `<div style="background-color: #f1f5f9; border-radius: 8px; padding: 14px 16px; margin: 16px 0;"><p style="margin: 0; font-size: 14px; color: #334155;"><strong>Note from Hiring Team:</strong><br>${escapeHtml(vars.notes)}</p></div>` : '';
+
+      let stageMessage = 'Your application is progressing through our evaluation process. Thank you for your continued interest in Mechlin Orbit.';
+      if (stage === 'Screening') {
+        stageMessage = 'Our recruiting team is currently reviewing your profile and credentials. We will reach out if there is strong alignment for an initial discussion.';
+      } else if (stage === 'Interview') {
+        stageMessage = 'Congratulations on advancing to the interview stage! Our recruiting team will follow up shortly to coordinate interview scheduling.';
+      } else if (stage === 'Offer') {
+        stageMessage = 'We are pleased to inform you that your application has advanced to the offer stage. Our talent team will be in touch with details regarding your formal employment offer.';
+      } else if (stage === 'Hired') {
+        stageMessage = 'Congratulations on successfully completing our hiring process and joining Mechlin! Welcome to the team!';
+      } else if (stage === 'Applied') {
+        stageMessage = 'Your application has been received and logged into our candidate pipeline. Our recruiting team will review your qualifications.';
+      }
+
+      const title = `Application Status Update: ${stage}`;
+      const subject = `Update on your application for ${reqTitle}: ${stage}`;
+
+      const html = baseLayout({
+        title,
+        candidateName,
+        isOperational: true,
+        bodyHtml: `
+          <p style="font-size: 15px; margin-bottom: 16px;">Dear ${escapeHtml(candidateName)},</p>
+          <p style="font-size: 15px; margin-bottom: 16px;">We would like to share an update regarding your application for the <strong>${escapeHtml(reqTitle)}</strong> position${escapeHtml(team)}.</p>
+          <div style="background-color: #f1f5f9; border-radius: 8px; padding: 16px; margin: 20px 0;">
+            <p style="margin: 0 0 6px 0; font-size: 14px;"><strong>Position:</strong> ${escapeHtml(reqTitle)}</p>
+            <p style="margin: 0 0 6px 0; font-size: 14px;"><strong>Updated Pipeline Stage:</strong> <span style="background-color: #e0e7ff; color: #3730a3; padding: 2px 8px; border-radius: 4px; font-weight: 600;">${escapeHtml(stage)}</span></p>
+            ${previousStage ? `<p style="margin: 0; font-size: 13px; color: #64748b;">Previous Stage: ${escapeHtml(previousStage)}</p>` : ''}
+          </div>
+          <p style="font-size: 15px; margin-bottom: 16px;">${stageMessage}</p>
+          ${notes}
+          <p style="font-size: 15px; margin-bottom: 0;">Our talent acquisition team will keep you informed as we proceed through the process.</p>
+        `
+      });
+
+      const text = `Dear ${candidateName},\n\nWe would like to share an update regarding your application for the ${reqTitle} position${team}.\n\nUpdated Pipeline Stage: ${stage}${previousStage ? ` (Previous: ${previousStage})` : ''}\n\n${stageMessage}\n${vars.notes ? `\nNote from Hiring Team:\n${vars.notes}\n` : ''}\nOur talent acquisition team will keep you informed as we proceed through the process.\n\nWarm regards,\nThe Mechlin Talent Team`;
+
+      return { subject, html, text };
+    }
+  },
+  get rejection() {
+    return TEMPLATES.application_rejection;
+  },
+  get status_update() {
+    return EXTRA_TEMPLATES.stage_update;
+  }
+};
+
 export function getAvailableTemplates() {
   return Object.values(TEMPLATES).map(t => ({
     id: t.id,
@@ -367,7 +428,7 @@ export function getAvailableTemplates() {
 }
 
 export function renderTemplate(templateId, variables = {}) {
-  const tpl = TEMPLATES[templateId];
+  const tpl = TEMPLATES[templateId] || EXTRA_TEMPLATES[templateId];
   if (!tpl) {
     throw new Error(`Unknown email template: "${templateId}"`);
   }
