@@ -1,7 +1,7 @@
 export class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status; }
 }
-export const roles = ['System Admin','TA Director','TA Manager','Recruiter','Hiring Manager','Interviewer','Finance Approver','Employee/Referral','Agency'];
+export const roles = ['System Admin','TA Director','TA Manager','Recruiter','Hiring Manager','Interviewer','Finance Approver','Employee/Referral','Agency','Agency Admin','Agency Recruiter'];
 export const teams = ['Dev','QA','BD','DevOps','HR','Product','Design','Operations','Sales','Other','PM','TL'];
 const grants = {
   'System Admin': ['admin','recruit','requisition','approve_manager','approve_finance','review','analytics','refer','jobs','interview'],
@@ -12,8 +12,11 @@ const grants = {
   'Interviewer': ['interview','jobs'],
   'Finance Approver': ['approve_finance','jobs'],
   'Employee/Referral': ['refer','jobs'],
-  'Agency': []
+  'Agency': [],
+  'Agency Admin': [],
+  'Agency Recruiter': []
 };
+export function isAgencyRole(role) { return ['Agency','Agency Admin','Agency Recruiter'].includes(role); }
 export function can(user, action) { return user?.status === 'active' && (grants[user.role] || []).includes(action); }
 export function requirePermission(user, ...actions) {
   if (!actions.some(action => can(user, action))) throw new HttpError(403, 'Your role cannot perform this action.');

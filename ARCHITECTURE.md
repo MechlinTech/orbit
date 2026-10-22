@@ -34,7 +34,13 @@ The initial administrator is provisioned with an exact object ID by an explicit 
 
 ## Later integrations
 
-`src/adapters.js` specifies scheduling/cancel, send, signature request/webhook verification, HRMS handoff, resume parsing, matching explanation and fraud review entry points. All reject with `ADAPTER_NOT_CONFIGURED`. Implement a durable outbox, idempotency storage, retry/dead-letter workers, secret/token encryption, least-privilege OAuth consent, signed webhook verification and contract tests before connecting them. Never return “sent” merely because an adapter accepted a call.
+`src/adapters.js` specifies scheduling/cancel, send, signature request/webhook verification, HRMS handoff, resume parsing, matching explanation, AI assistance, and fraud review entry points. Unconfigured adapters reject with `ADAPTER_NOT_CONFIGURED`.
+
+Multi-AI integration (`src/ai/` and `src/matching/ai.js`):
+- Multi-provider abstraction (`src/ai/provider.js`): supports OpenAI (`gpt-4o-mini`), Anthropic Claude (`claude-3-5-sonnet-20241022`), Google Gemini (`gemini-1.5-flash`), and xAI Grok (`grok-2-latest`).
+- Unified service (`src/ai/service.js`): normalizes provider payloads, enforces bounded retries on transient errors (429, 502, 503, 504), executes strict timeouts (`AbortSignal.timeout`), scrubs secrets from logs/errors, and extracts structured JSON with markdown code fence handling.
+- Job description drafting (`src/ai/draft.js`): generates inclusive, structured JDs with prompt injection protection and honest template fallback (`method: 'Template assistant; not generative AI'` when unconfigured).
+- Explainable matching (`src/matching/ai.js`): prompt injection tag defense (`<candidate_untrusted_input>`), strict schema validation, skill list hygiene, and automatic deterministic fallback upon provider outage. AI outputs are advisory and never trigger automated candidate rejections.
 
 Scheduling provider: Microsoft Graph events + Teams. Store provider IDs separately from internal interview IDs; handle timezone/DST, cancellations, retries and collision detection. ATS sign-in and scheduling are standardized on Microsoft 365 / Entra.
 
