@@ -196,5 +196,36 @@ function ensureRoleSampleData(db, user) {
         .run(id(), rid, manager.id, 'manager', 'approved', 'Manager approved.', now());
     }
   }
-}
 
+  if (['Agency', 'Agency Admin', 'Agency Recruiter'].includes(user.role)) {
+    let agency = db.prepare("SELECT * FROM agencies WHERE code='APEX'").get();
+    const nowStr = now();
+    if (!agency) {
+      const aid = id();
+      db.prepare(`
+        INSERT INTO agencies(id, name, code, contact_name, contact_email, contact_phone, status, notes, created_at, updated_at)
+        VALUES(?, 'Apex Talent Partners', 'APEX', 'Alex Taylor', 'alex@apex-talent.example.com', '+1-555-0199', 'active', 'Tier 1 external engineering talent agency', ?, ?)
+      `).run(aid, nowStr, nowStr);
+      agency = db.prepare('SELECT * FROM agencies WHERE id=?').get(aid);
+    }
+
+    const member = db.prepare('SELECT * FROM agency_members WHERE user_id=?').get(user.id);
+    if (!member) {
+      db.prepare(`
+        INSERT INTO agency_members(id, agency_id, user_id, role, status, created_at, updated_at)
+        VALUES(?, ?, ?, 'Agency Admin', 'active', ?, ?)
+      `).run(id(), agency.id, user.id, nowStr, nowStr);
+    }
+
+    const openReq = db.prepare("SELECT id FROM requisitions WHERE status='open' LIMIT 1").get();
+    if (openReq) {
+      const assigned = db.prepare('SELECT id FROM agency_requisitions WHERE agency_id=? AND requisition_id=?').get(agency.id, openReq.id);
+      if (!assigned) {
+        db.prepare(`
+          INSERT INTO agency_requisitions(id, agency_id, requisition_id, assigned_by, status, instructions, deadline, created_at, updated_at)
+          VALUES(?, ?, ?, ?, 'active', 'Focus on senior candidates with strong systems fundamentals.', datetime('now', '+14 days'), ?, ?)
+        `).run(id(), agency.id, openReq.id, user.id, nowStr, nowStr);
+      }
+    }
+  }
+}
