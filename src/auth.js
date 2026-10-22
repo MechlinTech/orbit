@@ -16,6 +16,12 @@ export function config(env = process.env) {
   if (c.production && (!c.tenant || !c.client)) throw new Error('Production requires tenant/client IDs');
   const demoFlag = env.ENABLE_DEMO_LOGIN ?? env.DEMO_LOGIN ?? env.QA_LOGIN;
   c.demoLogin = demoFlag !== 'false';
+  c.maxResumeSizeBytes = Number(env.MAX_RESUME_SIZE_BYTES || 5 * 1024 * 1024);
+  c.antivirusProvider = env.ANTIVIRUS_PROVIDER || '';
+  c.antivirusRequired = env.ANTIVIRUS_REQUIRED === 'true' || (c.production && env.ANTIVIRUS_REQUIRED !== 'false');
+  c.resendApiKey = env.RESEND_API_KEY || '';
+  c.emailFrom = env.EMAIL_FROM || env.RESEND_FROM_EMAIL || '';
+  c.resendWebhookSecret = env.RESEND_WEBHOOK_SECRET || '';
   return c;
 }
 export function startLogin(db, c) {

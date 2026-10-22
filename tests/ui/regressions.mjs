@@ -63,8 +63,11 @@ const check = (label, condition) => {
   console.log(results.at(-1));
 };
 const startView = async view => {
-  await click(`document.querySelector('[data-nav="${view}"]')`);
-  await waitFor(`document.querySelector('#main h1')?.textContent === ${JSON.stringify(view)}`);
+  const needsNav = await evaluate(`current !== ${JSON.stringify(view)}`);
+  if (needsNav) {
+    await click(`document.querySelector('[data-nav="${view}"]')`);
+  }
+  await waitFor(`document.querySelector('#main h1')?.textContent === ${JSON.stringify(view)} && !document.querySelector('#main')?.innerText.includes('Loading your workspace')`);
 };
 try {
   const target = await send('Target.createTarget', { url: 'about:blank' }, null);
@@ -164,10 +167,10 @@ try {
   })()`);
   await startView('Referrals');
   await waitFor("document.querySelector('.referrals-table') !== null");
-  check('Referral table shows Job Position and Referral Status headers', await evaluate(`(() => {
-    const headers = [...document.querySelectorAll('.referrals-table thead th')].map(th => th.textContent.trim());
-    return headers.includes('Job Position') && headers.includes('Referral Status') && headers.includes('Referrer') && headers.includes('Actions');
-  })()`));
+  const actualHeaders = await evaluate(`(() => {
+    return [...document.querySelectorAll('.referrals-table thead th')].map(th => th.textContent.trim());
+  })()`);
+  check('Referral table shows Job Position and Referral Status headers', actualHeaders.includes('Job Position') && actualHeaders.includes('Referral Status') && actualHeaders.includes('Referrer') && actualHeaders.includes('Actions'));
   check('Referral row shows linked position, Submitted status and permitted actions', await evaluate(`(() => {
     const row = [...document.querySelectorAll('.referrals-table tbody tr')].find(r => r.innerText.includes('UI Referral Candidate'));
     return Boolean(row) && row.innerText.includes(${JSON.stringify(referralSeed.title)}) && row.innerText.includes('Submitted') &&
