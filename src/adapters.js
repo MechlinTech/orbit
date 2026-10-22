@@ -120,12 +120,12 @@ export class CommunicationAdapter {
     }
     this.configured = Boolean(
       options.configured ||
-      (options.apiKey && (options.from || options.fromEmail || getFromAddress())) ||
-      (options.fromEnv && isEmailConfigured()) ||
-      (dyn && dyn.apiKey && (dyn.fromEmail || getFromAddress()))
+      (options.apiKey && (options.from || options.fromEmail || getFromAddress(options.db))) ||
+      (options.fromEnv && isEmailConfigured(options.db)) ||
+      (dyn && dyn.apiKey && (dyn.fromEmail || getFromAddress(options.db)))
     );
     this.apiKey = options.apiKey || dyn?.apiKey || (this.configured ? (process.env.RESEND_API_KEY || null) : null);
-    this.from = options.from || options.fromEmail || dyn?.fromEmail || (this.configured ? (getFromAddress() || null) : null);
+    this.from = options.from || options.fromEmail || dyn?.fromEmail || (this.configured ? (getFromAddress(options.db) || null) : null);
     this.webhookSecret = options.webhookSecret || dyn?.webhookSecret || (this.configured ? (process.env.RESEND_WEBHOOK_SECRET || null) : null);
     this.transport = options.transport || fetch;
     this.maxRetries = options.maxRetries !== undefined ? options.maxRetries : (dyn?.maxRetries ?? 2);
