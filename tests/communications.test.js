@@ -5,7 +5,8 @@ import crypto from 'node:crypto';
 import { openDb } from '../src/db.js';
 import { createApp } from '../src/server.js';
 import { createSession } from '../src/auth.js';
-import { fixture, testConfig, user } from './helpers.js';
+import { fixture, testConfig, user, reqBody, candidateBody } from './helpers.js';
+import { service } from '../src/service.js';
 import { CommunicationAdapter, AdapterNotConfigured } from '../src/adapters.js';
 import { renderTemplate, escapeHtml, getAvailableTemplates } from '../src/communication/templates.js';
 import { verifyWebhookSignature, processWebhookEvent } from '../src/communication/webhook.js';
@@ -101,6 +102,7 @@ test('CommunicationAdapter: configured instance delivers payload to Resend endpo
   assert.equal(res.status, 'accepted');
   assert.equal(requestedUrl, 'https://api.resend.com/emails');
   assert.equal(requestHeaders['Authorization'], 'Bearer re_test_key_abc');
+  assert.equal(requestHeaders['Idempotency-Key'], 'idemp-123');
   assert.deepEqual(requestBody.to, ['jane.candidate@example.com']);
   assert.equal(requestBody.from, 'Orbit <recruiting@example.com>');
   assert.equal(requestBody.subject, 'Welcome to Orbit');
@@ -510,4 +512,82 @@ test('HTTP: candidate communications, consent endpoints, and webhook integration
     body: JSON.stringify({ template_id: 'application_acknowledgement' })
   });
   assert.equal(forbiddenRes.status, 403);
+});
+
+test('Pipeline: automatically dispatches status update email when candidate advances in pipeline', async () => {
+  const f = fixture();
+  try {
+    const req = await service(f.db, f.recruiter, 'POST', 'requisitions', reqBody);
+    await service(f.db, f.recruiter, 'POST', `requisitions/${req.id}/submit`);
+    await service(f.db, f.manager, 'POST', `requisitions/${req.id}/approve`, {});
+    await service(f.db, f.finance, 'POST', `requisitions/${req.id}/approve`, {});
+    const cand = await service(f.db, f.recruiter, 'POST', 'candidates', candidateBody);
+    const app = await service(f.db, f.recruiter, 'POST', 'applications', { candidate_id: cand.id, requisition_id: req.id });
+
+    const sentEmails = [];
+    const mockCommAdapter = {
+      configured: true,
+      send: async (payload) => {
+        sentEmails.push(payload);
+        return { id: 'msg_' + Math.random().toString(36).slice(2), status: 'accepted' };
+      }
+    };
+
+    // 1. Move to Screening
+    const movedToScreening = await service(f.db, f.recruiter, 'POST', `applications/${app.id}/stage`, { stage: 'Screening' }, null, { communicationAdapter: mockCommAdapter });
+    assert.equal(movedToScreening.stage, 'Screening');
+    assert.equal(sentEmails.length, 1);
+    assert.equal(sentEmails[0].recipient, candidateBody.email);
+    assert.equal(sentEmails[0].templateId, 'stage_update');
+    assert.match(sentEmails[0].subject, /Screening/);
+    assert.match(sentEmails[0].html, /Screening/);
+    assert.match(sentEmails[0].html, /Senior Software Engineer/);
+
+    const auditScreening = f.db.prepare("SELECT * FROM audit WHERE event='application.stage_email_sent'").all();
+    assert.equal(auditScreening.length, 1);
+
+    // 2. Move to Interview
+    const movedToInterview = await service(f.db, f.recruiter, 'POST', `applications/${app.id}/stage`, { stage: 'Interview' }, null, { communicationAdapter: mockCommAdapter });
+    assert.equal(movedToInterview.stage, 'Interview');
+    assert.equal(sentEmails.length, 2);
+    assert.equal(sentEmails[1].templateId, 'stage_update');
+    assert.match(sentEmails[1].subject, /Interview/);
+
+    // 3. Reject application
+    const rejectedApp = await service(f.db, f.recruiter, 'POST', `applications/${app.id}/stage`, { stage: 'Rejected' }, null, { communicationAdapter: mockCommAdapter });
+    assert.equal(rejectedApp.stage, 'Rejected');
+    assert.equal(sentEmails.length, 3);
+    assert.equal(sentEmails[2].templateId, 'application_rejection');
+    assert.match(sentEmails[2].subject, /Senior Software Engineer/);
+  } finally {
+    f.db.close();
+  }
+});
+
+test('Pipeline: stage change succeeds gracefully without errors even when email delivery fails', async () => {
+  const f = fixture();
+  try {
+    const req = await service(f.db, f.recruiter, 'POST', 'requisitions', reqBody);
+    await service(f.db, f.recruiter, 'POST', `requisitions/${req.id}/submit`);
+    await service(f.db, f.manager, 'POST', `requisitions/${req.id}/approve`, {});
+    await service(f.db, f.finance, 'POST', `requisitions/${req.id}/approve`, {});
+    const cand = await service(f.db, f.recruiter, 'POST', 'candidates', candidateBody);
+    const app = await service(f.db, f.recruiter, 'POST', 'applications', { candidate_id: cand.id, requisition_id: req.id });
+
+    const failingAdapter = {
+      configured: true,
+      send: async () => {
+        throw new Error('Resend network down');
+      }
+    };
+
+    // Should NOT throw even though email delivery failed
+    const res = await service(f.db, f.recruiter, 'POST', `applications/${app.id}/stage`, { stage: 'Screening' }, null, { communicationAdapter: failingAdapter });
+    assert.equal(res.stage, 'Screening');
+
+    const failAudit = f.db.prepare("SELECT * FROM audit WHERE event='application.stage_email_failed'").all();
+    assert.equal(failAudit.length, 1);
+  } finally {
+    f.db.close();
+  }
 });

@@ -237,8 +237,16 @@ const notice = (() => {
 })();
 async function api(path,method='GET',body) {
   const response=await fetch(`/api/${path}`,{method,headers:{'Content-Type':'application/json','X-CSRF-Token':csrf || ''},body:body===undefined?undefined:JSON.stringify(body)});
-  const data=await response.json();
-  if(!response.ok){if(response.status===401 && me){me=null;login();}throw new Error(data.error || 'Request failed.');}return data;
+  let data=null;
+  const contentType=response.headers.get('content-type')||'';
+  if(contentType.includes('application/json')){
+    data=await response.json().catch(()=>null);
+  } else {
+    const rawText=await response.text().catch(()=>'');
+    data={error:rawText.includes('<!DOCTYPE')?`Server gateway error (HTTP ${response.status}). Please check mail provider settings.`:(rawText.slice(0,200)||`Request failed (HTTP ${response.status}).`)};
+  }
+  if(!response.ok){if(response.status===401 && me){me=null;login();}throw new Error(data?.error || `Request failed (HTTP ${response.status}).`);}
+  return data;
 }
 const badge = value => `<span class="badge ${escape(String(value).split('_')[0])}">${escape(String(value).replaceAll('_',' '))}</span>`;
 const empty = message => `<div class="empty">${escape(message)}</div>`;
@@ -458,7 +466,28 @@ function modal(title,html,onSubmit,options={}) {
   const saveButton=`<button type="submit">${escape(options.saveLabel||'Save')}</button>`;
   const actions=options.actions!==undefined?options.actions:`<div class="form-actions form-actions-end">${saveButton}</div>`;
   $('#modal-body').innerHTML=`<h2 tabindex="-1">${escape(title)}</h2>${onSubmit?`<form id="edit-form">${html}<p class="error" id="form-error" role="alert"></p>${actions}</form>`:html}`;
-  if(onSubmit)$('#edit-form').onsubmit=async event=>{event.preventDefault();const submit=event.target.querySelector('[type=submit]');submit.disabled=true;try{const msg=await onSubmit(Object.fromEntries(new FormData(event.target)));closeModal();notice(typeof msg==='string'?msg:'Saved.','success');await render();}catch(e){$('#form-error').textContent=e.message;notice(e.message,'error');}finally{submit.disabled=false;}};
+  if(onSubmit){
+    let isSubmitting = false;
+    $('#edit-form').onsubmit=async event=>{
+      event.preventDefault();
+      if(isSubmitting)return;
+      isSubmitting = true;
+      const submit=event.target.querySelector('[type=submit]');
+      if(submit)submit.disabled=true;
+      try{
+        const msg=await onSubmit(Object.fromEntries(new FormData(event.target)));
+        closeModal();
+        notice(typeof msg==='string'?msg:'Saved.','success');
+        await render();
+      }catch(e){
+        $('#form-error').textContent=e.message;
+        notice(e.message,'error');
+      }finally{
+        isSubmitting = false;
+        if(submit)submit.disabled=false;
+      }
+    };
+  }
   $('#modal').showModal();
   const firstInput = $('#modal input:not([type=hidden]), #modal select, #modal textarea');
   if(firstInput) firstInput.focus(); else $('#modal-body h2')?.focus();
@@ -1663,9 +1692,9 @@ document.addEventListener('click',async event=>{
             ? `<a href="/api/signatures/${s.id}/document?version=signed" target="_blank" class="button" style="font-size:0.78rem;padding:5px 12px;">Download Signed PDF</a>`
             : `<a href="/api/signatures/${s.id}/document?version=original" target="_blank" class="button secondary" style="font-size:0.78rem;padding:5px 12px;">View Document</a>`;
 
-          // Resend / Send email invitation button:
+          // Resend email invitation button:
           const sendEmailBtn = (isPending && allows('recruit'))
-            ? `<button type="button" class="button secondary" data-action="resend-sig-email" data-id="${s.id}" data-candidate-id="${c.id}" style="font-size:0.78rem;padding:5px 11px;" title="Send or resend email invitation with signing link">✉️ Send Email</button>`
+            ? `<button type="button" class="button secondary" data-action="resend-sig-email" data-id="${s.id}" data-candidate-id="${c.id}" style="font-size:0.78rem;padding:5px 11px;" title="Invitation email was dispatched upon request creation. Click to resend to candidate.">✉️ Resend Email</button>`
             : '';
 
           // Copy sign link ONLY if pending/viewed - NEVER when completed, cancelled, or declined
@@ -1827,6 +1856,7 @@ document.addEventListener('click',async event=>{
       modal(c.name,`<p>${escape(c.email)}${c.phone?` · ${escape(c.phone)}`:''}${consentBadge}</p><p>${escape((c.skills||[]).join(', '))}</p>${appsHtml}${resumeHtml}${signaturesHtml}<h3>Experience / Resume</h3><p class="score-note">${escape(c.resume_text||c.experience||'No resume text provided.')}</p>${fraudHtml}${commsHtml}${emailAction?`<div class="actions" style="margin-top:16px">${emailAction}</div>`:''}`);
     }
     if(a==='send-candidate-email'){
+      const formKey = `comm_${id}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       const [templateData, commsData] = await Promise.all([
         api(`candidates/${id}/templates`),
         api(`candidates/${id}/communications`).catch(() => ({ consent: { opted_out: false } }))
@@ -1860,11 +1890,11 @@ document.addEventListener('click',async event=>{
           requisition_id: v.requisition_id || undefined,
           subject: v.subject?.trim() || undefined,
           notes: v.notes?.trim() || undefined,
-          idempotency_key: `send_${id}_${v.template_id}_${Date.now()}`
+          idempotency_key: formKey
         };
         const res = await api(`candidates/${id}/communications`, 'POST', payload);
         return `Email sent to ${c.email} (Status: ${res.status}).`;
-      });
+      }, { saveLabel: 'Send Email' });
     }
     if(a==='new-application'){
       const [cs,rs]=await Promise.all([api('candidates'),api('requisitions')]);
@@ -1877,7 +1907,13 @@ document.addEventListener('click',async event=>{
       bindSearchableSelect('candidate_id');
       bindSearchableSelect('requisition_id');
     }
-    if(a==='move'||a==='reject-app'){const stage=a==='move'?b.dataset.stage:'Rejected';modal('Change application stage',`<p>Move this application to <strong>${escape(stage)}</strong>?</p>`,async ()=>{await api(`applications/${id}/stage`,'POST',{stage});return stage==='Rejected'?'Application rejected.':`Application moved to ${stage} successfully.`;});}
+    if(a==='move'||a==='reject-app'){
+      const stage=a==='move'?b.dataset.stage:'Rejected';
+      modal('Change application stage',`<p>Move this application to <strong>${escape(stage)}</strong>?</p><p class="muted" style="font-size:0.82rem;margin-top:6px;">A status update email will be automatically sent to the candidate.</p>`,async ()=>{
+        await api(`applications/${id}/stage`,'POST',{stage});
+        return stage==='Rejected'?'Application rejected. Status update email sent.':`Application moved to ${stage} successfully. Status update email sent.`;
+      },{saveLabel:stage==='Rejected'?'Reject & Notify':'Move & Notify'});
+    }
     if(a==='match'){
       const r=await api(`applications/${id}/match`);
       const matchedChips = (r.matched && r.matched.length)
@@ -2180,18 +2216,21 @@ document.addEventListener('click',async event=>{
       }
     }
     if(a==='resend-sig-email'){
+      if (b.disabled || b.dataset.submitting === 'true') return;
       b.disabled = true;
+      b.dataset.submitting = 'true';
       const prevText = b.textContent;
       b.textContent = 'Sending…';
       try {
         const res = await api(`signatures/${id}/send-email`, 'POST', {});
-        notice(res.results?.[0]?.simulated ? 'Invitation email simulated locally (signing link active).' : 'Invitation email sent successfully to candidate!', 'success');
-        b.textContent = '✓ Sent!';
-        setTimeout(() => { b.textContent = prevText; b.disabled = false; }, 2500);
+        notice(res.results?.[0]?.simulated ? 'Invitation email simulated locally (signing link active).' : 'Invitation email resent successfully to candidate!', 'success');
+        b.textContent = '✓ Resent!';
+        setTimeout(() => { b.textContent = prevText; b.disabled = false; delete b.dataset.submitting; }, 2500);
       } catch (err) {
         notice(err.message, 'error');
         b.textContent = prevText;
         b.disabled = false;
+        delete b.dataset.submitting;
       }
     }
     if(a==='new-agency'){

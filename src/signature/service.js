@@ -74,7 +74,7 @@ export async function dispatchSignatureEmail(db, user, request, signer, options 
   };
 
   const rendered = renderTemplate('offer_letter', emailVars);
-  const idempotencyKey = `sig_${isCompletion ? 'completed' : 'invite'}_${request.id}_${signer.id}_${Date.now()}`;
+  const idempotencyKey = options.idempotency_key || options.idempotencyKey || `sig_${isCompletion ? 'completed' : 'invite'}_${request.id}_${signer.id}${options.isResend ? `_${Date.now()}` : ''}`;
   const nowStr = now();
 
   // Resolve a valid sender user ID from users table for FK integrity and permissions
@@ -243,7 +243,7 @@ export async function resendSignatureInvitation(db, user, requestId, signerId = 
     }
     signer.token = rawToken;
 
-    const res = await dispatchSignatureEmail(db, user, request, signer, options);
+    const res = await dispatchSignatureEmail(db, user, request, signer, { ...options, isResend: true });
     if (!res.ok) {
       throw new HttpError(502, `Failed to send signature invitation email: ${res.error || 'Delivery failed'}`);
     }
