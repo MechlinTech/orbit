@@ -528,9 +528,28 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
           }
         }
         audit(db,user.id,'candidate.created',cid);
+        let createdApps = [];
+        if (body.requisition_id) {
+          const req = get(db, 'requisitions', body.requisition_id);
+          requireTeam(user, req.team);
+          const isAdmin = can(user, 'admin');
+          if (!isAdmin && team !== req.team) throw new HttpError(409, 'Candidate and requisition must belong to the same team.');
+          if (req.status !== 'open') throw new HttpError(409, 'Requisition must be approved and open.');
+          const aid = id();
+          const firstStage = 'Applied';
+          db.prepare('INSERT INTO applications VALUES(?,?,?,?,?)').run(aid, cid, req.id, firstStage, now());
+          const auditDetail = { candidate_id: cid, requisition_id: req.id, stage: firstStage };
+          if (team !== req.team) {
+            auditDetail.cross_team_override = true;
+            auditDetail.candidate_team = team;
+            auditDetail.requisition_team = req.team;
+          }
+          audit(db, user.id, 'application.created', aid, auditDetail);
+          createdApps.push({ id: aid, candidate_id: cid, requisition_id: req.id, stage: firstStage, title: req.title, team: req.team, created_at: now() });
+        }
         const created = get(db,'candidates',cid);
         const resumeMeta = db.prepare('SELECT id, filename, file_format, file_size, scan_status, extraction_status, created_at FROM candidate_resumes WHERE candidate_id=? ORDER BY created_at DESC LIMIT 1').get(cid);
-        return {...created,skills:JSON.parse(created.skills),experience:created.resume_text,applications:[],resume:resumeMeta||null};
+        return {...created,skills:JSON.parse(created.skills),experience:created.resume_text,applications:createdApps,resume:resumeMeta||null};
       });
     }
     if ((method === 'PUT' || method === 'POST') && key && !action) {
@@ -837,7 +856,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
         audit(db, user.id, 'interview.planned', iid, { scheduled_at: scheduled.toISOString(), interviewer_id: interviewer.id, duration_minutes: duration, timezone });
       });
       const calConfigured = isCalendarConfigured(c) || Boolean(c?.calendarAdapter);
-      const emailConfigured = (isEmailConfigured() || Boolean(c?.communicationAdapter)) && body.send_invitation !== false;
+      const emailConfigured = (isEmailConfigured(db) || Boolean(c?.communicationAdapter)) && body.send_invitation !== false;
       if (calConfigured || emailConfigured) {
         return (async () => {
           let meetingUrl = null;
@@ -849,7 +868,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
           }
           if (emailConfigured) {
             try {
-              const commAdapter = c?.communicationAdapter || new CommunicationAdapter({ fromEnv: true, transport: c?.transport });
+              const commAdapter = c?.communicationAdapter || new CommunicationAdapter({ db, fromEnv: true, transport: c?.transport });
               await sendCandidateCommunication(db, user, {
                 candidate_id: cand.id,
                 requisition_id: req.id,
@@ -920,7 +939,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       });
 
       const calConfigured = isCalendarConfigured(c) || Boolean(c?.calendarAdapter);
-      const emailConfigured = (isEmailConfigured() || Boolean(c?.communicationAdapter)) && body.send_notification !== false;
+      const emailConfigured = (isEmailConfigured(db) || Boolean(c?.communicationAdapter)) && body.send_notification !== false;
       if (calConfigured || emailConfigured) {
         return (async () => {
           let meetingUrl = interview.meeting_url;
@@ -932,7 +951,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
           }
           if (emailConfigured) {
             try {
-              const commAdapter = c?.communicationAdapter || new CommunicationAdapter({ fromEnv: true, transport: c?.transport });
+              const commAdapter = c?.communicationAdapter || new CommunicationAdapter({ db, fromEnv: true, transport: c?.transport });
               await sendCandidateCommunication(db, user, {
                 candidate_id: cand.id,
                 requisition_id: req.id,
@@ -974,7 +993,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       });
 
       const calConfigured = isCalendarConfigured(c) || Boolean(c?.calendarAdapter);
-      const emailConfigured = (isEmailConfigured() || Boolean(c?.communicationAdapter)) && body.send_notification !== false;
+      const emailConfigured = (isEmailConfigured(db) || Boolean(c?.communicationAdapter)) && body.send_notification !== false;
       if (calConfigured || emailConfigured) {
         return (async () => {
           if (calConfigured) {
@@ -984,7 +1003,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
           }
           if (emailConfigured) {
             try {
-              const commAdapter = c?.communicationAdapter || new CommunicationAdapter({ fromEnv: true, transport: c?.transport });
+              const commAdapter = c?.communicationAdapter || new CommunicationAdapter({ db, fromEnv: true, transport: c?.transport });
               await sendCandidateCommunication(db, user, {
                 candidate_id: cand.id,
                 requisition_id: req.id,

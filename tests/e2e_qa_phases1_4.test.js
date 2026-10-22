@@ -692,7 +692,7 @@ test('Phase 2 - Test 4. Respect Consent and Opt-Out Preferences', async () => {
 
 test('Phase 2 - Test 5. Verify Delivery Tracking and Webhook Safety', async () => {
   const f = hiringFixture();
-  const webhookSecret = 'whsec_' + Buffer.from('qa-super-secret-key-32-bytes-long!').toString('base64');
+  const webhookSecret = 'qa_resend_delivery_webhook_secret_32_bytes_long';
 
   // Insert existing communication record in 'accepted' state
   const commId = id();

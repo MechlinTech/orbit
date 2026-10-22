@@ -203,7 +203,7 @@ export const INTEGRATION_REGISTRY = [
         type: 'password',
         secret: true,
         required: false,
-        placeholder: 'whsec_...',
+        placeholder: 'wh_secret_...',
         helpText: 'Optional secret used to verify inbound Resend delivery webhooks.'
       },
       {
