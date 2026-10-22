@@ -9,6 +9,9 @@ ENV NODE_ENV=production
 # Security / runtime dependencies
 RUN apk add --no-cache dumb-init
 
+RUN mkdir -p /app/data /app/backups && \
+    chown node:node /app/data /app/backups
+
 # --------------------------------------------------------------------
 # Dependencies
 # --------------------------------------------------------------------
@@ -16,8 +19,9 @@ FROM base AS dependencies
 
 COPY package*.json ./
 
-# Install exactly what's in package-lock.json
-RUN npm ci --omit=dev && \
+# Install exactly what's in package-lock.json. --ignore-scripts prevents
+# lifecycle scripts from any (future) dependency executing during build.
+RUN npm ci --omit=dev --ignore-scripts && \
     npm cache clean --force && \
     mkdir -p /app/node_modules
 
@@ -30,7 +34,7 @@ ENV NODE_ENV=development
 
 COPY package*.json ./
 
-RUN npm ci && \
+RUN npm ci --ignore-scripts && \
     npm cache clean --force
 
 COPY . .

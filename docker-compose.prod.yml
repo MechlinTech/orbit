@@ -36,6 +36,22 @@ services:
     networks:
       - mechlin-orbit
 
+    # Defence in depth: immutable root filesystem, no Linux capabilities and no
+    # privilege escalation. Writable paths are limited to the mounted volumes.
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
 networks:
   mechlin-orbit:
     driver: bridge

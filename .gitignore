@@ -2,9 +2,12 @@ node_modules/
 .env
 .env.*
 !.env.example
-temp_auto_push.bat
 data/
+temp_auto_push.bat
 *.sqlite*
 test-results/
-backups/.gitignore
+backups/
+.env.deploy
+*.log
+.gitignore
 branch_structure.json
