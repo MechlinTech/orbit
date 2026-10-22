@@ -63,11 +63,10 @@ const check = (label, condition) => {
   console.log(results.at(-1));
 };
 const startView = async view => {
-  const needsNav = await evaluate(`current !== ${JSON.stringify(view)}`);
-  if (needsNav) {
-    await click(`document.querySelector('[data-nav="${view}"]')`);
-  }
-  await waitFor(`document.querySelector('#main h1')?.textContent === ${JSON.stringify(view)} && !document.querySelector('#main')?.innerText.includes('Loading your workspace')`);
+  await click(`document.querySelector('[data-nav="${view}"]')`);
+  // The nav click starts an async render; await one directly so checks don't read the previous DOM.
+  await evaluate(`(async () => { await render(); return true; })()`);
+  await waitFor(`document.querySelector('#main h1')?.textContent === ${JSON.stringify(view)}`);
 };
 try {
   const target = await send('Target.createTarget', { url: 'about:blank' }, null);
@@ -166,11 +165,14 @@ try {
     return { reqId: req.id, refId: ref.id, title: req.title };
   })()`);
   await startView('Referrals');
-  await waitFor("document.querySelector('.referrals-table') !== null");
-  const actualHeaders = await evaluate(`(() => {
-    return [...document.querySelectorAll('.referrals-table thead th')].map(th => th.textContent.trim());
+  await waitFor(`(() => {
+    const headers = [...document.querySelectorAll('.referrals-table thead th')].map(th => th.textContent.trim());
+    return headers.includes('Job Position') && headers.includes('Referral Status');
   })()`);
-  check('Referral table shows Job Position and Referral Status headers', actualHeaders.includes('Job Position') && actualHeaders.includes('Referral Status') && actualHeaders.includes('Referrer') && actualHeaders.includes('Actions'));
+  check('Referral table shows Job Position and Referral Status headers', await evaluate(`(() => {
+    const headers = [...document.querySelectorAll('.referrals-table thead th')].map(th => th.textContent.trim());
+    return headers.includes('Job Position') && headers.includes('Referral Status') && headers.includes('Referrer') && headers.includes('Actions');
+  })()`));
   check('Referral row shows linked position, Submitted status and permitted actions', await evaluate(`(() => {
     const row = [...document.querySelectorAll('.referrals-table tbody tr')].find(r => r.innerText.includes('UI Referral Candidate'));
     return Boolean(row) && row.innerText.includes(${JSON.stringify(referralSeed.title)}) && row.innerText.includes('Submitted') &&
@@ -185,6 +187,13 @@ try {
       text.includes(${JSON.stringify(referralSeed.reqId)}) && text.includes('Referral Date') && text.includes('Referrer') &&
       text.includes('UI referral note for review.') && text.includes('Submitted');
   })()`));
+  await click(`document.querySelector('#modal-body [data-action="req-details"][data-readonly="true"]')`);
+  await waitFor("document.querySelector('dialog').open && Boolean(document.querySelector('.requisition-detail'))");
+  check('Requisition opened from a referral is read-only and offers no Edit action', await evaluate(`(() => {
+    const body = document.querySelector('#modal-body');
+    return body.querySelector('.read-only-note')?.innerText.includes('Read-only view') &&
+      !body.querySelector('[data-action="edit-req"]') && body.innerText.includes(${JSON.stringify(referralSeed.title)});
+  })()`));
   await click(`document.querySelector('#close-modal')`);
   await click(`(() => { const row = [...document.querySelectorAll('.referrals-table tbody tr')].find(r => r.innerText.includes('UI Referral Candidate')); return row.querySelector('[data-action="edit-referral"]'); })()`);
   await waitFor("document.querySelector('dialog').open && document.querySelector('#modal-body h2')?.textContent === 'Edit referral'");
@@ -194,6 +203,39 @@ try {
       form.elements.requisition_id.value === ${JSON.stringify(referralSeed.reqId)} && form.elements.note.value === 'UI referral note for review.' &&
       Boolean(document.querySelector('[data-action="delete-referral"]'));
   })()`));
+  check('Form actions show labelled red Delete and green Save buttons at equal height', await evaluate(`(() => {
+    const del = document.querySelector('#edit-form .btn-delete');
+    const save = document.querySelector('#edit-form .btn-save');
+    if (!del || !save) return false;
+    const deleteStyle = getComputedStyle(del), saveStyle = getComputedStyle(save);
+    return del.textContent.trim() === 'Delete' && save.textContent.trim() === 'Save' &&
+      deleteStyle.backgroundColor === 'rgb(166, 27, 43)' && saveStyle.backgroundColor === 'rgb(22, 101, 52)' &&
+      del.getBoundingClientRect().height === save.getBoundingClientRect().height &&
+      del.getBoundingClientRect().height >= 44;
+  })()`));
+  await send('DOM.enable');
+  await send('CSS.enable');
+  const domRoot = (await send('DOM.getDocument', { depth: 0 })).root;
+  const deleteNodeId = (await send('DOM.querySelector', { nodeId: domRoot.nodeId, selector: '#edit-form .btn-delete' })).nodeId;
+  const saveNodeId = (await send('DOM.querySelector', { nodeId: domRoot.nodeId, selector: '#edit-form .btn-save' })).nodeId;
+  await send('CSS.forcePseudoState', { nodeId: deleteNodeId, forcedPseudoClasses: ['hover'] });
+  await new Promise(resolve => setTimeout(resolve, 250));
+  check('Delete button hover uses a lighter red', await evaluate("getComputedStyle(document.querySelector('#edit-form .btn-delete')).backgroundColor === 'rgb(198, 47, 67)'"));
+  await send('CSS.forcePseudoState', { nodeId: saveNodeId, forcedPseudoClasses: ['hover'] });
+  await new Promise(resolve => setTimeout(resolve, 250));
+  check('Save button hover uses a lighter green', await evaluate("getComputedStyle(document.querySelector('#edit-form .btn-save')).backgroundColor === 'rgb(31, 122, 69)'"));
+  await send('CSS.forcePseudoState', { nodeId: deleteNodeId, forcedPseudoClasses: [] });
+  await send('CSS.forcePseudoState', { nodeId: saveNodeId, forcedPseudoClasses: [] });
+  await send('Emulation.setDeviceMetricsOverride', { width: 375, height: 800, deviceScaleFactor: 1, mobile: true });
+  await new Promise(resolve => setTimeout(resolve, 60));
+  check('Form actions stay aligned and inside the viewport on mobile', await evaluate(`(() => {
+    const del = document.querySelector('#edit-form .btn-delete').getBoundingClientRect();
+    const save = document.querySelector('#edit-form .btn-save').getBoundingClientRect();
+    return Math.abs(del.top - save.top) < 1 && Math.abs(del.height - save.height) < 1 &&
+      del.height >= 44 && del.left >= 0 && save.right <= window.innerWidth;
+  })()`));
+  await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
+  await new Promise(resolve => setTimeout(resolve, 60));
   await click(`document.querySelector('#close-modal')`);
   await click(`(() => { const row = [...document.querySelectorAll('.referrals-table tbody tr')].find(r => r.innerText.includes('UI Referral Candidate')); return row.querySelector('[data-action="process-referral"]'); })()`);
   await waitFor("document.querySelector('dialog').open && document.querySelector('#modal-body h2')?.textContent === 'Process referral'");
@@ -269,7 +311,61 @@ try {
   check('Cancelling the replacement prompt keeps the existing description', (await evaluate("document.querySelector('#edit-form [name=description]').value")) === descriptionBeforeCancel);
   await click(`document.querySelector('#close-modal')`);
 
-  // Candidate search empty states.
+  // Requisition description hierarchy in the details popup.
+  const structuredSeed = await evaluate(`(async () => {
+    const r = await api('requisitions', 'POST', {
+      title: 'Structured Detail Role', team: 'Dev', headcount: 1, currency: 'USD', salary_min: 80000, salary_max: 100000,
+      skills: ['SQL', 'JavaScript'],
+      description: [
+        'Purpose', 'Build reliable systems for the team.', '',
+        'Required Skills', 'SQL, JavaScript and clear communication.', '',
+        'Responsibilities', '• Design dependable services.', '• Review code and mentor peers.', '',
+        'Interview Process', 'Structured interview with consistent criteria.', '',
+        'Accessibility', 'Contact the recruiter to request an accommodation.'
+      ].join('\\n')
+    });
+    await render();
+    return r.id;
+  })()`);
+  await startView('Requisitions');
+  await click(`(() => {
+    const row = [...document.querySelectorAll('.requisitions-table tbody tr')].find(r => r.innerText.includes('Structured Detail Role'));
+    return row.querySelector('[data-action="req-details"]');
+  })()`);
+  await waitFor("document.querySelector('dialog').open && Boolean(document.querySelector('.requisition-detail'))");
+  check('Requisition details render description sections as bold headings with lighter body text', await evaluate(`(() => {
+    const detail = document.querySelector('.requisition-detail');
+    const titles = [...detail.querySelectorAll('.detail-section-title')].map(h => h.textContent.trim());
+    const heading = detail.querySelector('.detail-section-title');
+    const body = detail.querySelector('.detail-section-body');
+    if (!heading || !body) return false;
+    const headingStyle = getComputedStyle(heading), bodyStyle = getComputedStyle(body);
+    return ['Purpose', 'Required Skills', 'Responsibilities', 'Interview Process', 'Accessibility'].every(title => titles.includes(title)) &&
+      Number(headingStyle.fontWeight) >= 700 && Number(bodyStyle.fontWeight) <= 400 &&
+      headingStyle.color !== bodyStyle.color && detail.querySelectorAll('.detail-section-list li').length === 2;
+  })()`));
+  check('Requisition description hierarchy keeps readable contrast in the midnight theme', await evaluate(`(() => {
+    const original = document.documentElement.dataset.theme;
+    applyTheme('midnight');
+    const detail = document.querySelector('.requisition-detail');
+    const heading = getComputedStyle(detail.querySelector('.detail-section-title'));
+    const body = getComputedStyle(detail.querySelector('.detail-section-body'));
+    const result = Number(heading.fontWeight) >= 700 && heading.color === 'rgb(229, 237, 249)' && body.color === 'rgb(161, 178, 201)';
+    applyTheme(original);
+    return result;
+  })()`));
+  await send('Emulation.setDeviceMetricsOverride', { width: 375, height: 800, deviceScaleFactor: 1, mobile: true });
+  await new Promise(resolve => setTimeout(resolve, 60));
+  check('Requisition detail section content stays within the mobile viewport', await evaluate(`(() => {
+    const detail = document.querySelector('.requisition-detail');
+    return document.documentElement.scrollWidth <= window.innerWidth &&
+      [...detail.querySelectorAll('.detail-section-title, .detail-section-body, .detail-section-list')].every(el => el.getBoundingClientRect().right <= window.innerWidth);
+  })()`));
+  await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
+  await new Promise(resolve => setTimeout(resolve, 60));
+  await click(`document.querySelector('#close-modal')`);
+  await evaluate(`(async () => { await api('requisitions/${structuredSeed}', 'DELETE'); await render(); })()`);
+
   await startView('Candidates');
   await waitFor("document.querySelector('#candidate-search') !== null");
   check('unmatched search shows the specific empty state', await evaluate(`(() => {

@@ -1078,6 +1078,19 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       if (!referralAccess(user, row)) throw new HttpError(404, 'Referral not found.');
       return referralView(db, user, row);
     }
+    if (method === 'GET' && key && action === 'requisition') {
+      // Referral-linked requisition access is read-only and explicitly scoped to
+      // the referral the caller is allowed to see.
+      const row = referralRow(db, key);
+      if (!referralAccess(user, row)) throw new HttpError(404, 'Referral not found.');
+      const view = referralView(db, user, row);
+      if (!view.can_view_requisition) throw new HttpError(404, 'Requisition not found.');
+      const req = get(db, 'requisitions', row.requisition_id);
+      if (req.deleted_at) throw new HttpError(404, 'Requisition not found.');
+      const output = { ...req, skills: JSON.parse(req.skills), read_only: true };
+      if (['Employee/Referral', 'Interviewer'].includes(user.role)) { delete output.salary_min; delete output.salary_max; }
+      return output;
+    }
     if (method === 'POST' && !key) {
       if (!body.requisition_id) throw new HttpError(400, 'Select a job position for this referral.');
       const req = get(db,'requisitions',body.requisition_id);

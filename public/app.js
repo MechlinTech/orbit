@@ -243,6 +243,7 @@ async function api(path,method='GET',body) {
 const badge = value => `<span class="badge ${escape(String(value).split('_')[0])}">${escape(String(value).replaceAll('_',' '))}</span>`;
 const empty = message => `<div class="empty">${escape(message)}</div>`;
 const button = (title,action,id='',extra='') => `<button type="button" data-action="${action}" data-id="${escape(id)}" ${extra}>${escape(title)}</button>`;
+const formActions = ({deleteAction='',deleteId='',saveLabel='Save'}={}) => `<div class="form-actions">${deleteAction?`<button type="button" class="btn-delete" data-action="${deleteAction}" data-id="${escape(deleteId)}">Delete</button>`:''}<button type="submit" class="btn-save">${escape(saveLabel)}</button></div>`;
 const table = (headers,rows,cls='') => rows.length?`<div class="table-wrap ${cls?cls+'-wrap':''}"><table class="${cls}"><thead><tr>${headers.map(h=>`<th scope="col">${h}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`:empty('No records yet.');
 const formatLabel = (label, required) => {
   if (typeof label !== 'string') return label;
@@ -453,8 +454,10 @@ const closeModal = () => {
   if(n && n.parentElement !== document.body) document.body.appendChild(n);
   $('#modal').close();
 };
-function modal(title,html,onSubmit) {
-  $('#modal-body').innerHTML=`<h2 tabindex="-1">${escape(title)}</h2>${onSubmit?`<form id="edit-form">${html}<p class="error" id="form-error" role="alert"></p><button type="submit">Save</button></form>`:html}`;
+function modal(title,html,onSubmit,options={}) {
+  const saveButton=`<button type="submit">${escape(options.saveLabel||'Save')}</button>`;
+  const actions=options.actions!==undefined?options.actions:`<div class="form-actions form-actions-end">${saveButton}</div>`;
+  $('#modal-body').innerHTML=`<h2 tabindex="-1">${escape(title)}</h2>${onSubmit?`<form id="edit-form">${html}<p class="error" id="form-error" role="alert"></p>${actions}</form>`:html}`;
   if(onSubmit)$('#edit-form').onsubmit=async event=>{event.preventDefault();const submit=event.target.querySelector('[type=submit]');submit.disabled=true;try{const msg=await onSubmit(Object.fromEntries(new FormData(event.target)));closeModal();notice(typeof msg==='string'?msg:'Saved.','success');await render();}catch(e){$('#form-error').textContent=e.message;notice(e.message,'error');}finally{submit.disabled=false;}};
   $('#modal').showModal();
   const firstInput = $('#modal input:not([type=hidden]), #modal select, #modal textarea');
@@ -465,9 +468,9 @@ function deleteDialog(kind, record, impact, path, success) {
   modal(`Delete ${kind}`, `<div class="notice-inline danger-notice"><strong>${escape(record)}</strong> will be removed from active lists.</div><p>${escape(impact)}</p><p class="muted">This uses recoverable soft deletion and keeps an audit record. Linked records are never silently deleted. If this record has dependencies, deletion will be blocked and the record will remain unchanged.</p>`, async () => {
     await api(path, 'DELETE');
     return success;
+  }, {
+    actions: `<div class="form-actions"><button type="button" class="secondary" data-action="close-modal">Cancel</button><button type="submit" class="btn-delete">Delete ${escape(kind)}</button></div>`
   });
-  const submit = $('#edit-form [type="submit"]');
-  if (submit) { submit.textContent = `Delete ${kind}`; submit.classList.add('danger'); }
 }
 $('#close-modal').onclick=closeModal;
 $('#modal').addEventListener('click',e=>{const r=$('#modal').getBoundingClientRect();if(e.clientY<r.top||e.clientY>r.bottom||e.clientX<r.left||e.clientX>r.right)closeModal();});
@@ -678,7 +681,7 @@ async function render() {
       const scopeTitle=canProcess?'Employee referrals within your team scope':'Your referrals';
       const rows=paged.map(r=>{
         const position=r.requisition_title
-          ? (r.can_view_requisition?button(r.requisition_title,'req-details',r.requisition_id,'class="text-button referral-position"'):`<span title="${escape(r.requisition_title)}">${escape(r.requisition_title)}</span>`)
+          ? (r.can_view_requisition?button(r.requisition_title,'req-details',r.requisition_id,`class="text-button referral-position" data-readonly="true" data-referral-id="${escape(r.id)}"`):`<span title="${escape(r.requisition_title)}">${escape(r.requisition_title)}</span>`)
           : (r.requisition_restricted?'<span class="muted">Restricted</span>':'<span class="muted">Not linked</span>');
         const actions=[button('View details','referral-details',r.id,'class="secondary"')];
         if(r.can_edit)actions.push(button('Edit','edit-referral',r.id,'class="secondary"'));
@@ -875,6 +878,30 @@ function reqTable(reqs) {return table(['Position','Team','Headcount','Status','A
   const canReviewFinance = r.status==='pending_finance' && allows('approve_finance') && (r.created_by !== me?.id || allows('admin'));
   return `<tr><td><strong>${escape(r.title)}</strong><small>${escape(r.skills.join(', '))}</small></td><td>${escape(r.team)}</td><td>${r.headcount}</td><td>${badge(r.status)}</td><td><div class="actions">${button('Details','req-details',r.id,'class="secondary"')}${['draft','open'].includes(r.status)&&(allows('recruit')||allows('requisition'))?button('Edit','edit-req',r.id,'class="secondary"'):''}${r.status==='draft'&&(allows('recruit')||allows('requisition'))?button('Submit','submit-req',r.id):''}${(canReviewManager||canReviewFinance)?button('Review','approve-req',r.id):''}</div></td></tr>`;
 }),'requisitions-table');}
+const requisitionSectionHeadings=new Set(['purpose','role overview','about the role','required skills','required skills and experience','responsibilities','key responsibilities','what success looks like','interview process','accessibility']);
+const requisitionHeading=line=>{const label=line.trim().replace(/\s*:\s*$/,'');return requisitionSectionHeadings.has(label.toLowerCase())?label:null;};
+function requisitionDescription(value='') {
+  const lines=String(value).replace(/\r\n?/g,'\n').split('\n');
+  let html='',paragraph=[],items=[];
+  const flushParagraph=()=>{if(paragraph.length){html+=`<p class="detail-section-body">${paragraph.map(escape).join('<br>')}</p>`;paragraph=[];}};
+  const flushList=()=>{if(items.length){html+=`<ul class="detail-section-list">${items.map(item=>`<li>${escape(item)}</li>`).join('')}</ul>`;items=[];}};
+  for(const rawLine of lines){
+    const line=rawLine.trim();
+    if(!line){flushParagraph();flushList();continue;}
+    const heading=requisitionHeading(line);
+    if(heading){flushParagraph();flushList();html+=`<h3 class="detail-section-title">${escape(heading)}</h3>`;continue;}
+    const bullet=line.match(/^[•*-]\s+(.+)$/);
+    if(bullet){flushParagraph();items.push(bullet[1]);continue;}
+    flushList();paragraph.push(line);
+  }
+  flushParagraph();flushList();
+  return html;
+}
+function requisitionDetail(r,{readOnly=false}={}) {
+  const canEdit=!readOnly&&((['draft','open'].includes(r.status)||(allows('admin')&&['pending_manager','pending_finance'].includes(r.status)))&&(allows('recruit')||allows('requisition')));
+  const skillsList=Array.isArray(r.skills)?r.skills:[];
+  return `<div class="requisition-detail"><p class="detail-meta">${badge(r.status)} · ${escape(r.team)} · ${r.headcount} opening(s)</p>${r.salary_min!==undefined?`<p class="detail-salary">${r.salary_min}–${r.salary_max} ${escape(r.currency)}</p>`:''}${requisitionDescription(r.description)}${skillsList.length?`<h3 class="detail-section-title">Required skills</h3><div class="skill-list">${skillsList.map(s=>`<span class="skill-chip">${escape(s)}</span>`).join('')}</div>`:''}${readOnly?`<p class="read-only-note" role="status">${icon('Administration')}<span>Read-only view. Editing is available from the Requisitions page for authorized users.</span></p>`:''}${canEdit?`<div class="actions detail-actions">${button('Edit','edit-req',r.id)}</div>`:''}</div>`;
+}
 function candidateStatusCell(c){
   if(!c.applications||!c.applications.length)return '<span class="muted">No applications</span>';
   return `<div class="candidate-status-list">${c.applications.map(a=>{
@@ -1057,14 +1084,6 @@ document.addEventListener('click',async event=>{
       return;
     }
     if(a==='refresh'){await render();return;}
-    if(a==='refresh-integrations'){await render();return;}
-    if(a==='configure-integration'){await openIntegrationConfigModal(id);return;}
-    if(a==='test-integration'){await runIntegrationConnectionTest(id);return;}
-    if(a==='toggle-integration'){
-      const newEnabled = b.dataset.enabled === '1';
-      await toggleIntegrationEnabled(id, newEnabled);
-      return;
-    }
     if(a==='new-req'){
       modal('New requisition',`<div class="form-grid">${field('Position title','title')}${teamSelect('Team','team',me.team||'Dev',false)}${field('Headcount','headcount','number','1')}${field('Currency','currency','text','USD')}${field('Minimum annual salary','salary_min','number','0')}${field('Maximum annual salary','salary_max','number','0')}${field('Required skills, comma separated','skills','text','',false)}${area('Job description','description','',true)}</div>${button('Draft description from title & skills','draft-jd','','class="secondary"')}`,async v=>{
         const cErr=checkCurrency(v.currency);
@@ -1164,13 +1183,17 @@ document.addEventListener('click',async event=>{
         }
       );
     }
-    if(a==='req-details'){const r=(await api('requisitions')).find(r=>r.id===id)||await api(`requisitions/${id}`);modal(r.title,`<p>${badge(r.status)} · ${escape(r.team)} · ${r.headcount} opening(s)</p>${r.salary_min!==undefined?`<p>${r.salary_min}–${r.salary_max} ${escape(r.currency)}</p>`:''}<p class="score-note">${escape(r.description)}</p>${((['draft','open'].includes(r.status)||(allows('admin')&&['pending_manager','pending_finance'].includes(r.status)))&&(allows('recruit')||allows('requisition')))?`<div class="actions" style="margin-top:16px">${button('Edit','edit-req',r.id)}</div>`:''}`);}
+    if(a==='req-details'){
+      const readOnly=b.dataset.readonly==='true';
+      const r=(readOnly&&b.dataset.referralId)?await api(`referrals/${b.dataset.referralId}/requisition`):((await api('requisitions')).find(r=>r.id===id)||await api(`requisitions/${id}`));
+      modal(r.title,requisitionDetail(r,{readOnly}));
+    }
     if(a==='edit-req'){
       const reqs=await api('requisitions');
       const r=reqs.find(item=>item.id===id)||await api(`requisitions/${id}`);
       if(!r)throw new Error('Requisition not found.');
       if(!['draft','open'].includes(r.status)&&!(allows('admin')&&['pending_manager','pending_finance'].includes(r.status)))throw new Error(`Cannot edit requisition with status ${r.status}.`);
-      modal('Edit requisition',`<div class="form-grid">${field('Position title','title','text',r.title)}${teamSelect('Team','team',r.team||'Dev',false)}${field('Headcount','headcount','number',String(r.headcount))}${field('Currency','currency','text',r.currency)}${field('Minimum annual salary','salary_min','number',String(r.salary_min??0))}${field('Maximum annual salary','salary_max','number',String(r.salary_max??0))}${field('Required skills, comma separated','skills','text',(r.skills||[]).join(', '),false)}${area('Job description','description',r.description,true)}</div>${button('Draft description from title & skills','draft-jd','','class="secondary"')}${button('Delete requisition','delete-req',r.id,'class="danger"')}`,async v=>{
+      modal('Edit requisition',`<div class="form-grid">${field('Position title','title','text',r.title)}${teamSelect('Team','team',r.team||'Dev',false)}${field('Headcount','headcount','number',String(r.headcount))}${field('Currency','currency','text',r.currency)}${field('Minimum annual salary','salary_min','number',String(r.salary_min??0))}${field('Maximum annual salary','salary_max','number',String(r.salary_max??0))}${field('Required skills, comma separated','skills','text',(r.skills||[]).join(', '),false)}${area('Job description','description',r.description,true)}</div>${button('Draft description from title & skills','draft-jd','','class="secondary"')}`,async v=>{
         const cErr=checkCurrency(v.currency);
         if(cErr){
           const el=$('#currency-error');if(el)el.textContent=cErr;
@@ -1187,7 +1210,7 @@ document.addEventListener('click',async event=>{
         if(allows('admin')) payload.admin_override = true;
         await api(`requisitions/${id}`,'PUT',payload);
         return 'Requisition updated successfully.';
-      });
+      },{ actions: formActions({ deleteAction:'delete-req', deleteId:id }) });
       bindValidation('currency',checkCurrency);
       bindValidation('skills',checkSkills);
       bindSalaryInput('salary_min');
@@ -1230,9 +1253,7 @@ document.addEventListener('click',async event=>{
     if(a==='edit-candidate'){
       const c=(await api('candidates')).find(c=>c.id===id)||await api(`candidates/${id}`);
       if(!c)throw new Error('Candidate not found.');
-      const currentResumeNote = c.resume ? `Current attached resume: <strong>${escape(c.resume.filename)}</strong> (${escape(c.resume.file_format.toUpperCase())}, ${Math.round(c.resume.file_size/1024)} KB)` : 'Upload a PDF or DOCX file to automatically extract text for review.';
-      const uploadWidget = `<div class="resume-upload-box full" style="border:1px dashed var(--line);border-radius:8px;padding:12px 14px;background:var(--surface-alt);margin-bottom:8px;"><label style="display:flex;flex-direction:column;gap:6px;cursor:pointer;"><span class="label-heading">Upload / replace resume (PDF or DOCX) <span class="field-optional">Optional</span></span><input type="file" id="resume-file-input" accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" style="font-size:0.85rem;"><input type="hidden" name="resume_id" id="resume-id-input" value="${c.resume?.id || ''}"></label><div id="resume-upload-status" class="muted" style="margin-top:6px;font-size:0.83rem;" aria-live="polite">${currentResumeNote}</div></div>`;
-      modal('Edit candidate',`<div class="form-grid">${uploadWidget}${field('Full name','name','text',c.name)}${field('Email','email','email',c.email)}${field('Phone','phone','tel',c.phone||'',false)}${teamSelect('Team','team',c.team||me.team||'Dev',false)}${field('Skills, comma separated','skills','text',(c.skills||[]).join(', '),false)}${field('Source','source','text',c.source||'Direct')}${area('Experience / Resume text','resume_text',c.resume_text||c.experience||'')}</div>${button('Extract email and phone','parse-resume','','class="secondary"')}${button('Delete candidate','delete-candidate',c.id,'class="danger"')}`,async v=>{
+      modal('Edit candidate',`<div class="form-grid">${field('Full name','name','text',c.name)}${field('Email','email','email',c.email)}${field('Phone','phone','tel',c.phone||'',false)}${teamSelect('Team','team',c.team||me.team||'Dev',false)}${field('Skills, comma separated','skills','text',(c.skills||[]).join(', '),false)}${field('Source','source','text',c.source||'Direct')}${area('Experience / Resume text','resume_text',c.resume_text||c.experience||'')}</div>${button('Extract email and phone','parse-resume','','class="secondary"')}${button('Delete candidate','delete-candidate',c.id,'class="danger"')}`,async v=>{
         const eErr=checkEmail(v.email);
         if(eErr){
           const el=$('#email-error');if(el)el.textContent=eErr;
@@ -1252,7 +1273,7 @@ document.addEventListener('click',async event=>{
         }
         await api(`candidates/${id}`,'PUT',{...v,skills:skills(v.skills),experience:v.resume_text,resume_id:v.resume_id||undefined});
         return 'Candidate updated successfully.';
-      });
+      },{ actions: formActions({ deleteAction:'delete-candidate', deleteId:id }) });
       bindValidation('email',checkEmail);
       bindValidation('phone',checkPhone);
       bindValidation('skills',checkSkills);
@@ -1669,7 +1690,7 @@ document.addEventListener('click',async event=>{
         if(!v.requisition_id)throw new Error('Select a job position for this referral.');
         await api('referrals','POST',v);
         return 'Referral submitted successfully.';
-      });
+      },{ actions: formActions() });
       bindValidation('email',checkEmail);
       bindSearchableSelect('requisition_id');
     }
@@ -1678,7 +1699,7 @@ document.addEventListener('click',async event=>{
       const position=r.requisition_title
         ? `<strong>${escape(r.requisition_title)}</strong>${r.requisition_id?`<br><small class="mono">Requisition ${escape(r.requisition_id)}</small>`:''}`
         : (r.requisition_restricted?'<span class="muted">Restricted by team scope</span>':'<span class="muted">Not linked</span>');
-      const reqAction=r.can_view_requisition?`<div class="actions" style="margin-top:8px">${button('View requisition','req-details',r.requisition_id,'class="secondary"')}</div>`:'';
+      const reqAction=r.can_view_requisition?`<div class="actions detail-actions">${button('View Requisition','req-details',r.requisition_id,`class="secondary" data-readonly="true" data-referral-id="${escape(r.id)}"`)}</div>`:'';
       const actions=[];
       if(r.can_edit)actions.push(button('Edit','edit-referral',r.id,'class="secondary"'));
       if(r.can_process)actions.push(button('Process referral','process-referral',r.id));
@@ -1691,13 +1712,13 @@ document.addEventListener('click',async event=>{
       const rs=await api('requisitions');
       const options=rs.filter(x=>x.status==='open'||x.id===r.requisition_id).map(x=>[x.id,`${x.title} — ${x.id} — ${x.team}`]);
       if(r.requisition_id&&!options.some(([rid])=>rid===r.requisition_id))options.unshift([r.requisition_id,`${r.requisition_title||'Current position'} — ${r.requisition_id}`]);
-      modal('Edit referral',`<div class="form-grid">${field('Candidate name','name','text',r.name)}${field('Candidate email','email','email',r.email)}${searchableSelect('Job position','requisition_id',options,r.requisition_id||'',true,'Search by title, ID or team')}${area('Referral note','note',r.note||'')}</div>${r.can_delete?button('Delete referral','delete-referral',r.id,'class="danger"'):''}`,async v=>{
+      modal('Edit referral',`<div class="form-grid">${field('Candidate name','name','text',r.name)}${field('Candidate email','email','email',r.email)}${searchableSelect('Job position','requisition_id',options,r.requisition_id||'',true,'Search by title, ID or team')}${area('Referral note','note',r.note||'')}</div>`,async v=>{
         const eErr=checkEmail(v.email);
         if(eErr){const el=$('#email-error');if(el)el.textContent=eErr;const inp=$('#edit-form [name="email"]');if(inp){inp.setCustomValidity(eErr);inp.reportValidity();}throw new Error(eErr);}
         if(!v.requisition_id)throw new Error('Select a job position for this referral.');
         await api(`referrals/${id}`,'PUT',v);
         return 'Referral updated successfully.';
-      });
+      },{ actions: formActions({ deleteAction:r.can_delete?'delete-referral':'', deleteId:r.id }) });
       bindValidation('email',checkEmail);
       bindSearchableSelect('requisition_id');
     }
