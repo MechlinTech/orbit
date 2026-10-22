@@ -27,6 +27,8 @@ All `/api/*` endpoints require an approved session. Mutations require `Content-T
 | GET/POST | interviews/:id/scorecards | Blinded application feedback / submit own `{ratings,recommendation,notes}` |
 | GET | interviewers | Assignable users visible to recruiter |
 | GET/POST | referrals | Own referrals / `{name,email,requisition_id,note}` |
+| GET | referrals/:id | Referral details within the caller's permitted scope |
+| GET | referrals/:id/requisition | Read-only linked requisition scoped to the referral; salary hidden from employees/interviewers |
 | GET | analytics | Team-scoped counts |
 | GET | integrations | Explicit unavailable later modules |
 

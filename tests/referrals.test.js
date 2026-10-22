@@ -57,6 +57,38 @@ test('referral list and details expose position/status only within the permitted
   f.db.close();
 });
 
+test('referral requisition view is read-only, referral-scoped and hides salary from employees', () => {
+  const f = fixture();
+  const req = openRequisition(f, 'Referral Read-only Role');
+  const employee = user(f.db, 'Employee/Referral', 'Engineering');
+  const colleague = user(f.db, 'Employee/Referral', 'Engineering');
+  const salesRecruiter = user(f.db, 'Recruiter', 'Sales');
+  const referral = call(f, employee, 'POST', 'referrals', referralBody(req, 'readonly@example.com'));
+
+  const view = call(f, employee, 'GET', `referrals/${referral.id}/requisition`);
+  assert.equal(view.id, req.id);
+  assert.equal(view.read_only, true);
+  assert.equal(view.title, 'Referral Read-only Role');
+  assert.equal(view.description, reqBody.description);
+  assert.deepEqual(view.skills, reqBody.skills);
+  assert.equal('salary_min' in view, false);
+  assert.equal('salary_max' in view, false);
+
+  const recruiterView = call(f, f.recruiter, 'GET', `referrals/${referral.id}/requisition`);
+  assert.equal(recruiterView.read_only, true);
+  assert.equal(recruiterView.salary_min, reqBody.salary_min);
+  assert.equal(recruiterView.salary_max, reqBody.salary_max);
+
+  assert.throws(() => call(f, colleague, 'GET', `referrals/${referral.id}/requisition`), e => e.status === 404);
+  assert.throws(() => call(f, salesRecruiter, 'GET', `referrals/${referral.id}/requisition`), e => e.status === 404);
+  assert.throws(() => call(f, employee, 'GET', 'referrals/missing/requisition'), e => e.status === 404);
+
+  f.db.prepare("UPDATE requisitions SET status='closed' WHERE id=?").run(req.id);
+  assert.throws(() => call(f, employee, 'GET', `referrals/${referral.id}/requisition`), e => e.status === 404);
+  assert.equal(call(f, f.recruiter, 'GET', `referrals/${referral.id}/requisition`).read_only, true);
+  f.db.close();
+});
+
 test('legacy referrals without a requisition remain readable as Not linked and can be edited', () => {
   const f = fixture();
   const employee = user(f.db, 'Employee/Referral', 'Engineering');

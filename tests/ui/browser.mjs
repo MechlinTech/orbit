@@ -16,6 +16,10 @@ const evaluate=async expression=>{const r=await send('Runtime.evaluate',{express
 const waitFor=async expression=>{for(let n=0;n<100;n++){try{if(await evaluate(expression))return;}catch{}await new Promise(r=>setTimeout(r,50));}throw new Error('Timeout: '+expression);};
 const click=async expression=>{await evaluate(`${expression}.click()`);};
 const results=[];const check=(label,condition)=>{if(!condition)throw new Error('FAIL '+label);results.push('PASS '+label);console.log(results.at(-1));};
+const contrast=(a,b)=>{
+  const luminance=value=>value.match(/\d+/g).slice(0,3).map(Number).map(v=>v/255).map(v=>v<=.03928?v/12.92:((v+.055)/1.055)**2.4).reduce((sum,v,n)=>sum+v*[.2126,.7152,.0722][n],0);
+  const x=luminance(a),y=luminance(b);return (Math.max(x,y)+.05)/(Math.min(x,y)+.05);
+};
 try{
   const target=await send('Target.createTarget',{url:'about:blank'},null);session=(await send('Target.attachToTarget',{targetId:target.targetId,flatten:true},null)).sessionId;
   await send('Runtime.enable');await send('Page.enable');await send('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});
@@ -140,7 +144,7 @@ try{
 
   await evaluate(`{const f=document.querySelector('#edit-form');f.elements['skills'].value='Manual Testing, Automation Testing';f.elements['skills'].dispatchEvent(new Event('input'));f.requestSubmit();}`);
   await waitFor("!document.querySelector('dialog').open");
-  await evaluate(`{const q=document.querySelector('#candidate-search');if(q){q.value='';q.dispatchEvent(new Event('input'));}}`);
+  await evaluate(`(async () => { candidateQuery = ''; pageState.Candidates = 1; await render(); })()`);
   await waitFor("document.querySelector('#main').innerText.includes('qa-candidate@example.com')");
   check('Skills field accepts comma-separated format and renders separate skill chips',await evaluate("(()=>{const row=[...document.querySelectorAll('#candidate-table tbody tr')].find(r=>r.innerText.includes('qa-candidate@example.com'));if(!row)return false;const chips=[...row.querySelectorAll('.skill-chip')].map(c=>c.textContent.trim());return chips.includes('Manual Testing') && chips.includes('Automation Testing') && chips.length===2;})()"));
 
@@ -339,7 +343,7 @@ try{
     f.elements['scheduled_at'].value='2030-05-20T14:30';
     f.requestSubmit();
   }`);
-  await waitFor("!document.querySelector('dialog').open");
+  await waitFor("!document.querySelector('dialog').open && document.querySelector('#main').innerText.includes('2030')");
   check('Interviews table displays updated interview date and time after edit',await evaluate("document.querySelector('#main').innerText.includes('2030')"));
   await click(`document.querySelector('[data-nav="Candidates"]')`);
   await waitFor("document.querySelector('.heading h1')?.textContent==='Candidates' && document.querySelector('#candidate-table')!==null");
@@ -643,6 +647,48 @@ try{
   await waitFor("!document.querySelector('dialog').open && document.querySelector('.topbar')!==null");
   check('demo user authenticates and enters workspace',await evaluate("Boolean(document.querySelector('.topbar'))"));
   check('topbar displays Switch QA Role button for demo user',await evaluate("Boolean(document.querySelector('[data-action=\"switch-demo-role\"]'))"));
+  const qaButtonThemes = await evaluate(`(async () => {
+    const read = async theme => {
+      applyTheme(theme);
+      await new Promise(resolve => setTimeout(resolve, 250));
+      const s = getComputedStyle(document.querySelector('[data-action="switch-demo-role"]'));
+      return { background: s.backgroundColor, color: s.color, border: s.borderColor };
+    };
+    const light = await read('mechlin');
+    const midnight = await read('midnight');
+    applyTheme('mechlin');
+    await new Promise(resolve => setTimeout(resolve, 250));
+    return { light, midnight };
+  })()`);
+  check('Switch QA Role button uses a visible accent treatment in light and midnight themes',
+    qaButtonThemes.light.background === 'rgb(230, 243, 251)' && qaButtonThemes.light.color === 'rgb(8, 107, 151)' &&
+    qaButtonThemes.light.border === 'rgb(8, 107, 151)' &&
+    qaButtonThemes.midnight.background === 'rgb(32, 60, 84)' && qaButtonThemes.midnight.color === 'rgb(105, 202, 243)' &&
+    qaButtonThemes.midnight.border === 'rgb(105, 202, 243)' && qaButtonThemes.midnight.background !== 'rgb(19, 32, 53)' &&
+    contrast(qaButtonThemes.light.color, qaButtonThemes.light.background) >= 4.5 &&
+    contrast(qaButtonThemes.midnight.color, qaButtonThemes.midnight.background) >= 4.5);
+  await send('DOM.enable');
+  await send('CSS.enable');
+  await evaluate("applyTheme('midnight')");
+  const qaRoot = (await send('DOM.getDocument', { depth: 0 })).root;
+  const qaNodeId = (await send('DOM.querySelector', { nodeId: qaRoot.nodeId, selector: '[data-action="switch-demo-role"]' })).nodeId;
+  await send('CSS.forcePseudoState', { nodeId: qaNodeId, forcedPseudoClasses: ['hover'] });
+  await new Promise(resolve => setTimeout(resolve, 250));
+  const qaHover = await evaluate(`(() => { const s = getComputedStyle(document.querySelector('[data-action="switch-demo-role"]')); return { background: s.backgroundColor, color: s.color }; })()`);
+  check('Switch QA Role hover state is clearly visible in midnight theme',
+    qaHover.background === 'rgb(105, 202, 243)' && qaHover.color === 'rgb(7, 23, 41)' && contrast(qaHover.color, qaHover.background) >= 4.5);
+  await send('CSS.forcePseudoState', { nodeId: qaNodeId, forcedPseudoClasses: ['focus-visible'] });
+  await new Promise(resolve => setTimeout(resolve, 250));
+  const qaFocus = await evaluate(`(() => { const s = getComputedStyle(document.querySelector('[data-action="switch-demo-role"]')); return { color: s.color, background: s.backgroundColor, outlineColor: s.outlineColor, outlineWidth: s.outlineWidth, outlineStyle: s.outlineStyle }; })()`);
+  check('Switch QA Role focus state has a visible ring in midnight theme',
+    qaFocus.outlineStyle === 'solid' && parseFloat(qaFocus.outlineWidth) >= 3 && qaFocus.outlineColor === 'rgb(255, 209, 124)' && contrast(qaFocus.color, qaFocus.background) >= 4.5);
+  await send('CSS.forcePseudoState', { nodeId: qaNodeId, forcedPseudoClasses: ['active'] });
+  await new Promise(resolve => setTimeout(resolve, 250));
+  const qaActive = await evaluate(`(() => { const s = getComputedStyle(document.querySelector('[data-action="switch-demo-role"]')); return { background: s.backgroundColor, color: s.color }; })()`);
+  check('Switch QA Role active state is clearly visible in midnight theme',
+    qaActive.background === 'rgb(150, 220, 250)' && qaActive.color === 'rgb(7, 23, 41)' && contrast(qaActive.color, qaActive.background) >= 4.5);
+  await send('CSS.forcePseudoState', { nodeId: qaNodeId, forcedPseudoClasses: [] });
+  await evaluate("applyTheme('mechlin')");
   check('sidebar profile indicates QA Demo User identity',await evaluate("Boolean(document.querySelector('.profile .qa-badge')) && document.querySelector('.profile').innerText.includes('Recruiter')"));
 
   await click("document.querySelector('[data-action=\"switch-demo-role\"]')");
