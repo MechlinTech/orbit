@@ -812,7 +812,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
         ].filter(Boolean).join(', ');
       }
 
-      return transaction(db, () => {
+      const updatedApp = transaction(db, () => {
         db.prepare('UPDATE applications SET stage=? WHERE id=?').run(body.stage,key);
         db.prepare("UPDATE referrals SET status=?, updated_at=? WHERE application_id=? AND status!='Withdrawn'").run(body.stage,now(),key);
         db.prepare('INSERT INTO stage_events VALUES(?,?,?,?,?,?)').run(id(),key,app.stage,body.stage,user.id,now());
@@ -825,6 +825,53 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
         audit(db,user.id,isOverride ? 'admin.application_stage_override' : 'application.stage_changed',key,auditDetail);
         return get(db,'applications',key);
       });
+
+      const emailConfigured = (isEmailConfigured(db) || Boolean(c?.communicationAdapter)) && body.send_notification !== false;
+      if (emailConfigured && app.stage !== body.stage) {
+        return (async () => {
+          try {
+            const cand = db.prepare('SELECT id, name, email, team FROM candidates WHERE id = ?').get(app.candidate_id);
+            if (cand && cand.email) {
+              const commAdapter = c?.communicationAdapter || new CommunicationAdapter({ db, fromEnv: true, transport: c?.transport });
+              const templateId = body.stage === 'Rejected' ? 'application_rejection' : 'stage_update';
+              const emailVars = {
+                candidate_name: cand.name,
+                candidate_email: cand.email,
+                requisition_title: req?.title || '',
+                team: req?.team || cand.team || '',
+                stage: body.stage,
+                new_stage: body.stage,
+                previous_stage: app.stage,
+                from_stage: app.stage,
+                notes: body.notes || body.comment || ''
+              };
+              const idempotencyKey = `stage_update_${key}_${body.stage}_${app.stage}`;
+              await sendCandidateCommunication(db, user, {
+                candidate_id: cand.id,
+                requisition_id: req?.id || undefined,
+                template_id: templateId,
+                recipient_email: cand.email,
+                variables: emailVars,
+                idempotency_key: idempotencyKey
+              }, commAdapter);
+              audit(db, user.id, 'application.stage_email_sent', key, {
+                stage: body.stage,
+                previous_stage: app.stage,
+                candidate_id: cand.id,
+                recipient: cand.email
+              });
+            }
+          } catch (emailErr) {
+            audit(db, user.id, 'application.stage_email_failed', key, {
+              stage: body.stage,
+              error: emailErr.message
+            });
+          }
+          return updatedApp;
+        })();
+      }
+
+      return updatedApp;
     }
   }
   if (parts[0] === 'interviews') {

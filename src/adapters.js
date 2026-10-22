@@ -160,7 +160,8 @@ export class CommunicationAdapter {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${this.apiKey}`,
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          ...(idempotencyKey ? { 'Idempotency-Key': String(idempotencyKey).slice(0, 256) } : {})
         },
         body: JSON.stringify(payload),
         signal: AbortSignal.timeout(10000)
