@@ -623,6 +623,7 @@ async function render() {
       html=heading('External agency collaboration is not available in this workspace yet.')+`<section class="panel"><h2>Agency portal is not available yet</h2><p class="muted">Agency functionality has not been enabled for this workspace. Your Agency role does not have access to the internal ATS. Contact your Talent Acquisition administrator if you need help with a submission.</p></section>`;
     }
     if(current==='Candidates') {
+      api('requisitions').then(rs=>{if(Array.isArray(rs))window._cachedOpenReqs=rs.filter(r=>r.status==='open');}).catch(()=>{});
       const candidates=await api('candidates');
       const renderCandidateTable=(q=candidateQuery)=>{
         candidateQuery=q;
@@ -652,9 +653,23 @@ async function render() {
     }
     if(current==='Pipeline') {
       const [apps,stages]=await Promise.all([api('applications'),api('pipeline')]);
+      const activeStages = stages.filter(s => !['Hired', 'Rejected'].includes(s));
       html=heading('Move each application through a consistent hiring process.',allows('recruit')?button('+ Add application','new-application'):'')+
       `<div class="pipeline-wrapper">`+
-        `<div class="board" id="pipeline-board">${stages.map((stage,index)=>`<section class="column${['Hired','Rejected'].includes(stage)?' column-terminal':''}" data-stage="${escape(stage)}"><h2>${escape(stage)} <span>${apps.filter(a=>a.stage===stage).length}</span></h2><div class="column-content">${apps.filter(a=>a.stage===stage).map(a=>`<article class="card"><h3>${escape(a.name)}</h3><p class="muted card-role" title="${escape(a.title)}">${escape(a.title)}</p><div class="actions">${button('Skill match','match',a.id,'class="secondary"')}${allows('recruit')&&!['Hired','Rejected'].includes(stage)?(index>0?button(`Back to ${stages[index-1]}`,'move',a.id,`data-stage="${escape(stages[index-1])}" class="secondary"`):'')+button(`Move to ${stages[index+1]}`,'move',a.id,`data-stage="${escape(stages[index+1])}"`)+button('Reject','reject-app',a.id,'class="secondary"'):''}</div></article>`).join('')||'<p class="muted column-empty">No applications</p>'}</div></section>`).join('')}</div>`+
+        `<div class="pipeline-flow-legend" aria-label="Pipeline overview">`+
+          `<div class="legend-active-flow">`+
+            `<span class="legend-title">Active Funnel:</span>`+
+            `<div class="legend-steps">`+
+              activeStages.map((s, idx) => `<span class="legend-step-pill"><span class="legend-step-num">${idx + 1}</span> ${escape(s)}</span>`).join('<span class="legend-arrow" aria-hidden="true">→</span>')+
+            `</div>`+
+          `</div>`+
+          `<div class="legend-outcomes-flow">`+
+            `<span class="legend-title">Terminal Outcomes:</span>`+
+            `<span class="legend-outcome-pill hired-pill"><span class="legend-outcome-dot"></span> Hired</span>`+
+            `<span class="legend-outcome-pill rejected-pill"><span class="legend-outcome-dot"></span> Rejected</span>`+
+          `</div>`+
+        `</div>`+
+        `<div class="board" id="pipeline-board">${stages.map((stage,index)=>`<section class="column${['Hired','Rejected'].includes(stage)?' column-terminal':''}${stage==='Hired'?' column-terminal-hired':''}${stage==='Rejected'?' column-terminal-rejected':''}" data-stage="${escape(stage)}"><h2><span class="column-header-title">${['Hired','Rejected'].includes(stage)?`<span class="column-stage-type ${stage==='Hired'?'type-hired':'type-rejected'}">${stage==='Hired'?'✓ Outcome':'✕ Outcome'}</span>`:''}<span class="column-name-text">${escape(stage)}</span></span><span class="column-count ${stage==='Hired'?'count-hired':stage==='Rejected'?'count-rejected':''}">${apps.filter(a=>a.stage===stage).length}</span></h2><div class="column-content">${apps.filter(a=>a.stage===stage).map(a=>`<article class="card"><h3>${escape(a.name)}</h3><p class="muted card-role" title="${escape(a.title)}">${escape(a.title)}</p><div class="actions">${button('Skill match','match',a.id,'class="secondary"')}${allows('recruit')&&!['Hired','Rejected'].includes(stage)?(index>0?button(`Back to ${stages[index-1]}`,'move',a.id,`data-stage="${escape(stages[index-1])}" class="secondary"`):'')+button(`Move to ${stages[index+1]}`,'move',a.id,`data-stage="${escape(stages[index+1])}"`)+button('Reject','reject-app',a.id,'class="secondary"'):''}</div></article>`).join('')||'<p class="muted column-empty">No applications</p>'}</div></section>`).join('')}</div>`+
         `<div class="pipeline-scroll-bar pipeline-scroll-bottom" id="pipeline-bottom-scroll" aria-label="Horizontal scroll sticky at bottom of screen"><div class="pipeline-scroll-track"></div></div>`+
       `</div>`;
     }
@@ -708,7 +723,69 @@ async function render() {
     if(current==='Settings') {
       html=heading('Make Orbit feel like your team’s workspace.')+`<section class="panel appearance-panel"><div class="panel-head"><div><h2>Appearance</h2><p class="muted">Choose a look that helps your team do their best work.</p></div><span class="subtle-label">${icon('Administration')} Admin controlled</span></div><form id="appearance-form"><fieldset class="theme-fieldset"><legend>Workspace theme</legend><div class="theme-grid">${appearance.themes.map(t=>`<label class="theme-option"><input type="radio" name="theme" value="${t.id}" ${t.id===appearance.theme?'checked':''}><span class="theme-thumbnail theme-${t.id}"><span class="mini-sidebar"><i></i><i></i><i></i></span><span class="mini-workspace"><span class="mini-topline"></span><span class="mini-metrics"><i></i><i></i><i></i></span><span class="mini-panel"><i></i><i></i><i></i></span></span><span class="theme-check" aria-hidden="true">✓</span></span><span class="theme-name">${t.name}</span><span class="theme-description">${t.description}</span></label>`).join('')}</div></fieldset><div class="theme-scope">${icon('Candidates')}<div><strong>One look, for the whole team</strong><p>The saved theme applies to every user and the sign-in screen. Existing sessions pick it up on their next page change or refresh.</p></div></div><p id="appearance-status" role="status" aria-live="polite" class="muted">${escape(appearance.themes.find(t=>t.id===appearance.theme).name)} is your saved workspace theme.</p><div class="settings-actions"><button type="button" class="secondary" data-action="reset-theme">Reset preview</button><button type="submit" id="save-theme" disabled>Save workspace theme</button></div></form></section><section class="panel brand-panel"><div><p class="eyebrow">OUR WORKSPACE</p><h2>Orbit, by Mechlin</h2><p class="muted">A place for people, possibility and your next great hire.</p></div><div class="brand-lockup"><img src="/mechlin-logo.webp" alt="Mechlin Technologies" width="174" height="40"></div></section>`;
     }
-    if(current==='Pipeline settings') {const stages=await api('pipeline');html=heading('Define the sequence your hiring teams follow.')+`<section class="panel"><p>${stages.map(badge).join(' → ')}</p>${button('Edit stages','edit-pipeline')}<p class="muted">Applied must come first. Hired and Rejected are terminal stages. A stage in use cannot be removed.</p></section>`;}
+    if(current==='Pipeline settings') {
+      const stages=await api('pipeline');
+      const activeStages = stages.filter(s => !['Hired', 'Rejected'].includes(s));
+      const metrics = [
+        ['Active Progression', `${activeStages.length} Stages`, 'Pipeline', 'Sequential applicant advancement'],
+        ['Terminal Outcomes', '2 Outcomes', 'Candidates', 'Hired (Success) & Rejected (Closed)'],
+        ['Entry Stage', escape(stages[0] || 'Applied'), 'Overview', 'Mandatory starting point'],
+        ['Governance', 'Enforced', 'Administration', 'Sequential moves & headcount limits']
+      ];
+
+      html=heading('Define the sequence your hiring teams follow.')+
+      `<div class="metrics">${metrics.map(([label,count,i,note],n)=>`<div class="metric metric-${n}"><div class="metric-top"><span>${label}</span><span class="metric-icon">${icon(i)}</span></div><strong>${count}</strong><small>${note}</small></div>`).join('')}</div>`+
+      `<section class="panel pipeline-flow-panel">`+
+        `<div class="panel-head">`+
+          `<div><h2>Hiring Workflow Architecture</h2><p class="muted">Applicants advance through sequential active stages and conclude at one of two terminal outcomes.</p></div>`+
+          `<div class="actions">${button('Edit stages','edit-pipeline')}</div>`+
+        `</div>`+
+        `<div class="pipeline-diagram-wrapper">`+
+          `<div class="pipeline-track active-track">`+
+            `<div class="track-header"><span class="track-badge">In-Progress Sequential Funnel</span><span class="track-hint">Candidates progress forward one stage at a time (or step back to correct mistakes)</span></div>`+
+            `<div class="pipeline-flow-steps">`+
+              activeStages.map((s, idx) =>
+                `<div class="pipeline-step-card"><div class="step-num-pill">${idx + 1}</div><div class="step-card-body"><span class="step-card-name">${escape(s)}</span><span class="step-card-sub">${idx === 0 ? 'Initial intake' : idx === activeStages.length - 1 ? 'Final evaluation / offer' : 'Interview & evaluation'}</span></div></div>` +
+                (idx < activeStages.length - 1 ? `<div class="flow-connector" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg></div>` : '')
+              ).join('')+
+            `</div>`+
+          `</div>`+
+          `<div class="pipeline-fork-bridge">`+
+            `<div class="fork-label-pill"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;"><path d="M6 3v12"></path><circle cx="18" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M18 9a9 9 0 0 1-9 9"></path></svg> Terminal Resolution Branches</div>`+
+            `<div class="fork-split-arrows" aria-hidden="true"><span>↙ Successful Hire</span><span>·</span><span>Concluded ↘</span></div>`+
+          `</div>`+
+          `<div class="pipeline-outcomes-container">`+
+            `<div class="terminal-outcome-card outcome-hired">`+
+              `<div class="outcome-header">`+
+                `<div class="outcome-icon-wrap success-wrap"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg></div>`+
+                `<div><span class="outcome-type success-text">Positive Terminal Outcome</span><h3 class="outcome-title">Hired</h3></div>`+
+                `<span class="badge" style="background:#e3f3ed;color:#24614d;font-weight:600;margin-left:auto;">Success</span>`+
+              `</div>`+
+              `<p class="outcome-desc">Candidate successfully accepts offer. Approved headcount is filled and onboarding begins. Candidates do not move beyond this stage.</p>`+
+              `<div class="outcome-badge-meta"><span class="outcome-rule-chip">● Headcount enforced</span><span class="outcome-rule-chip">● Final victory state</span></div>`+
+            `</div>`+
+            `<div class="terminal-outcome-card outcome-rejected">`+
+              `<div class="outcome-header">`+
+                `<div class="outcome-icon-wrap rejected-wrap"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></div>`+
+                `<div><span class="outcome-type rejected-text">Concluded / Archived Outcome</span><h3 class="outcome-title">Rejected</h3></div>`+
+                `<span class="badge rejected" style="background:#fae6e8;color:#922e3b;font-weight:600;margin-left:auto;">Archived</span>`+
+              `</div>`+
+              `<p class="outcome-desc">Candidate is disqualified, offer declined, or application withdrawn. Can occur from any active stage in the pipeline without progressing through Hired.</p>`+
+              `<div class="outcome-badge-meta"><span class="outcome-rule-chip">● Available at any stage</span><span class="outcome-rule-chip">● Closes application cycle</span></div>`+
+            `</div>`+
+          `</div>`+
+        `</div>`+
+      `</section>`+
+      `<section class="panel pipeline-policy-panel">`+
+        `<div class="panel-head"><div><h2>Pipeline Governance Rules</h2><p class="muted">Core system constraints to ensure hiring compliance, data integrity, and separation between active workflow and terminal states.</p></div></div>`+
+        `<div class="pipeline-rules-grid">`+
+          `<div class="rule-card"><div class="rule-icon">${icon('Candidates')}</div><div><strong>Entry Integrity</strong><p class="muted"><strong>Applied</strong> is the mandatory first stage for every new application entering the organization.</p></div></div>`+
+          `<div class="rule-card"><div class="rule-icon">${icon('Pipeline')}</div><div><strong>Step-by-Step Progression</strong><p class="muted">Active stages advance sequentially. Recruiters can step backward to correct errors, but skipping forward requires administrative override.</p></div></div>`+
+          `<div class="rule-card"><div class="rule-icon">${icon('Overview')}</div><div><strong>Terminal Isolation</strong><p class="muted"><strong>Hired</strong> and <strong>Rejected</strong> are independent terminal end states. A candidate is never rejected after being hired, and terminal records cannot be moved without administrative override.</p></div></div>`+
+          `<div class="rule-card"><div class="rule-icon">${icon('Administration')}</div><div><strong>Dependency Safety</strong><p class="muted">A pipeline stage cannot be removed if there are active or historical applications currently associated with it.</p></div></div>`+
+        `</div>`+
+      `</section>`;
+    }
     if(current==='Integrations') {
       if(me?.role !== 'System Admin') {
         html=heading('Access Restricted')+`<div class="empty">System Admin access is required to view and manage integrations.</div>`;
@@ -728,67 +805,82 @@ async function render() {
         html = heading('Manage external API credentials, connection health, and enterprise adapters.') +
           `<div class="metrics">${metrics.map(([label, count, i, note], n) => `<div class="metric metric-${n}"><div class="metric-top"><span>${label}</span><span class="metric-icon">${icon(i)}</span></div><strong>${count}</strong><small>${note}</small></div>`).join('')}</div>` +
           `<section class="panel integrations-container">` +
-            `<div class="panel-head">` +
+            `<div class="panel-head" style="margin-bottom:12px;">` +
               `<div><h2>System Integrations Registry</h2><p class="muted">Manage credentials securely with AES-256-GCM encryption, run non-destructive tests, and configure fallbacks.</p></div>` +
               `<div class="actions">` +
                 `<button type="button" class="secondary" data-action="refresh-integrations">${icon('Administration')}<span>Refresh Status</span></button>` +
               `</div>` +
             `</div>` +
-            `<div class="integrations-grid">` +
+            `<div class="int-header-toolbar">` +
+              `<div class="int-search-wrap">` +
+                `<svg class="int-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>` +
+                `<input type="search" id="int-search-input" placeholder="Search integrations by name or capability..." aria-label="Search integrations">` +
+              `</div>` +
+              `<div class="int-filter-tabs" role="tablist">` +
+                `<button type="button" class="int-tab-btn active" data-filter="all">All (${integrations.length})</button>` +
+                `<button type="button" class="int-tab-btn" data-filter="active">Active (${activeCount})</button>` +
+                `<button type="button" class="int-tab-btn" data-filter="external">Cloud APIs (${externalCount})</button>` +
+                `<button type="button" class="int-tab-btn" data-filter="inhouse">In-House (${inHouseCount})</button>` +
+              `</div>` +
+            `</div>` +
+            `<div class="integrations-grid" id="integrations-grid">` +
               integrations.map(item => {
-                let badgeCls = 'pending';
-                let statusLabel = 'Not configured';
+                let statusClass = 'ready';
+                let statusLabel = 'Ready to Setup';
                 if (item.status === 'connected') {
-                  badgeCls = 'active';
-                  statusLabel = 'Connected & Operational';
+                  statusClass = 'connected';
+                  statusLabel = 'Connected';
                 } else if (item.status === 'configured') {
-                  badgeCls = 'planned';
+                  statusClass = 'configured';
                   statusLabel = 'Configured';
                 } else if (item.status === 'disabled') {
-                  badgeCls = 'draft';
+                  statusClass = 'disabled';
                   statusLabel = 'Deactivated';
                 } else if (item.status === 'failed') {
-                  badgeCls = 'rejected';
-                  statusLabel = 'Connection Failed';
+                  statusClass = 'failed';
+                  statusLabel = 'Needs Attention';
                 }
 
                 const archBadge = item.isExternal
-                  ? `<span class="arch-badge arch-external">External Service</span>`
-                  : `<span class="arch-badge arch-inhouse">In-House Engine</span>`;
+                  ? `<span class="int-type-tag int-type-cloud">Cloud API</span>`
+                  : `<span class="int-type-tag int-type-inhouse">In-House</span>`;
 
                 const testInfo = item.lastTestAt
-                  ? `<div class="integration-diagnostic-bar ${item.lastTestStatus === 'success' ? 'diag-success' : 'diag-error'}">` +
-                      `<span>${item.lastTestStatus === 'success' ? '✓' : '✗'} Last test: ${escape(new Date(item.lastTestAt).toLocaleString())}</span>` +
-                      (item.lastError ? `<div class="diag-error-text">${escape(item.lastError)}</div>` : '') +
-                    `</div>`
-                  : `<div class="integration-diagnostic-bar diag-none"><span>No recent test run.</span></div>`;
+                  ? (item.lastTestStatus === 'success'
+                      ? `<span class="int-diag-chip diag-ok" title="Last verified: ${escape(new Date(item.lastTestAt).toLocaleString())}">✓ Verified active</span>`
+                      : `<span class="int-diag-chip diag-warn" title="${escape(item.lastError || 'Test failed')}">⚠ Connection check needed</span>`)
+                  : `<span class="int-diag-chip diag-ready">Ready for test</span>`;
 
-                const sourceLabel = item.effectiveSource === 'database'
-                  ? 'Configured in Database (AES-256-GCM encrypted)'
-                  : (item.effectiveSource === 'environment' ? 'Active via Environment Variable fallback' : (item.isExternal ? 'Not configured' : 'Local system engine'));
+                const featureTags = getIntegrationFeatureTags(item);
 
-                return `<div class="integration-card" data-integration-id="${escape(item.id)}">` +
-                  `<div class="int-card-header">` +
-                    `<div class="int-category-row"><span class="int-category">${escape(item.category)}</span>${archBadge}</div>` +
-                    `<h3 class="int-name">${escape(item.name)}</h3>` +
-                    `<p class="int-desc">${escape(item.description)}</p>` +
-                  `</div>` +
-                  `<div class="int-status-block">` +
-                    `<div class="int-status-row">` +
-                      `<span class="badge ${badgeCls}">${statusLabel}</span>` +
-                      `<span class="int-source-tag">${escape(sourceLabel)}</span>` +
+                return `<div class="integration-card" data-integration-id="${escape(item.id)}" data-category="${escape(item.category)}" data-external="${item.isExternal ? '1' : '0'}" data-status="${escape(item.status)}">` +
+                  `<div class="int-card-head">` +
+                    `<div class="int-icon-wrap">${getIntegrationIcon(item.id)}</div>` +
+                    `<div class="int-head-meta">` +
+                      `<div class="int-meta-sub">` +
+                        `<span class="int-category-text">${escape(item.category)}</span>` +
+                        `<span class="int-dot-sep">·</span>` +
+                        `${archBadge}` +
+                      `</div>` +
+                      `<h3 class="int-name">${escape(item.name)}</h3>` +
                     `</div>` +
-                    testInfo +
+                    `<span class="int-status-pill int-status-${statusClass}"><span class="int-status-dot"></span>${statusLabel}</span>` +
                   `</div>` +
-                  `<div class="int-capabilities">` +
-                    `<strong>Capabilities:</strong>` +
-                    `<ul>${item.capabilities.map(cap => `<li>${escape(cap)}</li>`).join('')}</ul>` +
-                  `</div>` +
-                  `<div class="int-fallback-box"><small><strong>Fallback:</strong> ${escape(item.fallbackPolicy)}</small></div>` +
+                  `<p class="int-desc">${escape(item.description)}</p>` +
+                  `<div class="int-feature-tags">${featureTags.map(t => `<span class="int-feature-tag">${escape(t)}</span>`).join('')}</div>` +
+                  `<div class="int-health-row">${testInfo}<span class="int-enc-badge" title="AES-256-GCM encrypted">🔒 AES-256 Encrypted</span></div>` +
+                  `<details class="int-details-drawer">` +
+                    `<summary class="int-details-summary">Capabilities & Fallback ▾</summary>` +
+                    `<div class="int-drawer-content">` +
+                      `<strong>Capabilities:</strong>` +
+                      `<ul>${item.capabilities.map(cap => `<li>${escape(cap)}</li>`).join('')}</ul>` +
+                      `<div class="int-fallback-box"><small><strong>Fallback:</strong> ${escape(item.fallbackPolicy)}</small></div>` +
+                    `</div>` +
+                  `</details>` +
                   `<div class="int-card-actions">` +
                     `<button type="button" class="button" data-action="configure-integration" data-id="${escape(item.id)}">Configure</button>` +
                     `<button type="button" class="button secondary" data-action="test-integration" data-id="${escape(item.id)}" title="Run safe, non-destructive connection test">Test Connection</button>` +
-                    `<button type="button" class="button secondary" data-action="toggle-integration" data-id="${escape(item.id)}" data-enabled="${item.enabled ? '0' : '1'}">${item.enabled ? 'Deactivate' : 'Activate'}</button>` +
+                    `<button type="button" class="button secondary int-toggle-btn" data-action="toggle-integration" data-id="${escape(item.id)}" data-enabled="${item.enabled ? '0' : '1'}">${item.enabled ? 'Deactivate' : 'Activate'}</button>` +
                   `</div>` +
                 `</div>`;
               }).join('') +
@@ -870,6 +962,7 @@ async function render() {
       document.title=`${current} · Orbit by Mechlin`;
       syncNavState();
       if(current === 'Pipeline') syncPipelineScroll(prevBoardLeft);
+      if(current === 'Integrations') bindIntegrationsFilter();
     }
   }catch(e){if(me)$('#main').innerHTML=`<section class="panel"><h1>Could not load this view</h1><p class="error">${escape(e.message)}</p>${button('Try again','refresh')}</section>`;}
 }
@@ -910,13 +1003,97 @@ function candidateStatusCell(c){
   }).join('')}</div>`;
 }
 function candidateTable(cs){return table(['Candidate','Skills','Source','Status','Actions'],cs.map(c=>`<tr><td><div class="person-cell"><span class="avatar">${initials(c.name)}</span><div><strong title="${escape(c.name)}">${escape(c.name)}</strong><small title="${escape(c.email)}">${escape(c.email)}</small></div></div></td><td><div class="skill-list">${c.skills.map(s=>`<span class="skill-chip" title="${escape(s)}">${escape(s)}</span>`).join('')}</div></td><td><span title="${escape(c.source)}">${escape(c.source)}</span></td><td>${candidateStatusCell(c)}</td><td><div class="actions">${button('View profile','candidate-details',c.id,'class="secondary"')}${allows('recruit')?button('Edit','edit-candidate',c.id,'class="secondary"'):''}</div></td></tr>`),'candidates-table');}
+
+function getIntegrationIcon(id) {
+  switch (id) {
+    case 'microsoft_calendar':
+      return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line><polygon points="11 13 16 16 11 19 11 13" fill="currentColor" stroke="none"></polygon></svg>`;
+    case 'email_communication':
+      return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>`;
+    case 'multi_ai':
+      return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"></path></svg>`;
+    case 'resume_scanner':
+      return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><path d="M9 15l2 2 4-4"></path></svg>`;
+    case 'signature':
+      return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"></path><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"></path><path d="M2 2l7.586 7.586"></path><circle cx="11" cy="11" r="2"></circle></svg>`;
+    case 'fraud_review':
+      return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path><circle cx="12" cy="11" r="3"></circle></svg>`;
+    case 'agency_portal':
+      return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path></svg>`;
+    case 'hrms':
+      return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>`;
+    default:
+      return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>`;
+  }
+}
+
+function getIntegrationFeatureTags(item) {
+  const map = {
+    microsoft_calendar: ['Teams Video Links', 'Outlook Calendar', 'Auto Invites'],
+    email_communication: ['Domain Delivery', 'Status Webhooks', 'Consent Opt-out'],
+    multi_ai: ['Skill Gap Analysis', 'JD Assistance', 'Smart Fallback'],
+    resume_scanner: ['PDF & DOCX Parser', 'Magic-Byte Check', 'Quarantine Isolation'],
+    signature: ['Legally Defensible PDF', 'Vector & Image Sign', 'SHA-256 Audit Hash'],
+    fraud_review: ['Timeline Anomaly', 'Duplicate Detection', 'Risk Scoring'],
+    agency_portal: ['Tenant Isolation', 'Job Assignments', 'Recruiter Portal'],
+    hrms: ['Hire Handoff', 'Bearer / API Key Auth', 'Employee Sync']
+  };
+  return map[item.id] || (item.capabilities ? item.capabilities.slice(0, 3) : []);
+}
+
+function bindIntegrationsFilter() {
+  const input = document.getElementById('int-search-input');
+  const tabs = document.querySelectorAll('.int-tab-btn');
+  const cards = document.querySelectorAll('.integration-card');
+  if (!input || !cards.length) return;
+
+  let activeFilter = 'all';
+
+  const applyFilter = () => {
+    const q = (input.value || '').trim().toLowerCase();
+    cards.forEach(card => {
+      const name = (card.querySelector('.int-name')?.textContent || '').toLowerCase();
+      const desc = (card.querySelector('.int-desc')?.textContent || '').toLowerCase();
+      const cat = (card.dataset.category || '').toLowerCase();
+      const isExt = card.dataset.external === '1';
+      const isAct = card.dataset.status === 'connected' || card.dataset.status === 'configured';
+
+      let matchesTab = true;
+      if (activeFilter === 'active') matchesTab = isAct;
+      else if (activeFilter === 'external') matchesTab = isExt;
+      else if (activeFilter === 'inhouse') matchesTab = !isExt;
+
+      const matchesQuery = !q || name.includes(q) || desc.includes(q) || cat.includes(q);
+      card.style.display = (matchesTab && matchesQuery) ? '' : 'none';
+    });
+  };
+
+  input.addEventListener('input', applyFilter);
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      tabs.forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      activeFilter = tab.dataset.filter;
+      applyFilter();
+    });
+  });
+}
+
 async function openIntegrationConfigModal(integrationId) {
   try {
     const details = await api(`admin/integrations/${integrationId}`);
     const fields = details.fields || [];
 
-    const safeFields = fields.filter(f => !f.secret);
-    const secretFields = fields.filter(f => f.secret);
+    const advancedKeys = new Set([
+      'timeoutMs', 'maxRetries', 'retryCount', 'externalTimestampingUrl',
+      'webhookSecret', 'grokApiUrl', 'geminiApiUrl', 'anthropicApiUrl', 'openaiApiUrl',
+      'antivirusEndpoint', 'partnerTermsUrl', 'resourcePath', 'mediumRiskThreshold',
+      'highRiskThreshold', 'ownershipProtectionDays', 'maxSubmissionsPerRole', 'maxSizeBytes'
+    ]);
+
+    const isAdvanced = f => advancedKeys.has(f.key);
+    const primaryFields = fields.filter(f => !isAdvanced(f));
+    const advancedFields = fields.filter(f => isAdvanced(f));
 
     const renderField = f => {
       if (f.type === 'select') {
@@ -928,40 +1105,72 @@ async function openIntegrationConfigModal(integrationId) {
         return select(f.label, `cfg_${f.key}`, selectOpts, f.value ?? f.default, f.required);
       }
       if (f.type === 'checkbox') {
-        return `<label class="full" style="display:flex;align-items:center;gap:10px;cursor:pointer;background:var(--surface-alt);padding:10px 14px;border:1px solid var(--line);border-radius:6px;font-weight:600;"><input type="checkbox" name="cfg_${f.key}" ${f.value ? 'checked' : ''} style="width:auto;min-height:auto;"> <span>${escape(f.label)}</span></label>`;
+        return `<label class="full checkbox-row" style="cursor:pointer;background:var(--surface-alt);padding:10px 14px;border:1px solid var(--line);border-radius:8px;font-weight:600;"><input type="checkbox" name="cfg_${f.key}" ${f.value ? 'checked' : ''}> <span>${escape(f.label)}</span></label>`;
       }
       if (f.secret) {
-        return `<div class="full secret-field-group" style="background:var(--surface-alt);border:1px solid var(--line);padding:12px;border-radius:8px;margin-top:6px;">` +
-          `<label style="font-weight:600;">${formatLabel(f.label, f.required && !f.hasSavedSecret)}` +
-            `<input type="password" name="sec_${f.key}" placeholder="${f.hasSavedSecret ? '•••••••• (Secret saved — leave blank to keep)' : escape(f.placeholder || 'Enter secret')}" autocomplete="new-password">` +
-          `</label>` +
-          `<div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;font-size:0.75rem;color:var(--muted);">${f.hasSavedSecret ? '<span style="color:var(--positive);">✓ Encrypted secret saved at rest (AES-256-GCM)</span>' : '<span>Stored with authenticated AES-256-GCM encryption</span>'}${f.hasSavedSecret ? `<label style="display:flex;align-items:center;gap:5px;cursor:pointer;color:var(--negative);"><input type="checkbox" name="remove_sec_${f.key}" style="width:auto;min-height:auto;"> Remove saved secret</label>` : ''}</div>` +
-        `</div>`;
+        return `
+          <div class="full int-secret-group" style="background:var(--surface-alt);border:1px solid var(--line);padding:12px 14px;border-radius:8px;margin-top:4px;">
+            <label style="font-weight:600;display:block;">
+              ${formatLabel(f.label, f.required && !f.hasSavedSecret)}
+              <div class="int-secret-input-wrap" style="position:relative;margin-top:6px;">
+                <input type="password" name="sec_${f.key}" id="sec_input_${f.key}" placeholder="${f.hasSavedSecret ? '•••••••• (Secret saved — enter new value to update)' : escape(f.placeholder || 'Enter secret')}" autocomplete="new-password" style="padding-right:42px;width:100%;font-family:monospace;">
+                <button type="button" class="int-pwd-toggle" data-target="sec_input_${f.key}" title="Toggle secret visibility" aria-label="Toggle secret visibility">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                </button>
+              </div>
+            </label>
+            <div class="int-secret-meta" style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;font-size:0.75rem;">
+              <span class="muted">${f.hasSavedSecret ? '<span class="int-saved-badge">✓ Stored securely with AES-256-GCM encryption</span>' : '<span>Stored securely with AES-256-GCM authenticated encryption</span>'}</span>
+              ${f.hasSavedSecret ? `<label style="display:inline-flex;align-items:center;gap:5px;cursor:pointer;color:var(--negative);font-size:0.75rem;"><input type="checkbox" name="remove_sec_${f.key}"> Remove credential</label>` : ''}
+            </div>
+          </div>
+        `;
       }
       return field(f.label, `cfg_${f.key}`, f.type || 'text', f.value ?? '', f.required);
     };
 
     const formHtml = `
-      <div class="integration-modal-body">
-        <div class="int-modal-header" style="margin-bottom:16px;">
-          <p class="muted" style="margin:0 0 10px;">${escape(details.description)}</p>
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-            <span class="badge ${details.status === 'connected' ? 'active' : (details.status === 'configured' ? 'planned' : 'pending')}">${escape(details.status)}</span>
-            <span class="subtle-label" style="font-size:0.78rem;">Source: ${escape(details.effectiveSource)}</span>
+      <div class="int-modal-body">
+        <div class="int-modal-hero">
+          <div class="int-hero-left">
+            <div class="int-hero-icon">${getIntegrationIcon(details.id)}</div>
+            <div>
+              <h3 class="int-hero-title">${escape(details.name)}</h3>
+              <p class="int-hero-desc">${escape(details.description)}</p>
+            </div>
           </div>
+          <span class="int-status-pill int-status-${details.status === 'connected' ? 'connected' : (details.status === 'configured' ? 'configured' : 'ready')}">
+            <span class="int-status-dot"></span>${escape(details.status || 'Ready')}
+          </span>
         </div>
-        <div class="form-grid">
-          <div class="full" style="background:var(--tint);padding:12px 16px;border-radius:8px;display:flex;align-items:center;justify-content:space-between;">
-            <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-weight:600;margin:0;">
-              <input type="checkbox" name="__enabled" ${details.enabled ? 'checked' : ''} style="width:auto;min-height:auto;">
-              <span>Enable this integration</span>
-            </label>
-            <small class="muted">Active integrations override environment variables</small>
+
+        <div class="int-toggle-banner">
+          <div class="int-toggle-info">
+            <strong>Enable Integration</strong>
+            <span>Turn on to activate automated synchronization and live API calls</span>
           </div>
-          ${safeFields.length ? `<div class="full" style="margin-top:10px;"><h3 style="font-size:0.95rem;margin:0 0 8px;border-bottom:1px solid var(--line);padding-bottom:6px;">Configuration Parameters</h3></div>` : ''}
-          ${safeFields.map(renderField).join('')}
-          ${secretFields.length ? `<div class="full" style="margin-top:14px;"><h3 style="font-size:0.95rem;margin:0 0 8px;border-bottom:1px solid var(--line);padding-bottom:6px;">Credentials & Secrets (AES-256-GCM Encrypted)</h3></div>` : ''}
-          ${secretFields.map(renderField).join('')}
+          <label class="int-switch">
+            <input type="checkbox" name="__enabled" ${details.enabled ? 'checked' : ''}>
+            <span class="int-slider"></span>
+          </label>
+        </div>
+
+        <div class="form-grid">
+          ${primaryFields.map(renderField).join('')}
+        </div>
+
+        ${advancedFields.length ? `
+          <details class="int-modal-advanced">
+            <summary>Advanced Settings (Timeouts, Retries & Endpoints)</summary>
+            <div class="int-modal-advanced-content form-grid">
+              ${advancedFields.map(renderField).join('')}
+            </div>
+          </details>
+        ` : ''}
+
+        <div class="int-modal-test-bar">
+          <button type="button" class="button secondary" id="modal-inline-test-btn" data-id="${escape(details.id)}">⚡ Test Connection</button>
+          <div id="modal-test-result" class="int-modal-test-msg muted">Verify connectivity and credentials before saving</div>
         </div>
       </div>
     `;
@@ -972,7 +1181,7 @@ async function openIntegrationConfigModal(integrationId) {
       const removeSecrets = [];
       const enabled = Boolean(v.__enabled);
 
-      for (const f of safeFields) {
+      for (const f of fields.filter(f => !f.secret)) {
         if (f.type === 'checkbox') {
           config[f.key] = Boolean(v[`cfg_${f.key}`]);
         } else if (f.type === 'number') {
@@ -982,7 +1191,7 @@ async function openIntegrationConfigModal(integrationId) {
         }
       }
 
-      for (const f of secretFields) {
+      for (const f of fields.filter(f => f.secret)) {
         if (v[`remove_sec_${f.key}`]) {
           removeSecrets.push(f.key);
         } else if (v[`sec_${f.key}`] && String(v[`sec_${f.key}`]).trim()) {
@@ -997,8 +1206,71 @@ async function openIntegrationConfigModal(integrationId) {
         removeSecrets
       });
 
-      return `Saved and encrypted settings for "${details.name}".`;
+      return `Saved settings for "${details.name}".`;
     });
+
+    // Bind eye show/hide buttons
+    document.querySelectorAll('.int-pwd-toggle').forEach(btn => {
+      btn.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const targetId = btn.dataset.target;
+        const inp = document.getElementById(targetId);
+        if (!inp) return;
+        if (inp.type === 'password') {
+          inp.type = 'text';
+          btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>`;
+        } else {
+          inp.type = 'password';
+          btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>`;
+        }
+      };
+    });
+
+    // Bind inline Test Connection button
+    const testBtn = document.getElementById('modal-inline-test-btn');
+    const testResult = document.getElementById('modal-test-result');
+    if (testBtn && testResult) {
+      testBtn.onclick = async (e) => {
+        e.preventDefault();
+        testBtn.disabled = true;
+        const origText = testBtn.innerHTML;
+        testBtn.innerHTML = 'Testing…';
+        testResult.className = 'int-modal-test-msg muted';
+        testResult.textContent = 'Testing connection in progress…';
+        try {
+          const form = document.querySelector('#edit-form');
+          const testConfig = {};
+          const testSecrets = {};
+          if (form) {
+            const fd = new FormData(form);
+            for (const [k, v] of fd.entries()) {
+              if (k.startsWith('cfg_')) testConfig[k.replace('cfg_', '')] = v;
+              if (k.startsWith('sec_') && v && String(v).trim()) {
+                testSecrets[k.replace('sec_', '')] = String(v).trim();
+              }
+            }
+          }
+          const res = await api(`admin/integrations/${integrationId}/test`, 'POST', {
+            config: testConfig,
+            secrets: testSecrets
+          });
+          if (res.ok) {
+            testResult.className = 'int-modal-test-msg ok';
+            testResult.textContent = `✓ ${res.message || 'Connection verified successfully!'}`;
+          } else {
+            testResult.className = 'int-modal-test-msg err';
+            testResult.textContent = `✗ ${res.message || 'Connection failed.'}`;
+          }
+        } catch (err) {
+          testResult.className = 'int-modal-test-msg err';
+          testResult.textContent = `✗ ${err.message}`;
+        } finally {
+          testBtn.disabled = false;
+          testBtn.innerHTML = origText;
+        }
+      };
+    }
   } catch (err) {
     notice(err.message, 'error');
   }
@@ -1084,6 +1356,14 @@ document.addEventListener('click',async event=>{
       return;
     }
     if(a==='refresh'){await render();return;}
+    if(a==='refresh-integrations'){await render();return;}
+    if(a==='configure-integration'){await openIntegrationConfigModal(id);return;}
+    if(a==='test-integration'){await runIntegrationConnectionTest(id);return;}
+    if(a==='toggle-integration'){
+      const newEnabled = b.dataset.enabled === '1';
+      await toggleIntegrationEnabled(id, newEnabled);
+      return;
+    }
     if(a==='new-req'){
       modal('New requisition',`<div class="form-grid">${field('Position title','title')}${teamSelect('Team','team',me.team||'Dev',false)}${field('Headcount','headcount','number','1')}${field('Currency','currency','text','USD')}${field('Minimum annual salary','salary_min','number','0')}${field('Maximum annual salary','salary_max','number','0')}${field('Required skills, comma separated','skills','text','',false)}${area('Job description','description','',true)}</div>${button('Draft description from title & skills','draft-jd','','class="secondary"')}`,async v=>{
         const cErr=checkCurrency(v.currency);
@@ -1223,8 +1503,10 @@ document.addEventListener('click',async event=>{
       deleteDialog('requisition',`${r.title} (${r.team})`,'This removes the requisition from active lists. Applications, interviews, approvals and referrals are dependencies and will block deletion rather than be removed silently.',`requisitions/${id}`,'Requisition deleted successfully.');
     }
     if(a==='new-candidate'){
+      const cached = Array.isArray(window._cachedOpenReqs) ? window._cachedOpenReqs : [];
+      const reqOptions = [['', 'None (Candidate pool only)'], ...cached.map(r => [r.id, `${r.title} — ${r.id} (${r.team})`])];
       const uploadWidget = `<div class="resume-upload-box full" style="border:1px dashed var(--line);border-radius:8px;padding:12px 14px;background:var(--surface-alt);margin-bottom:8px;"><label style="display:flex;flex-direction:column;gap:6px;cursor:pointer;"><span class="label-heading">Upload resume (PDF or DOCX) <span class="field-optional">Optional</span></span><input type="file" id="resume-file-input" accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" style="font-size:0.85rem;"><input type="hidden" name="resume_id" id="resume-id-input" value=""></label><div id="resume-upload-status" class="muted" style="margin-top:6px;font-size:0.83rem;" aria-live="polite">Upload a PDF or DOCX file to automatically extract text for review.</div></div>`;
-      modal('Add candidate',`<div class="form-grid">${uploadWidget}${field('Full name','name')}${field('Email','email','email')}${field('Phone','phone','tel','',false)}${teamSelect('Team','team',me.team||'Dev',false)}${field('Skills, comma separated','skills','text','',false)}${field('Source','source','text','Direct')}${area('Experience / Resume text','resume_text')}</div>${button('Extract email and phone','parse-resume','','class="secondary"')}`,async v=>{
+      modal('Add candidate',`<div class="form-grid">${uploadWidget}${field('Full name','name')}${field('Email','email','email')}${field('Phone','phone','tel','',false)}${teamSelect('Team','team',me.team||'Dev',false)}${select('Associated requisition','requisition_id',reqOptions,'',false)}${field('Skills, comma separated','skills','text','',false)}${field('Source','source','text','Direct')}${area('Experience / Resume text','resume_text')}</div>${button('Extract email and phone','parse-resume','','class="secondary"')}`,async v=>{
         const eErr=checkEmail(v.email);
         if(eErr){
           const el=$('#email-error');if(el)el.textContent=eErr;
@@ -1242,9 +1524,20 @@ document.addEventListener('click',async event=>{
           const inp=$('#edit-form [name="skills"]');if(inp){inp.setCustomValidity(sErr);inp.reportValidity();}
           throw new Error(sErr);
         }
-        await api('candidates','POST',{...v,skills:skills(v.skills),experience:v.resume_text,resume_id:v.resume_id||undefined});
-        return 'Candidate created successfully.';
+        await api('candidates','POST',{...v,skills:skills(v.skills),experience:v.resume_text,resume_id:v.resume_id||undefined,requisition_id:v.requisition_id||undefined});
+        return v.requisition_id ? 'Candidate created and added to pipeline (Applied stage).' : 'Candidate created successfully.';
       });
+      api('requisitions').then(rs => {
+        if (!Array.isArray(rs)) return;
+        const open = rs.filter(r => r.status === 'open');
+        window._cachedOpenReqs = open;
+        const sel = $('#edit-form select[name="requisition_id"]');
+        if (sel) {
+          const curVal = sel.value;
+          sel.innerHTML = `<option value="">None (Candidate pool only)</option>` +
+            open.map(r => `<option value="${escape(r.id)}" ${r.id === curVal ? 'selected' : ''}>${escape(r.title)} — ${escape(r.id)} (${escape(r.team)})</option>`).join('');
+        }
+      }).catch(() => {});
       bindValidation('email',checkEmail);
       bindValidation('phone',checkPhone);
       bindValidation('skills',checkSkills);
@@ -1253,7 +1546,9 @@ document.addEventListener('click',async event=>{
     if(a==='edit-candidate'){
       const c=(await api('candidates')).find(c=>c.id===id)||await api(`candidates/${id}`);
       if(!c)throw new Error('Candidate not found.');
-      modal('Edit candidate',`<div class="form-grid">${field('Full name','name','text',c.name)}${field('Email','email','email',c.email)}${field('Phone','phone','tel',c.phone||'',false)}${teamSelect('Team','team',c.team||me.team||'Dev',false)}${field('Skills, comma separated','skills','text',(c.skills||[]).join(', '),false)}${field('Source','source','text',c.source||'Direct')}${area('Experience / Resume text','resume_text',c.resume_text||c.experience||'')}</div>${button('Extract email and phone','parse-resume','','class="secondary"')}${button('Delete candidate','delete-candidate',c.id,'class="danger"')}`,async v=>{
+      const currentResumeNote = c.resume ? `Current attached resume: <strong>${escape(c.resume.filename)}</strong> (${escape(c.resume.file_format.toUpperCase())}, ${Math.round(c.resume.file_size/1024)} KB)` : 'Upload a PDF or DOCX file to automatically extract text for review.';
+      const uploadWidget = `<div class="resume-upload-box full" style="border:1px dashed var(--line);border-radius:8px;padding:12px 14px;background:var(--surface-alt);margin-bottom:8px;"><label style="display:flex;flex-direction:column;gap:6px;cursor:pointer;"><span class="label-heading">Upload / replace resume (PDF or DOCX) <span class="field-optional">Optional</span></span><input type="file" id="resume-file-input" accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" style="font-size:0.85rem;"><input type="hidden" name="resume_id" id="resume-id-input" value="${c.resume?.id || ''}"></label><div id="resume-upload-status" class="muted" style="margin-top:6px;font-size:0.83rem;" aria-live="polite">${currentResumeNote}</div></div>`;
+      modal('Edit candidate',`<div class="form-grid">${uploadWidget}${field('Full name','name','text',c.name)}${field('Email','email','email',c.email)}${field('Phone','phone','tel',c.phone||'',false)}${teamSelect('Team','team',c.team||me.team||'Dev',false)}${field('Skills, comma separated','skills','text',(c.skills||[]).join(', '),false)}${field('Source','source','text',c.source||'Direct')}${area('Experience / Resume text','resume_text',c.resume_text||c.experience||'')}</div>${button('Extract email and phone','parse-resume','','class="secondary"')}`,async v=>{
         const eErr=checkEmail(v.email);
         if(eErr){
           const el=$('#email-error');if(el)el.textContent=eErr;
@@ -1314,6 +1609,10 @@ document.addEventListener('click',async event=>{
       const sigList = Array.isArray(sigData) ? sigData : [];
       const hasCompleted = sigList.some(s => s.status === 'completed');
       const hasActivePending = sigList.some(s => s.status === 'pending' || s.status === 'viewed');
+      const candApps = c.applications || [];
+      const hasApps = candApps.length > 0;
+      const isRejected = hasApps && candApps.every(a => a.stage === 'Rejected');
+      const hasActiveApplications = candApps.some(a => a.stage !== 'Rejected');
 
       let agreementCardsHtml = '';
       if (sigList.length > 0) {
@@ -1401,13 +1700,35 @@ document.addEventListener('click',async event=>{
           `;
         }).join('');
       } else {
-        agreementCardsHtml = `<div class="sig-empty-state">No e-signature agreements created for this candidate yet.</div>`;
+        if (isRejected) {
+          agreementCardsHtml = `<div class="sig-empty-state">Candidate application has been rejected. Offer agreements cannot be created.</div>`;
+        } else if (!hasApps) {
+          agreementCardsHtml = `<div class="sig-empty-state">Candidate is in the talent pool without an active application. Assign candidate to an open requisition to start the hiring pipeline before sending an offer agreement.</div>`;
+        } else {
+          agreementCardsHtml = `<div class="sig-empty-state">No e-signature agreements created for this candidate yet.</div>`;
+        }
       }
 
       // Action footer guidance
       let footerActionHtml = '';
       if (allows('recruit')) {
-        if (hasCompleted) {
+        if (isRejected) {
+          if (sigList.length > 0) {
+            footerActionHtml = `
+              <div class="sig-action-footer">
+                <span class="sig-status-notice" style="color:var(--negative);font-weight:550;">✕ Candidate application is rejected — offer agreements are unavailable</span>
+              </div>
+            `;
+          }
+        } else if (!hasApps) {
+          if (sigList.length > 0) {
+            footerActionHtml = `
+              <div class="sig-action-footer">
+                <span class="sig-status-notice muted" style="font-size:0.83rem;">Candidate is in the talent pool without an active application.</span>
+              </div>
+            `;
+          }
+        } else if (hasCompleted) {
           footerActionHtml = `
             <div class="sig-action-footer">
               <span class="sig-status-notice" style="color:var(--positive);font-weight:550;">✓ Offer agreement completed and legally executed</span>
@@ -1430,11 +1751,15 @@ document.addEventListener('click',async event=>{
         }
       }
 
-      const totalBadge = hasCompleted
-        ? `<span class="badge completed" style="font-size:0.74rem;">✓ Executed</span>`
-        : (hasActivePending
-          ? `<span class="badge pending" style="font-size:0.74rem;">⏳ Pending Signature</span>`
-          : (sigList.length ? `<span class="badge rejected" style="font-size:0.74rem;">Inactive</span>` : `<span class="badge draft" style="font-size:0.74rem;">0 Agreements</span>`));
+      const totalBadge = isRejected
+        ? `<span class="badge rejected" style="font-size:0.74rem;">Rejected</span>`
+        : (hasCompleted
+          ? `<span class="badge completed" style="font-size:0.74rem;">✓ Executed</span>`
+          : (hasActivePending
+            ? `<span class="badge pending" style="font-size:0.74rem;">⏳ Pending Signature</span>`
+            : (!hasApps
+              ? `<span class="badge draft" style="font-size:0.74rem;">No Application</span>`
+              : (sigList.length ? `<span class="badge rejected" style="font-size:0.74rem;">Inactive</span>` : `<span class="badge draft" style="font-size:0.74rem;">0 Agreements</span>`))));
 
       signaturesHtml = `
         <div class="signature-agreements-card">
@@ -1496,7 +1821,7 @@ document.addEventListener('click',async event=>{
         `;
       }
 
-      const showFooterOfferBtn = allows('recruit') && !hasCompleted && !hasActivePending;
+      const showFooterOfferBtn = allows('recruit') && hasActiveApplications && !hasCompleted && !hasActivePending && !isRejected;
       const offerFooterBtn = showFooterOfferBtn ? button('Offer & E-Sign','new-signature-request',c.id,'class="secondary" style="margin-right:8px;"') : '';
       const emailAction = allows('recruit') ? `${offerFooterBtn}${button('Send email','send-candidate-email',c.id,'class="primary" style="margin-right:8px;"')}${button('Edit','edit-candidate',c.id,'class="secondary"')}` : '';
       modal(c.name,`<p>${escape(c.email)}${c.phone?` · ${escape(c.phone)}`:''}${consentBadge}</p><p>${escape((c.skills||[]).join(', '))}</p>${appsHtml}${resumeHtml}${signaturesHtml}<h3>Experience / Resume</h3><p class="score-note">${escape(c.resume_text||c.experience||'No resume text provided.')}</p>${fraudHtml}${commsHtml}${emailAction?`<div class="actions" style="margin-top:16px">${emailAction}</div>`:''}`);
@@ -1748,12 +2073,39 @@ document.addEventListener('click',async event=>{
     }
     if(a==='new-user'){const roles=(await api('me')).roles.filter(r=>r!=='Agency');modal('Add Microsoft 365 user',field('Full name','name')+field('Microsoft email','email','email')+field('Entra object ID','oid')+field('Entra tenant ID','tenant')+select('Role','role',roles,'Employee/Referral')+teamSelect('Team','team','',true)+'<p class="muted">This grants approved access to the exact Entra identity. It does not create a Microsoft account or an ATS password.</p>',async v=>{await api('admin/users','POST',v);return 'User provisioned successfully.';});}
     if(a==='manage-user'){const u=window.currentUsers.find(u=>u.id===id);const roles=(await api('me')).roles.filter(r=>r!=='Agency');const actions=u.status==='pending'?['approve','reject']:u.status==='active'?['update','disable','force-logout']:['reactivate','update'];modal(`Manage ${u.name}`,`<p>${escape(u.email)} · ${badge(u.status)}</p><p class="mono">Entra object: ${escape(u.oid)}</p>`+select('Action','action',actions)+select('Role','role',roles,u.role)+teamSelect('Team','team',u.team||'',true)+'<p class="muted">Access changes revoke all current ATS sessions.</p>',async v=>{await api(`admin/users/${id}/${v.action}`,'POST',v);return `User ${v.action} completed successfully.`;});}
-    if(a==='edit-pipeline'){const stages=await api('pipeline');modal('Edit pipeline',area('Stages, one per line','stages',stages.join('\n'),true),async v=>{await api('pipeline','PUT',{stages:v.stages.split('\n').map(s=>s.trim()).filter(Boolean)});return 'Pipeline updated successfully.';});}
+    if(a==='edit-pipeline'){
+      const stages=await api('pipeline');
+      modal('Edit pipeline',
+        `<div class="edit-pipeline-notice" style="margin-bottom:14px;padding:12px;background:var(--surface-alt);border:1px solid var(--line);border-radius:8px;font-size:0.83rem;line-height:1.5;">` +
+          `<strong style="color:var(--ink);">Pipeline Structure Guidelines:</strong><br>` +
+          `<span class="muted">• Must begin with <strong>Applied</strong> (initial entry).<br>` +
+          `• Intermediate active stages progress sequentially (e.g. Screening, Interview, Offer).<br>` +
+          `• <strong>Hired</strong> and <strong>Rejected</strong> are automatically preserved as terminal outcomes.</span>` +
+        `</div>` +
+        area('Stages, one per line','stages',stages.join('\n'),true),
+        async v=>{
+          let entered=v.stages.split('\n').map(s=>s.trim()).filter(Boolean);
+          if(entered[0]!=='Applied') entered.unshift('Applied');
+          entered=entered.filter(s=>!['Hired','Rejected'].includes(s));
+          entered.push('Hired','Rejected');
+          await api('pipeline','PUT',{stages:entered});
+          return 'Pipeline updated successfully.';
+        }
+      );
+    }
     if(a==='new-signature-request'){
       const cand = (await api('candidates')).find(c=>c.id===id)||await api(`candidates/${id}`);
       if(!cand) throw new Error('Candidate not found.');
+      const candApps = cand.applications || [];
+      if (candApps.length > 0 && candApps.every(app => app.stage === 'Rejected')) {
+        throw new Error('Cannot create an offer or signature request for a candidate with rejected applications.');
+      }
+      if (candApps.length === 0) {
+        throw new Error('Candidate has no applications. Please assign the candidate to a job requisition before creating an offer agreement.');
+      }
       const reqs = await api('requisitions');
-      const reqOptions = (cand.applications||[]).map(app=>[app.requisition_id, `${app.title} (${app.stage})`]);
+      const activeApps = candApps.filter(app => app.stage !== 'Rejected');
+      const reqOptions = activeApps.map(app => [app.requisition_id, `${app.title} (${app.stage})`]);
       for (const r of reqs.filter(r=>r.status==='open')) {
         if (!reqOptions.some(([rid])=>rid===r.id)) reqOptions.push([r.id, `${r.title} (${r.team})`]);
       }
@@ -2628,6 +2980,7 @@ async function renderSigningPortal(token) {
   }
 }
 
+window.addEventListener('online',()=>notice('Connection restored.','success'));
 (async()=>{
   const signToken = (location.pathname.startsWith('/sign/') ? location.pathname.split('/')[2] : '') ||
     new URLSearchParams(location.search).get('sign') ||
