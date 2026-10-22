@@ -85,13 +85,13 @@ export async function dispatchSignatureEmail(db, user, request, signer, options 
     senderUser = creator || adminUser || { id: request.created_by, role: 'System Admin', status: 'active' };
   }
 
-  const isConfigured = isEmailConfigured() || Boolean(adapter);
+  const commAdapter = adapter || new CommunicationAdapter({ db, fromEnv: true });
+  const isConfigured = Boolean(adapter) || commAdapter.configured;
 
   if (isConfigured) {
     try {
-      const commAdapter = adapter || new CommunicationAdapter({ fromEnv: true });
       if (candidate && candidate.id) {
-        return await sendCandidateCommunication(db, senderUser, {
+        const commRes = await sendCandidateCommunication(db, senderUser, {
           candidate_id: candidate.id,
           requisition_id: request.requisition_id || undefined,
           template_id: 'offer_letter',
@@ -100,6 +100,19 @@ export async function dispatchSignatureEmail(db, user, request, signer, options 
           variables: emailVars,
           idempotency_key: idempotencyKey
         }, commAdapter);
+        audit(db, senderUser.id, isCompletion ? 'signature.completion_email_sent' : 'signature.invitation_email_sent', request.id, {
+          signer_id: signer.id,
+          recipient: signer.email,
+          provider_message_id: commRes.provider_message_id || null
+        });
+        return {
+          ok: true,
+          sent: true,
+          simulated: false,
+          communication_id: commRes.id,
+          signing_url: signingUrl,
+          ...commRes
+        };
       } else {
         const sendResult = await commAdapter.send({
           recipient: signer.email,
@@ -115,14 +128,14 @@ export async function dispatchSignatureEmail(db, user, request, signer, options 
           recipient: signer.email,
           provider_message_id: sendResult.id || null
         });
-        return { ok: true, sent: true, simulated: false };
+        return { ok: true, sent: true, simulated: false, signing_url: signingUrl };
       }
     } catch (err) {
       audit(db, senderUser.id, isCompletion ? 'signature.completion_email_failed' : 'signature.invitation_email_failed', request.id, {
         signer_id: signer.id,
         error: err.message
       });
-      return { ok: false, error: err.message };
+      return { ok: false, sent: false, simulated: false, error: err.message };
     }
   } else {
     // Local / Dev simulated delivery: record communication so it appears in ATS communications history
@@ -231,12 +244,15 @@ export async function resendSignatureInvitation(db, user, requestId, signerId = 
     signer.token = rawToken;
 
     const res = await dispatchSignatureEmail(db, user, request, signer, options);
+    if (!res.ok) {
+      throw new HttpError(502, `Failed to send signature invitation email: ${res.error || 'Delivery failed'}`);
+    }
     audit(db, user.id, 'signature.invitation_resent', requestId, {
       signer_id: signer.id,
       email: signer.email,
       simulated: Boolean(res.simulated)
     });
-    results.push({ signer_id: signer.id, email: signer.email, simulated: res.simulated, ok: res.ok, signing_url: res.signing_url });
+    results.push({ signer_id: signer.id, email: signer.email, simulated: Boolean(res.simulated), ok: res.ok, signing_url: res.signing_url });
   }
 
   return {
@@ -278,6 +294,18 @@ export async function createSignatureRequest(db, user, {
     candidate = db.prepare('SELECT * FROM candidates WHERE id = ?').get(candidateId);
     if (!candidate) throw new HttpError(404, 'Candidate not found.');
     if (!can(user, 'admin')) requireTeam(user, candidate.team);
+
+    if (requisitionId) {
+      const app = db.prepare('SELECT stage FROM applications WHERE candidate_id = ? AND requisition_id = ?').get(candidateId, requisitionId);
+      if (app && app.stage === 'Rejected') {
+        throw new HttpError(409, 'Cannot create an offer letter or signature request for a rejected application.');
+      }
+    } else {
+      const apps = db.prepare('SELECT stage FROM applications WHERE candidate_id = ?').all(candidateId);
+      if (apps.length > 0 && apps.every(a => a.stage === 'Rejected')) {
+        throw new HttpError(409, 'Cannot create an offer letter or signature request for a candidate with rejected applications.');
+      }
+    }
   }
 
   if (requisitionId) {
