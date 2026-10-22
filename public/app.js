@@ -1,17 +1,24 @@
 const $ = s => document.querySelector(s);
 const escape = v => String(v ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let me, csrf, permissions = [], current = 'Overview', renderVersion = 0, reqPage = 1, candidateQuery = '';
-const pageState = { Requisitions: 1, Candidates: 1, Interviews: 1, Referrals: 1, Administration: 1, 'Audit log': 1 };
+const pageState = { Requisitions: 1, Candidates: 1, Interviews: 1, Referrals: 1, Administration: 1, 'Audit log': 1, Agencies: 1, 'Portal Dashboard': 1, 'Assigned Roles': 1, Submissions: 1, 'Agency Team': 1 };
+const isAgencyMember = () => Boolean(me?.agency || ['Agency Admin','Agency Recruiter'].includes(me?.role));
+const isAgencyUser = () => Boolean(isAgencyMember() || me?.role === 'Agency' || me?.user?.isAgency || me?.isAgency);
+const isAgencyAdmin = () => Boolean(isAgencyUser() && (me?.role === 'Agency Admin' || me?.agency?.role === 'Agency Admin'));
 const getNavList = () => {
-  if (me?.role === 'Agency') return ['Agency portal'];
+  if (new URLSearchParams(location.search).get('agency') === '1' || (me?.role === 'Agency' && !me?.agency)) return ['Agency portal'];
+  if (isAgencyMember()) {
+    return ['Portal Dashboard', 'Assigned Roles', 'Submissions', ...(isAgencyAdmin() ? ['Agency Team'] : [])];
+  }
   return [
     ...(allows('analytics') ? ['Overview'] : []),
     ...(allows('jobs') ? ['Requisitions'] : []),
     ...(allows('review') || allows('recruit') ? ['Candidates', 'Pipeline'] : []),
     ...(allows('review') || allows('recruit') || allows('interview') ? ['Interviews'] : []),
     ...(allows('refer') ? ['Referrals'] : []),
+    ...(allows('admin') || allows('recruit') ? ['Agencies'] : []),
     ...(allows('admin') ? ['Administration', 'Settings', 'Audit log', 'Pipeline settings'] : []),
-    ...(allows('admin') || allows('recruit') ? ['Integrations'] : [])
+    ...(allows('admin') && me?.role === 'System Admin' ? ['Integrations'] : [])
   ];
 };
 const parseNavFromHash = (nav) => {
@@ -61,7 +68,7 @@ const loadSavedPages = () => {
   } catch {}
 };
 let appearance={theme:document.documentElement.dataset.theme || 'mechlin',themes:[]};
-const iconPaths={Overview:'M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z',Requisitions:'M8 6V4h8v2 M3 7h18v13H3z M3 12h18 M10 11v3h4v-3',Candidates:'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M9 3a4 4 0 1 0 0 8a4 4 0 0 0 0-8 M17 4a4 4 0 0 1 0 8 M22 21v-2a4 4 0 0 0-3-4',Pipeline:'M4 4h4v16H4z M10 4h4v11h-4z M16 4h4v7h-4z',Interviews:'M4 5h16v16H4z M8 2v6 M16 2v6 M4 10h16 M8 14h3 M14 14h2 M8 17h3',Referrals:'M12 20V10 M7 15l5-5 5 5 M4 4h16v4H4z',Administration:'M12 3l8 4v6c0 4-4 7-8 9-4-2-8-5-8-9V7z M8 12l3 3 5-6','Audit log':'M6 3h12v18H6z M9 7h6 M9 11h6 M9 15h4','Pipeline settings':'M4 7h16 M4 17h16 M8 4v6 M16 14v6',Settings:'M12 8a4 4 0 1 0 0 8a4 4 0 0 0 0-8 M12 2v3 M12 19v3 M2 12h3 M19 12h3 M5 5l2 2 M17 17l2 2 M5 19l2-2 M17 7l2-2',Integrations:'M8 3v5 M16 3v5 M5 8h14v4a7 7 0 0 1-14 0z M12 19v3','Agency portal':'M4 21v-8a8 8 0 0 1 16 0v8 M9 21v-4a3 3 0 0 1 6 0v4 M2 21h20'};
+const iconPaths={Overview:'M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z',Requisitions:'M8 6V4h8v2 M3 7h18v13H3z M3 12h18 M10 11v3h4v-3',Candidates:'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M9 3a4 4 0 1 0 0 8a4 4 0 0 0 0-8 M17 4a4 4 0 0 1 0 8 M22 21v-2a4 4 0 0 0-3-4',Pipeline:'M4 4h4v16H4z M10 4h4v11h-4z M16 4h4v7h-4z',Interviews:'M4 5h16v16H4z M8 2v6 M16 2v6 M4 10h16 M8 14h3 M14 14h2 M8 17h3',Referrals:'M12 20V10 M7 15l5-5 5 5 M4 4h16v4H4z',Agencies:'M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2 M9 3a4 4 0 1 0 0 8a4 4 0 0 0 0-8 M23 21v-2a4 4 0 0 0-3-3.87 M16 3.13a4 4 0 0 1 0 7.75','Portal Dashboard':'M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z','Assigned Roles':'M8 6V4h8v2 M3 7h18v13H3z M3 12h18 M10 11v3h4v-3',Submissions:'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M16 13H8 M16 17H8 M10 9H8','Agency Team':'M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2 M9 3a4 4 0 1 0 0 8a4 4 0 0 0 0-8 M23 21v-2a4 4 0 0 0-3-3.87 M16 3.13a4 4 0 0 1 0 7.75',Administration:'M12 3l8 4v6c0 4-4 7-8 9-4-2-8-5-8-9V7z M8 12l3 3 5-6','Audit log':'M6 3h12v18H6z M9 7h6 M9 11h6 M9 15h4','Pipeline settings':'M4 7h16 M4 17h16 M8 4v6 M16 14v6',Settings:'M12 8a4 4 0 1 0 0 8a4 4 0 0 0 0-8 M12 2v3 M12 19v3 M2 12h3 M19 12h3 M5 5l2 2 M17 17l2 2 M5 19l2-2 M17 7l2-2',Integrations:'M8 3v5 M16 3v5 M5 8h14v4a7 7 0 0 1-14 0z M12 19v3','Agency portal':'M4 21v-8a8 8 0 0 1 16 0v8 M9 21v-4a3 3 0 0 1 6 0v4 M2 21h20'};
 const icon=name=>`<svg class="ui-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${iconPaths[name]||iconPaths.Overview}"/></svg>`;
 const initials=name=>escape(String(name).split(/\s+/).filter(Boolean).slice(0,2).map(n=>n[0]).join('').toUpperCase());
 const applyTheme=theme=>{document.documentElement.dataset.theme=theme;document.querySelector('meta[name="theme-color"]').content=theme==='midnight'?'#0b1322':'#111f35';};
@@ -355,6 +362,67 @@ const bindSalaryInput = (name) => {
     }
   });
 };
+const bindResumeUpload = () => {
+  const fileInput = $('#resume-file-input');
+  const statusEl = $('#resume-upload-status');
+  const idInput = $('#resume-id-input');
+  const form = $('#edit-form');
+  if (!fileInput || !form) return;
+
+  fileInput.addEventListener('change', async () => {
+    const file = fileInput.files?.[0];
+    if (!file) return;
+
+    statusEl.innerHTML = `<span style="color:var(--accent);">Uploading and scanning <strong>${escape(file.name)}</strong>...</span>`;
+
+    try {
+      const formData = new FormData();
+      formData.append('file', file, file.name);
+
+      const endpoint = isAgencyUser() ? '/api/agency/resume/upload' : '/api/resume/upload';
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'X-CSRF-Token': csrf || ''
+        },
+        body: formData
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Upload failed.');
+      }
+
+      if (idInput) idInput.value = data.resume_id || data.resume?.id || '';
+      if (form.elements.resume_text && data.text) {
+        form.elements.resume_text.value = data.text;
+      }
+      if (form.elements.name && !form.elements.name.value.trim() && data.name) {
+        form.elements.name.value = data.name;
+      }
+      if (form.elements.email && !form.elements.email.value.trim() && data.email) {
+        form.elements.email.value = data.email;
+        form.elements.email.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      if (form.elements.phone && !form.elements.phone.value.trim() && data.phone) {
+        form.elements.phone.value = data.phone;
+        form.elements.phone.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      if (form.elements.skills && !form.elements.skills.value.trim() && data.skills && data.skills.length) {
+        form.elements.skills.value = Array.isArray(data.skills) ? data.skills.join(', ') : data.skills;
+      }
+
+      const resObj = data.resume || data;
+      const warningsText = data.warnings && data.warnings.length ? ` (${data.warnings.join(', ')})` : '';
+      statusEl.innerHTML = `<span style="color:var(--success, #16a34a);">✓ <strong>${escape(resObj.filename || file.name)}</strong> (${escape((resObj.format || 'doc').toUpperCase())}, ${Math.round((resObj.size || file.size) / 1024)} KB) extracted successfully.${escape(warningsText)}</span>`;
+      notice(`Resume ${resObj.filename || file.name} parsed successfully. Review extracted text below.`, 'success');
+    } catch (err) {
+      statusEl.innerHTML = `<span class="error">Upload failed: ${escape(err.message)}</span>`;
+      fileInput.value = '';
+      notice(err.message, 'error');
+    }
+  });
+};
 const pad = n => String(n).padStart(2, '0');
 const getLocalDateString = (d = new Date()) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const getLocalTodayMin = () => `${getLocalDateString()}T00:00`;
@@ -430,7 +498,7 @@ async function openDemoModal(isSwitch=false){
       csrf=data.csrf;
       me=data.user;
       const meData=await api('me');
-      me=meData.user;
+      me={ ...meData.user, agency: meData.agency };
       permissions=meData.permissions;
       csrf=meData.csrf;
       candidateQuery='';
@@ -447,7 +515,7 @@ async function openDemoModal(isSwitch=false){
       csrf=data.csrf;
       me=data.user;
       const meData=await api('me');
-      me=meData.user;
+      me={ ...meData.user, agency: meData.agency };
       permissions=meData.permissions;
       csrf=meData.csrf;
       loadSavedPages();
@@ -534,7 +602,7 @@ window.addEventListener('resize', () => { if (current === 'Pipeline') syncPipeli
 
 async function render() {
   const version=++renderVersion;let html='';
-  const heading=(subtitle,action='')=>`<div class="heading"><div><p class="eyebrow">${current==='Overview'?`YOUR TEAM. YOUR NEXT CHAPTER.`:allows('admin')&&['Settings','Administration','Audit log','Pipeline settings'].includes(current)?'WORKSPACE MANAGEMENT':'TALENT ACQUISITION'}</p><h1>${current}</h1><p class="muted">${subtitle}</p></div>${action}</div>`;
+  const heading=(subtitle,action='')=>`<div class="heading"><div><p class="eyebrow">${isAgencyUser()?'EXTERNAL RECRUITER PORTAL':current==='Overview'?`YOUR TEAM. YOUR NEXT CHAPTER.`:allows('admin')&&['Settings','Administration','Audit log','Pipeline settings'].includes(current)?'WORKSPACE MANAGEMENT':'TALENT ACQUISITION'}</p><h1>${current}</h1><p class="muted">${subtitle}</p></div>${action}</div>`;
   try {
     const config=await api('appearance');if(version!==renderVersion||!me)return;appearance=config;applyTheme(config.theme);shell();
     if(current==='Overview') {
@@ -597,9 +665,9 @@ async function render() {
         const canSubmit=i.interviewer_id===me.id&&i.status!=='completed';
         const canProxy=allows('admin')&&i.interviewer_id!==me.id&&i.status!=='completed';
         const showLock=(canSubmit||canProxy)&&!ready;
-        return `<tr><td><strong>${escape(i.name)}</strong>${escape(i.title)}</td><td>${escape(i.interviewer)}</td><td>${escape(new Date(i.scheduled_at).toLocaleString())}</td><td>${badge(i.status)}</td><td><div class="actions">${canSubmit&&ready?button('Submit scorecard','scorecard',i.id):''}${canProxy&&ready?button('Proxy scorecard','scorecard-proxy',i.id,'class="secondary"'):''}${i.status!=='completed'&&(allows('recruit')||allows('admin')||i.interviewer_id===me.id)?button('Edit','edit-interview',i.id,'class="secondary"'):''}${button('View feedback','feedback',i.id,'class="secondary"')}${showLock?`<span class="muted feedback-locked">${FEEDBACK_LOCKED_MESSAGE}</span>`:''}</div></td></tr>`;
+        return `<tr><td><strong>${escape(i.name)}</strong>${escape(i.title)}</td><td>${escape(i.interviewer)}</td><td>${escape(new Date(i.scheduled_at).toLocaleString())}${i.meeting_url?`<br><a href="${escape(i.meeting_url)}" target="_blank" rel="noopener noreferrer" class="teams-link" style="display:inline-flex;align-items:center;gap:4px;font-size:0.8rem;margin-top:4px;color:var(--accent,#4f46e5);font-weight:600;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>Join Teams</a>`:''}</td><td>${badge(i.status)}</td><td><div class="actions">${canSubmit&&ready?button('Submit scorecard','scorecard',i.id):''}${canProxy&&ready?button('Proxy scorecard','scorecard-proxy',i.id,'class="secondary"'):''}${i.status!=='completed'&&(allows('recruit')||allows('admin')||i.interviewer_id===me.id)?button('Edit','edit-interview',i.id,'class="secondary"'):''}${i.status==='planned'&&(allows('recruit')||allows('admin')||i.interviewer_id===me.id)?button('Cancel','cancel-interview',i.id,'class="secondary"'):''}${button('View feedback','feedback',i.id,'class="secondary"')}${showLock?`<span class="muted feedback-locked">${FEEDBACK_LOCKED_MESSAGE}</span>`:''}</div></td></tr>`;
       });
-      html=heading('Structured interviews, independent feedback.',allows('recruit')?button('+ Plan interview','new-interview'):'')+`<div class="notice-inline">Interview plans are stored here. Calendar invitations and Teams/Meet links require a calendar adapter.</div><section class="panel">${table(['Candidate / role','Interviewer','Scheduled','Status','Feedback'],rows)}${pag}</section>`;
+      html=heading('Structured interviews, independent feedback.',allows('recruit')?button('+ Plan interview','new-interview'):'')+`<div class="notice-inline">Interview plans are stored here. Integrated with Microsoft Teams calendar when configured.</div><section class="panel">${table(['Candidate / role','Interviewer','Scheduled','Status','Feedback'],rows)}${pag}</section>`;
     }
     if(current==='Referrals') {
       const refs=await api('referrals');
@@ -638,7 +706,161 @@ async function render() {
       html=heading('Make Orbit feel like your team’s workspace.')+`<section class="panel appearance-panel"><div class="panel-head"><div><h2>Appearance</h2><p class="muted">Choose a look that helps your team do their best work.</p></div><span class="subtle-label">${icon('Administration')} Admin controlled</span></div><form id="appearance-form"><fieldset class="theme-fieldset"><legend>Workspace theme</legend><div class="theme-grid">${appearance.themes.map(t=>`<label class="theme-option"><input type="radio" name="theme" value="${t.id}" ${t.id===appearance.theme?'checked':''}><span class="theme-thumbnail theme-${t.id}"><span class="mini-sidebar"><i></i><i></i><i></i></span><span class="mini-workspace"><span class="mini-topline"></span><span class="mini-metrics"><i></i><i></i><i></i></span><span class="mini-panel"><i></i><i></i><i></i></span></span><span class="theme-check" aria-hidden="true">✓</span></span><span class="theme-name">${t.name}</span><span class="theme-description">${t.description}</span></label>`).join('')}</div></fieldset><div class="theme-scope">${icon('Candidates')}<div><strong>One look, for the whole team</strong><p>The saved theme applies to every user and the sign-in screen. Existing sessions pick it up on their next page change or refresh.</p></div></div><p id="appearance-status" role="status" aria-live="polite" class="muted">${escape(appearance.themes.find(t=>t.id===appearance.theme).name)} is your saved workspace theme.</p><div class="settings-actions"><button type="button" class="secondary" data-action="reset-theme">Reset preview</button><button type="submit" id="save-theme" disabled>Save workspace theme</button></div></form></section><section class="panel brand-panel"><div><p class="eyebrow">OUR WORKSPACE</p><h2>Orbit, by Mechlin</h2><p class="muted">A place for people, possibility and your next great hire.</p></div><div class="brand-lockup"><img src="/mechlin-logo.webp" alt="Mechlin Technologies" width="174" height="40"></div></section>`;
     }
     if(current==='Pipeline settings') {const stages=await api('pipeline');html=heading('Define the sequence your hiring teams follow.')+`<section class="panel"><p>${stages.map(badge).join(' → ')}</p>${button('Edit stages','edit-pipeline')}<p class="muted">Applied must come first. Hired and Rejected are terminal stages. A stage in use cannot be removed.</p></section>`;}
-    if(current==='Integrations') {const adapters=await api('integrations');html=heading('Connect external services as later phases are enabled.')+`<section class="panel">${table(['Capability','Availability','Delivery phase'],adapters.map(a=>`<tr><td><strong>${escape(a.name)}</strong></td><td>${badge(a.status)}</td><td>Phase ${a.phase}</td></tr>`))}</section><p class="muted">No messages, calendar events or candidate records are sent to external providers by these unconfigured interfaces.</p>`;}
+    if(current==='Integrations') {
+      if(me?.role !== 'System Admin') {
+        html=heading('Access Restricted')+`<div class="empty">System Admin access is required to view and manage integrations.</div>`;
+      } else {
+        const integrations = await api('admin/integrations');
+        const activeCount = integrations.filter(i => i.enabled && (i.status === 'connected' || i.status === 'configured')).length;
+        const externalCount = integrations.filter(i => i.isExternal).length;
+        const inHouseCount = integrations.filter(i => !i.isExternal).length;
+
+        const metrics = [
+          ['Supported Integrations', integrations.length, 'Overview', 'Total manageable system adapters'],
+          ['Active & Ready', activeCount, 'Integrations', 'Operational provider interfaces'],
+          ['External Cloud APIs', externalCount, 'Pipeline', 'Microsoft, Resend, AI & HRMS'],
+          ['In-House Engines', inHouseCount, 'Administration', 'Signatures, Fraud, Agency & Scanner']
+        ];
+
+        html = heading('Manage external API credentials, connection health, and enterprise adapters.') +
+          `<div class="metrics">${metrics.map(([label, count, i, note], n) => `<div class="metric metric-${n}"><div class="metric-top"><span>${label}</span><span class="metric-icon">${icon(i)}</span></div><strong>${count}</strong><small>${note}</small></div>`).join('')}</div>` +
+          `<section class="panel integrations-container">` +
+            `<div class="panel-head">` +
+              `<div><h2>System Integrations Registry</h2><p class="muted">Manage credentials securely with AES-256-GCM encryption, run non-destructive tests, and configure fallbacks.</p></div>` +
+              `<div class="actions">` +
+                `<button type="button" class="secondary" data-action="refresh-integrations">${icon('Administration')}<span>Refresh Status</span></button>` +
+              `</div>` +
+            `</div>` +
+            `<div class="integrations-grid">` +
+              integrations.map(item => {
+                let badgeCls = 'pending';
+                let statusLabel = 'Not configured';
+                if (item.status === 'connected') {
+                  badgeCls = 'active';
+                  statusLabel = 'Connected & Operational';
+                } else if (item.status === 'configured') {
+                  badgeCls = 'planned';
+                  statusLabel = 'Configured';
+                } else if (item.status === 'disabled') {
+                  badgeCls = 'draft';
+                  statusLabel = 'Deactivated';
+                } else if (item.status === 'failed') {
+                  badgeCls = 'rejected';
+                  statusLabel = 'Connection Failed';
+                }
+
+                const archBadge = item.isExternal
+                  ? `<span class="arch-badge arch-external">External Service</span>`
+                  : `<span class="arch-badge arch-inhouse">In-House Engine</span>`;
+
+                const testInfo = item.lastTestAt
+                  ? `<div class="integration-diagnostic-bar ${item.lastTestStatus === 'success' ? 'diag-success' : 'diag-error'}">` +
+                      `<span>${item.lastTestStatus === 'success' ? '✓' : '✗'} Last test: ${escape(new Date(item.lastTestAt).toLocaleString())}</span>` +
+                      (item.lastError ? `<div class="diag-error-text">${escape(item.lastError)}</div>` : '') +
+                    `</div>`
+                  : `<div class="integration-diagnostic-bar diag-none"><span>No recent test run.</span></div>`;
+
+                const sourceLabel = item.effectiveSource === 'database'
+                  ? 'Configured in Database (AES-256-GCM encrypted)'
+                  : (item.effectiveSource === 'environment' ? 'Active via Environment Variable fallback' : (item.isExternal ? 'Not configured' : 'Local system engine'));
+
+                return `<div class="integration-card" data-integration-id="${escape(item.id)}">` +
+                  `<div class="int-card-header">` +
+                    `<div class="int-category-row"><span class="int-category">${escape(item.category)}</span>${archBadge}</div>` +
+                    `<h3 class="int-name">${escape(item.name)}</h3>` +
+                    `<p class="int-desc">${escape(item.description)}</p>` +
+                  `</div>` +
+                  `<div class="int-status-block">` +
+                    `<div class="int-status-row">` +
+                      `<span class="badge ${badgeCls}">${statusLabel}</span>` +
+                      `<span class="int-source-tag">${escape(sourceLabel)}</span>` +
+                    `</div>` +
+                    testInfo +
+                  `</div>` +
+                  `<div class="int-capabilities">` +
+                    `<strong>Capabilities:</strong>` +
+                    `<ul>${item.capabilities.map(cap => `<li>${escape(cap)}</li>`).join('')}</ul>` +
+                  `</div>` +
+                  `<div class="int-fallback-box"><small><strong>Fallback:</strong> ${escape(item.fallbackPolicy)}</small></div>` +
+                  `<div class="int-card-actions">` +
+                    `<button type="button" class="button" data-action="configure-integration" data-id="${escape(item.id)}">Configure</button>` +
+                    `<button type="button" class="button secondary" data-action="test-integration" data-id="${escape(item.id)}" title="Run safe, non-destructive connection test">Test Connection</button>` +
+                    `<button type="button" class="button secondary" data-action="toggle-integration" data-id="${escape(item.id)}" data-enabled="${item.enabled ? '0' : '1'}">${item.enabled ? 'Deactivate' : 'Activate'}</button>` +
+                  `</div>` +
+                `</div>`;
+              }).join('') +
+            `</div>` +
+          `</section>`;
+      }
+    }
+    if(current==='Agencies') {
+      const agencies = await api('agencies');
+      const {paged,page,totalPages,total,start}=paginate(agencies,pageState.Agencies||1,10);
+      pageState.Agencies=page;
+      const pag=renderPagination('Agencies',page,totalPages,total,start,10);
+      html=heading('Manage external recruitment agencies and partner access.',allows('admin')?button('+ Register agency','new-agency'):'')+
+      `<div class="metrics">${[
+        ['Registered agencies', agencies.length, 'Agencies', 'External recruitment partners'],
+        ['Active agencies', agencies.filter(a=>a.status==='active').length, 'Agencies', 'Operational partner portals'],
+        ['Assigned requisitions', agencies.reduce((acc,a)=>acc+Number(a.assigned_requisitions_count||0),0), 'Requisitions', 'Total open job assignments'],
+        ['Agency submissions', agencies.reduce((acc,a)=>acc+Number(a.submissions_count||0),0), 'Candidates', 'Total candidates received']
+      ].map(([label,count,i,note],n)=>`<div class="metric metric-${n}"><div class="metric-top"><span>${label}</span><span class="metric-icon">${icon(i)}</span></div><strong>${count}</strong><small>${note}</small></div>`).join('')}</div>`+
+      `<section class="panel"><div class="panel-head"><div><h2>External recruitment agencies</h2><p class="muted">Authorized partners with isolated portal access.</p></div></div>`+
+      `${table(['Agency / Code','Primary contact','Recruiters','Assigned jobs','Submissions','Status','Actions'],paged.map(a=>`<tr><td><strong>${escape(a.name)}</strong><br><small class="mono">${escape(a.code)}</small></td><td>${escape(a.contact_name||'—')}<br><small>${escape(a.contact_email||'')}${a.contact_phone?` · ${escape(a.contact_phone)}`:''}</small></td><td><strong>${a.active_recruiters_count||0}</strong> <small class="muted">active</small></td><td><strong>${a.assigned_requisitions_count||0}</strong></td><td><strong>${a.submissions_count||0}</strong></td><td>${badge(a.status)}</td><td><div class="actions">${button('Manage','manage-agency',a.id,'class="secondary"')}${allows('admin')?button('Assign role','agency-assign-job',a.id,'class="secondary"'):''}</div></td></tr>`))}`+
+      `${pag}</section>`;
+    }
+    if(current==='Portal Dashboard') {
+      const dash = await api('agency/dashboard');
+      const assigned = dash.assignedRequisitions || [];
+      const recent = dash.recentSubmissions || [];
+      html=heading(`Welcome, ${escape(me.name.split(' ')[0])}. Review assigned roles and submit top talent.`,button('+ Submit candidate','agency-submit-candidate'))+
+      `<div class="agency-scope-banner"><div><span class="agency-scope-label">PARTNER AGENCY PORTAL</span><strong>${escape(dash.agency?.name || 'Partner Agency')}</strong> <span class="mono" style="opacity:0.85;">(${escape(dash.agency?.code || '')})</span></div><div><span class="badge badge-active">${escape((dash.agency?.status || 'active').toUpperCase())}</span></div></div>`+
+      `<div class="agency-stats-grid">`+
+        `<div class="agency-stat-card"><div class="agency-stat-label">Assigned open roles</div><div class="agency-stat-val">${dash.stats.assignedRequisitions||0}</div><small class="muted">Roles open for sourcing</small></div>`+
+        `<div class="agency-stat-card"><div class="agency-stat-label">Total submissions</div><div class="agency-stat-val">${dash.stats.totalSubmissions||0}</div><small class="muted">Candidates submitted</small></div>`+
+        `<div class="agency-stat-card"><div class="agency-stat-label">Under review</div><div class="agency-stat-val">${dash.stats.underReview||0}</div><small class="muted">Internal screening</small></div>`+
+        `<div class="agency-stat-card"><div class="agency-stat-label">Interviews scheduled</div><div class="agency-stat-val">${dash.stats.interviews||0}</div><small class="muted">Active interview loops</small></div>`+
+        `<div class="agency-stat-card"><div class="agency-stat-label">Selected / Hired</div><div class="agency-stat-val">${dash.stats.selected||0}</div><small class="muted">Successful placements</small></div>`+
+      `</div>`+
+      `<div class="split">`+
+        `<section class="panel"><div class="panel-head"><div><h2>Assigned requisitions</h2><p class="muted">Active roles open for your agency</p></div>${button('View all assigned','navigate','','class="text-button" data-view="Assigned Roles"')}</div>`+
+        `${table(['Position','Team','Deadline','Action'],assigned.slice(0,5).map(r=>`<tr><td><strong>${escape(r.title)}</strong><br><small>${escape((r.skills||[]).join(', '))}</small></td><td>${escape(r.team)}</td><td>${r.submission_deadline?escape(new Date(r.submission_deadline).toLocaleDateString()):'Open'}</td><td><div class="actions">${button('Submit','agency-submit-candidate',r.id,'class="primary"')}</div></td></tr>`))}`+
+        `</section>`+
+        `<section class="panel"><div class="panel-head"><div><h2>Recent submissions</h2><p class="muted">Live status & feedback from internal recruiters</p></div>${button('View all submissions','navigate','','class="text-button" data-view="Submissions"')}</div>`+
+        `${table(['Candidate / Ref','Requisition','Status','Feedback'],recent.slice(0,5).map(s=>`<tr><td><strong>${escape(s.candidate_name)}</strong><br><small class="mono">${escape(s.submission_ref)}</small></td><td>${escape(s.requisition_title)}</td><td>${badge(s.agency_status)}</td><td>${s.published_feedback?button('View feedback','view-agency-feedback',s.id,'class="text-button"'):'<span class="muted" style="font-size:0.8rem;">Under evaluation</span>'}</td></tr>`))}`+
+        `</section>`+
+      `</div>`;
+    }
+    if(current==='Assigned Roles') {
+      const roles = await api('agency/requisitions');
+      const {paged,page,totalPages,total,start}=paginate(roles,pageState['Assigned Roles']||1,10);
+      pageState['Assigned Roles']=page;
+      const pag=renderPagination('Assigned Roles',page,totalPages,total,start,10);
+      html=heading('Job requisitions assigned to your agency for candidate sourcing.',button('+ Submit candidate','agency-submit-candidate'))+
+      `<section class="panel"><div class="panel-head"><div><h2>Active assigned requisitions</h2><p class="muted">Ensure candidate representation authorization before submitting.</p></div></div>`+
+      `${table(['Position','Team / Location','Skills & requirements','Deadline','Sourcing instructions','Submit'],paged.map(r=>`<tr><td><strong>${escape(r.title)}</strong><br><small class="mono">${escape(r.team)}</small></td><td>${escape(r.team)}<br><small class="muted">Full-time</small></td><td><div class="skill-list">${(r.skills||[]).map(s=>`<span class="skill-chip">${escape(s)}</span>`).join('')}</div></td><td>${r.submission_deadline?`<span class="badge ${new Date(r.submission_deadline)<new Date()?'rejected':'pending'}">${escape(new Date(r.submission_deadline).toLocaleDateString())}</span>`:'<span class="badge active">Open</span>'}</td><td style="max-width:240px;"><small class="muted">${escape(r.sourcing_instructions||'Standard requirements apply.')}</small></td><td><div class="actions">${button('Submit candidate','agency-submit-candidate',r.id,'class="primary"')}</div></td></tr>`))}`+
+      `${pag}</section>`;
+    }
+    if(current==='Submissions') {
+      const subs = await api('agency/submissions');
+      const {paged,page,totalPages,total,start}=paginate(subs,pageState.Submissions||1,10);
+      pageState.Submissions=page;
+      const pag=renderPagination('Submissions',page,totalPages,total,start,10);
+      html=heading('Candidate submissions and live status tracking.',button('+ Submit candidate','agency-submit-candidate'))+
+      `<section class="panel"><div class="panel-head"><div><h2>Your agency submissions</h2><p class="muted">Live status synchronized directly with Orbit internal pipeline stages.</p></div></div>`+
+      `${table(['Reference','Candidate','Requisition','Submitted by','Date','Status','Feedback'],paged.map(s=>`<tr><td class="mono"><strong>${escape(s.submission_ref||s.reference)}</strong></td><td><strong>${escape(s.candidate_name)}</strong><br><small>${escape(s.candidate_email)}</small></td><td>${escape(s.requisition_title)}</td><td>${escape(s.recruiter_name||'Agency')}</td><td>${escape(new Date(s.created_at||s.submitted_at||Date.now()).toLocaleDateString())}</td><td>${badge(s.agency_status||s.status||'Submitted')}</td><td>${(s.published_feedback||s.feedback)?button('View feedback','view-agency-feedback',s.id,'class="secondary"'):'<span class="muted" style="font-size:0.85rem;">Under evaluation</span>'}</td></tr>`))}`+
+      `${pag}</section>`;
+    }
+    if(current==='Agency Team') {
+      const members = await api('agency/members');
+      const {paged,page,totalPages,total,start}=paginate(members,pageState['Agency Team']||1,10);
+      pageState['Agency Team']=page;
+      const pag=renderPagination('Agency Team',page,totalPages,total,start,10);
+      html=heading('Manage recruiters and partner access for your agency.',isAgencyAdmin()?button('+ Add recruiter','new-agency-recruiter'):'')+
+      `<section class="panel"><div class="panel-head"><div><h2>Agency recruiters & administrators</h2><p class="muted">Recruiters can view assigned jobs and submit candidates on behalf of your agency.</p></div></div>`+
+      `${table(['Member','Role','Status','Joined','Actions'],paged.map(m=>`<tr><td><strong>${escape(m.name)}</strong><br><small>${escape(m.email)}</small></td><td><span class="badge ${m.role==='Agency Admin'?'completed':'clean'}">${escape(m.role)}</span></td><td>${badge(m.status)}</td><td>${escape(new Date(m.created_at).toLocaleDateString())}</td><td><div class="actions">${isAgencyAdmin()&&m.user_id!==me.id?button(m.status==='active'?'Suspend':'Reactivate','toggle-agency-recruiter-status',m.user_id,`data-status="${m.status==='active'?'suspended':'active'}" class="secondary"`):'<span class="muted">—</span>'}</div></td></tr>`))}`+
+      `${pag}</section>`;
+    }
     if(version===renderVersion && me){
       const prevBoardLeft = (current === 'Pipeline' && $('#pipeline-board')) ? $('#pipeline-board').scrollLeft : 0;
       $('#main').innerHTML=html;
@@ -661,6 +883,145 @@ function candidateStatusCell(c){
   }).join('')}</div>`;
 }
 function candidateTable(cs){return table(['Candidate','Skills','Source','Status','Actions'],cs.map(c=>`<tr><td><div class="person-cell"><span class="avatar">${initials(c.name)}</span><div><strong title="${escape(c.name)}">${escape(c.name)}</strong><small title="${escape(c.email)}">${escape(c.email)}</small></div></div></td><td><div class="skill-list">${c.skills.map(s=>`<span class="skill-chip" title="${escape(s)}">${escape(s)}</span>`).join('')}</div></td><td><span title="${escape(c.source)}">${escape(c.source)}</span></td><td>${candidateStatusCell(c)}</td><td><div class="actions">${button('View profile','candidate-details',c.id,'class="secondary"')}${allows('recruit')?button('Edit','edit-candidate',c.id,'class="secondary"'):''}</div></td></tr>`),'candidates-table');}
+async function openIntegrationConfigModal(integrationId) {
+  try {
+    const details = await api(`admin/integrations/${integrationId}`);
+    const fields = details.fields || [];
+
+    const safeFields = fields.filter(f => !f.secret);
+    const secretFields = fields.filter(f => f.secret);
+
+    const renderField = f => {
+      if (f.type === 'select') {
+        const selectOpts = (f.options || []).map(o => {
+          if (Array.isArray(o)) return o;
+          if (o && typeof o === 'object') return [o.value, o.label || o.value];
+          return [o, o];
+        });
+        return select(f.label, `cfg_${f.key}`, selectOpts, f.value ?? f.default, f.required);
+      }
+      if (f.type === 'checkbox') {
+        return `<label class="full" style="display:flex;align-items:center;gap:10px;cursor:pointer;background:var(--surface-alt);padding:10px 14px;border:1px solid var(--line);border-radius:6px;font-weight:600;"><input type="checkbox" name="cfg_${f.key}" ${f.value ? 'checked' : ''} style="width:auto;min-height:auto;"> <span>${escape(f.label)}</span></label>`;
+      }
+      if (f.secret) {
+        return `<div class="full secret-field-group" style="background:var(--surface-alt);border:1px solid var(--line);padding:12px;border-radius:8px;margin-top:6px;">` +
+          `<label style="font-weight:600;">${formatLabel(f.label, f.required && !f.hasSavedSecret)}` +
+            `<input type="password" name="sec_${f.key}" placeholder="${f.hasSavedSecret ? '•••••••• (Secret saved — leave blank to keep)' : escape(f.placeholder || 'Enter secret')}" autocomplete="new-password">` +
+          `</label>` +
+          `<div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;font-size:0.75rem;color:var(--muted);">${f.hasSavedSecret ? '<span style="color:var(--positive);">✓ Encrypted secret saved at rest (AES-256-GCM)</span>' : '<span>Stored with authenticated AES-256-GCM encryption</span>'}${f.hasSavedSecret ? `<label style="display:flex;align-items:center;gap:5px;cursor:pointer;color:var(--negative);"><input type="checkbox" name="remove_sec_${f.key}" style="width:auto;min-height:auto;"> Remove saved secret</label>` : ''}</div>` +
+        `</div>`;
+      }
+      return field(f.label, `cfg_${f.key}`, f.type || 'text', f.value ?? '', f.required);
+    };
+
+    const formHtml = `
+      <div class="integration-modal-body">
+        <div class="int-modal-header" style="margin-bottom:16px;">
+          <p class="muted" style="margin:0 0 10px;">${escape(details.description)}</p>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <span class="badge ${details.status === 'connected' ? 'active' : (details.status === 'configured' ? 'planned' : 'pending')}">${escape(details.status)}</span>
+            <span class="subtle-label" style="font-size:0.78rem;">Source: ${escape(details.effectiveSource)}</span>
+          </div>
+        </div>
+        <div class="form-grid">
+          <div class="full" style="background:var(--tint);padding:12px 16px;border-radius:8px;display:flex;align-items:center;justify-content:space-between;">
+            <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-weight:600;margin:0;">
+              <input type="checkbox" name="__enabled" ${details.enabled ? 'checked' : ''} style="width:auto;min-height:auto;">
+              <span>Enable this integration</span>
+            </label>
+            <small class="muted">Active integrations override environment variables</small>
+          </div>
+          ${safeFields.length ? `<div class="full" style="margin-top:10px;"><h3 style="font-size:0.95rem;margin:0 0 8px;border-bottom:1px solid var(--line);padding-bottom:6px;">Configuration Parameters</h3></div>` : ''}
+          ${safeFields.map(renderField).join('')}
+          ${secretFields.length ? `<div class="full" style="margin-top:14px;"><h3 style="font-size:0.95rem;margin:0 0 8px;border-bottom:1px solid var(--line);padding-bottom:6px;">Credentials & Secrets (AES-256-GCM Encrypted)</h3></div>` : ''}
+          ${secretFields.map(renderField).join('')}
+        </div>
+      </div>
+    `;
+
+    modal(`Configure ${details.name}`, formHtml, async v => {
+      const config = {};
+      const secrets = {};
+      const removeSecrets = [];
+      const enabled = Boolean(v.__enabled);
+
+      for (const f of safeFields) {
+        if (f.type === 'checkbox') {
+          config[f.key] = Boolean(v[`cfg_${f.key}`]);
+        } else if (f.type === 'number') {
+          config[f.key] = v[`cfg_${f.key}`] !== undefined && v[`cfg_${f.key}`] !== '' ? Number(v[`cfg_${f.key}`]) : f.default;
+        } else {
+          config[f.key] = v[`cfg_${f.key}`] !== undefined ? String(v[`cfg_${f.key}`]).trim() : '';
+        }
+      }
+
+      for (const f of secretFields) {
+        if (v[`remove_sec_${f.key}`]) {
+          removeSecrets.push(f.key);
+        } else if (v[`sec_${f.key}`] && String(v[`sec_${f.key}`]).trim()) {
+          secrets[f.key] = String(v[`sec_${f.key}`]).trim();
+        }
+      }
+
+      await api(`admin/integrations/${integrationId}`, 'PUT', {
+        enabled,
+        config,
+        secrets,
+        removeSecrets
+      });
+
+      return `Saved and encrypted settings for "${details.name}".`;
+    });
+  } catch (err) {
+    notice(err.message, 'error');
+  }
+}
+
+async function runIntegrationConnectionTest(integrationId) {
+  notice(`Running live connection test for ${integrationId}...`, 'info');
+  try {
+    const res = await api(`admin/integrations/${integrationId}/test`, 'POST', {});
+    if (res.ok) {
+      modal('Connection Test Succeeded', `
+        <div class="notice-inline" style="border-left-color:var(--positive);background:var(--positive-bg);color:var(--positive);">
+          <strong>✓ Connection Verified</strong>
+          <p style="margin:6px 0 0;color:var(--ink);">${escape(res.message)}</p>
+        </div>
+        ${res.details ? `<div style="margin-top:14px;"><strong style="font-size:0.85rem;">Diagnostic Response:</strong><pre class="mono" style="background:var(--surface-alt);border:1px solid var(--line);padding:12px;border-radius:8px;font-size:0.82rem;overflow-x:auto;margin-top:6px;">${escape(JSON.stringify(res.details, null, 2))}</pre></div>` : ''}
+      `);
+      notice('Connection test passed.', 'success');
+    } else {
+      modal('Connection Test Failed', `
+        <div class="notice-inline danger-notice">
+          <strong>✗ Connection Failed</strong>
+          <p style="margin:6px 0 0;">${escape(res.message)}</p>
+        </div>
+        <p class="muted" style="font-size:0.85rem;margin-top:12px;">Please check the integration configuration, verify that your credentials or endpoints are valid, and confirm that required external network access is available.</p>
+      `);
+      notice('Connection test failed. Review diagnostic summary.', 'error');
+    }
+    await render();
+  } catch (err) {
+    modal('Test Execution Error', `
+      <div class="notice-inline danger-notice">
+        <strong>✗ Test Request Failed</strong>
+        <p style="margin:6px 0 0;">${escape(err.message)}</p>
+      </div>
+    `);
+    notice(err.message, 'error');
+  }
+}
+
+async function toggleIntegrationEnabled(integrationId, newEnabled) {
+  try {
+    await api(`admin/integrations/${integrationId}/toggle`, 'POST', { enabled: newEnabled });
+    notice(`Integration ${newEnabled ? 'activated' : 'deactivated'} successfully.`, 'success');
+    await render();
+  } catch (err) {
+    notice(err.message, 'error');
+  }
+}
+
 document.addEventListener('change',event=>{
   if(event.target.matches('#appearance-form input[name="theme"]')){
     const chosen=event.target.value;applyTheme(chosen);$('#save-theme').disabled=chosen===appearance.theme;
@@ -696,6 +1057,14 @@ document.addEventListener('click',async event=>{
       return;
     }
     if(a==='refresh'){await render();return;}
+    if(a==='refresh-integrations'){await render();return;}
+    if(a==='configure-integration'){await openIntegrationConfigModal(id);return;}
+    if(a==='test-integration'){await runIntegrationConnectionTest(id);return;}
+    if(a==='toggle-integration'){
+      const newEnabled = b.dataset.enabled === '1';
+      await toggleIntegrationEnabled(id, newEnabled);
+      return;
+    }
     if(a==='new-req'){
       modal('New requisition',`<div class="form-grid">${field('Position title','title')}${teamSelect('Team','team',me.team||'Dev',false)}${field('Headcount','headcount','number','1')}${field('Currency','currency','text','USD')}${field('Minimum annual salary','salary_min','number','0')}${field('Maximum annual salary','salary_max','number','0')}${field('Required skills, comma separated','skills','text','',false)}${area('Job description','description','',true)}</div>${button('Draft description from title & skills','draft-jd','','class="secondary"')}`,async v=>{
         const cErr=checkCurrency(v.currency);
@@ -831,7 +1200,8 @@ document.addEventListener('click',async event=>{
       deleteDialog('requisition',`${r.title} (${r.team})`,'This removes the requisition from active lists. Applications, interviews, approvals and referrals are dependencies and will block deletion rather than be removed silently.',`requisitions/${id}`,'Requisition deleted successfully.');
     }
     if(a==='new-candidate'){
-      modal('Add candidate',`<div class="form-grid">${field('Full name','name')}${field('Email','email','email')}${field('Phone','phone','tel','',false)}${teamSelect('Team','team',me.team||'Dev',false)}${field('Skills, comma separated','skills','text','',false)}${field('Source','source','text','Direct')}${area('Experience / Resume text','resume_text')}</div>${button('Extract email and phone','parse-resume','','class="secondary"')}`,async v=>{
+      const uploadWidget = `<div class="resume-upload-box full" style="border:1px dashed var(--line);border-radius:8px;padding:12px 14px;background:var(--surface-alt);margin-bottom:8px;"><label style="display:flex;flex-direction:column;gap:6px;cursor:pointer;"><span class="label-heading">Upload resume (PDF or DOCX) <span class="field-optional">Optional</span></span><input type="file" id="resume-file-input" accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" style="font-size:0.85rem;"><input type="hidden" name="resume_id" id="resume-id-input" value=""></label><div id="resume-upload-status" class="muted" style="margin-top:6px;font-size:0.83rem;" aria-live="polite">Upload a PDF or DOCX file to automatically extract text for review.</div></div>`;
+      modal('Add candidate',`<div class="form-grid">${uploadWidget}${field('Full name','name')}${field('Email','email','email')}${field('Phone','phone','tel','',false)}${teamSelect('Team','team',me.team||'Dev',false)}${field('Skills, comma separated','skills','text','',false)}${field('Source','source','text','Direct')}${area('Experience / Resume text','resume_text')}</div>${button('Extract email and phone','parse-resume','','class="secondary"')}`,async v=>{
         const eErr=checkEmail(v.email);
         if(eErr){
           const el=$('#email-error');if(el)el.textContent=eErr;
@@ -849,17 +1219,20 @@ document.addEventListener('click',async event=>{
           const inp=$('#edit-form [name="skills"]');if(inp){inp.setCustomValidity(sErr);inp.reportValidity();}
           throw new Error(sErr);
         }
-        await api('candidates','POST',{...v,skills:skills(v.skills),experience:v.resume_text});
+        await api('candidates','POST',{...v,skills:skills(v.skills),experience:v.resume_text,resume_id:v.resume_id||undefined});
         return 'Candidate created successfully.';
       });
       bindValidation('email',checkEmail);
       bindValidation('phone',checkPhone);
       bindValidation('skills',checkSkills);
+      bindResumeUpload();
     }
     if(a==='edit-candidate'){
       const c=(await api('candidates')).find(c=>c.id===id)||await api(`candidates/${id}`);
       if(!c)throw new Error('Candidate not found.');
-      modal('Edit candidate',`<div class="form-grid">${field('Full name','name','text',c.name)}${field('Email','email','email',c.email)}${field('Phone','phone','tel',c.phone||'',false)}${teamSelect('Team','team',c.team||me.team||'Dev',false)}${field('Skills, comma separated','skills','text',(c.skills||[]).join(', '),false)}${field('Source','source','text',c.source||'Direct')}${area('Experience / Resume text','resume_text',c.resume_text||c.experience||'')}</div>${button('Extract email and phone','parse-resume','','class="secondary"')}${button('Delete candidate','delete-candidate',c.id,'class="danger"')}`,async v=>{
+      const currentResumeNote = c.resume ? `Current attached resume: <strong>${escape(c.resume.filename)}</strong> (${escape(c.resume.file_format.toUpperCase())}, ${Math.round(c.resume.file_size/1024)} KB)` : 'Upload a PDF or DOCX file to automatically extract text for review.';
+      const uploadWidget = `<div class="resume-upload-box full" style="border:1px dashed var(--line);border-radius:8px;padding:12px 14px;background:var(--surface-alt);margin-bottom:8px;"><label style="display:flex;flex-direction:column;gap:6px;cursor:pointer;"><span class="label-heading">Upload / replace resume (PDF or DOCX) <span class="field-optional">Optional</span></span><input type="file" id="resume-file-input" accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" style="font-size:0.85rem;"><input type="hidden" name="resume_id" id="resume-id-input" value="${c.resume?.id || ''}"></label><div id="resume-upload-status" class="muted" style="margin-top:6px;font-size:0.83rem;" aria-live="polite">${currentResumeNote}</div></div>`;
+      modal('Edit candidate',`<div class="form-grid">${uploadWidget}${field('Full name','name','text',c.name)}${field('Email','email','email',c.email)}${field('Phone','phone','tel',c.phone||'',false)}${teamSelect('Team','team',c.team||me.team||'Dev',false)}${field('Skills, comma separated','skills','text',(c.skills||[]).join(', '),false)}${field('Source','source','text',c.source||'Direct')}${area('Experience / Resume text','resume_text',c.resume_text||c.experience||'')}</div>${button('Extract email and phone','parse-resume','','class="secondary"')}${button('Delete candidate','delete-candidate',c.id,'class="danger"')}`,async v=>{
         const eErr=checkEmail(v.email);
         if(eErr){
           const el=$('#email-error');if(el)el.textContent=eErr;
@@ -877,12 +1250,13 @@ document.addEventListener('click',async event=>{
           const inp=$('#edit-form [name="skills"]');if(inp){inp.setCustomValidity(sErr);inp.reportValidity();}
           throw new Error(sErr);
         }
-        await api(`candidates/${id}`,'PUT',{...v,skills:skills(v.skills),experience:v.resume_text});
+        await api(`candidates/${id}`,'PUT',{...v,skills:skills(v.skills),experience:v.resume_text,resume_id:v.resume_id||undefined});
         return 'Candidate updated successfully.';
       });
       bindValidation('email',checkEmail);
       bindValidation('phone',checkPhone);
       bindValidation('skills',checkSkills);
+      bindResumeUpload();
     }
     if(a==='delete-candidate'){
       const c=(await api('candidates')).find(item=>item.id===id)||await api(`candidates/${id}`);
@@ -897,11 +1271,337 @@ document.addEventListener('click',async event=>{
       const hasExtracted=Boolean(r.email||r.phone);
       notice(hasExtracted?'Email and phone number extracted successfully.':(r.message||'No email or phone number found in resume text.'),hasExtracted?'success':'error');
     }
-    if(a==='candidate-details'){const c=(await api('candidates')).find(c=>c.id===id)||await api(`candidates/${id}`);const appsHtml=(c.applications&&c.applications.length)?`<h3>Applications & Status</h3><div class="candidate-status-list" style="margin-bottom:14px;">${c.applications.map(app=>{const title=escape(app.title||'General Application');return `<div class="candidate-status-pair"><span class="candidate-status-role" title="${title}">${title}</span> <span class="status-sep" aria-hidden="true">—</span> ${badge(app.stage||'Applied')}</div>`;}).join('')}</div>`:'';modal(c.name,`<p>${escape(c.email)}${c.phone?` · ${escape(c.phone)}`:''}</p><p>${escape((c.skills||[]).join(', '))}</p>${appsHtml}<h3>Experience / Resume</h3><p class="score-note">${escape(c.resume_text||c.experience||'No resume text provided.')}</p>${allows('recruit')?`<div class="actions" style="margin-top:16px">${button('Edit','edit-candidate',c.id)}</div>`:''}`);}
-    if(a==='new-application'){const [cs,rs]=await Promise.all([api('candidates'),api('requisitions')]);const openReqs=rs.filter(r=>r.status==='open');if(!cs.length||!openReqs.length)throw new Error('Add a candidate and approve a requisition first.');modal('Add application',searchableSelect('Candidate','candidate_id',cs.map(c=>[c.id,`${c.name} — ${c.email}`]),'',true,'Search by name or email')+searchableSelect('Open requisition','requisition_id',openReqs.map(r=>[r.id,`${r.title} — ${r.id} — ${r.team}`]),'',true,'Search by title, ID or team'),v=>api('applications','POST',v));bindSearchableSelect('candidate_id');bindSearchableSelect('requisition_id');}
-    if(a==='move'||a==='reject-app'){const stage=a==='move'?b.dataset.stage:'Rejected';modal('Change application stage',`<p>Move this application to <strong>${escape(stage)}</strong>?</p>`,()=>api(`applications/${id}/stage`,'POST',{stage}));}
-    if(a==='match'){const r=await api(`applications/${id}/match`);modal('Skill match explanation',`<p class="eyebrow">${escape(r.method)}</p><h1>${r.score===null?'Unscored':r.score+'%'}</h1><p>${escape(r.explanation)}</p><h3>Matched</h3><p>${escape(r.matched.join(', ')||'None')}</p><h3>Not found in skills</h3><p>${escape(r.missing.join(', ')||'None')}</p><p class="muted">This does not assess ability, potential or suitability. Never use this score as an automatic rejection rule.</p>`);}
-    if(a==='new-interview'){const [apps,users]=await Promise.all([api('applications'),api('interviewers')]);const active=apps.filter(a=>!['Hired','Rejected'].includes(a.stage));if(!active.length||!users.length)throw new Error('An active application and interviewer are required.');const todayMin=getLocalTodayMin();modal('Plan interview',select('Application','application_id',active.map(a=>[a.id,`${a.name} · ${a.title}`]))+select('Interviewer','interviewer_id',users.map(u=>[u.id,u.name]))+field('Date and time (your timezone)','scheduled_at','datetime-local','',true,`min="${todayMin}"`)+field('Competencies, comma separated','competencies','text','Role knowledge, Problem solving')+'<p class="status-note">This stores an interview plan. It does not send a calendar invitation.</p>',async v=>{const scheduledDate=new Date(v.scheduled_at);if(!Number.isFinite(scheduledDate.getTime())||scheduledDate.getTime()<Date.now()){throw new Error('Enter a future interview date.');}await api('interviews','POST',{...v,scheduled_at:scheduledDate.toISOString(),competencies:skills(v.competencies)});return 'Interview scheduled successfully.';});const dateInp=$('#edit-form [name="scheduled_at"]');if(dateInp)dateInp.min=todayMin;}
+    if(a==='candidate-details'){
+      const [c, commsData, fraudData, sigData] = await Promise.all([
+        (async () => (await api('candidates')).find(c=>c.id===id)||await api(`candidates/${id}`))(),
+        api(`candidates/${id}/communications`).catch(() => ({ consent: { opted_out: false }, communications: [] })),
+        api(`candidates/${id}/fraud-review`).catch(() => null),
+        api(`candidates/${id}/signatures`).catch(() => [])
+      ]);
+      const appsHtml=(c.applications&&c.applications.length)?`<h3>Applications & Status</h3><div class="candidate-status-list" style="margin-bottom:14px;">${c.applications.map(app=>{const title=escape(app.title||'General Application');return `<div class="candidate-status-pair"><span class="candidate-status-role" title="${title}">${title}</span> <span class="status-sep" aria-hidden="true">—</span> ${badge(app.stage||'Applied')}</div>`;}).join('')}</div>`:'';
+      const resumeHtml=c.resume?`<div class="resume-info" style="margin:10px 0;padding:10px 12px;background:var(--surface-alt);border:1px solid var(--line);border-radius:8px;font-size:0.85rem;"><span class="muted">Attached resume:</span> <strong>${escape(c.resume.filename)}</strong> <span class="badge clean" style="margin-left:6px;font-size:0.75rem;">${escape(c.resume.file_format.toUpperCase())}</span> <span class="muted">(${Math.round(c.resume.file_size/1024)} KB)</span></div>`:'';
+      const consent = commsData.consent || { opted_out: false };
+      const commsList = commsData.communications || [];
+      const consentBadge = consent.opted_out
+        ? `<span class="badge rejected" style="margin-left:8px;font-size:0.75rem;">Opted out of email</span>`
+        : `<span class="badge active" style="margin-left:8px;font-size:0.75rem;">Subscribed to email</span>`;
+      const commsHtml = commsList.length
+        ? `<div class="comms-history" style="margin-top:14px;"><h3>Recent Communications</h3><div class="table-wrap"><table class="comms-table"><thead><tr><th scope="col">Subject</th><th scope="col">Status</th><th scope="col">Date</th></tr></thead><tbody>${commsList.slice(0, 5).map(m=>`<tr><td><strong>${escape(m.subject)}</strong></td><td>${badge(m.status)}</td><td><small class="muted">${new Date(m.created_at).toLocaleDateString()}</small></td></tr>`).join('')}</tbody></table></div></div>`
+        : '';
+
+      let signaturesHtml = '';
+      const sigList = Array.isArray(sigData) ? sigData : [];
+      const hasCompleted = sigList.some(s => s.status === 'completed');
+      const hasActivePending = sigList.some(s => s.status === 'pending' || s.status === 'viewed');
+
+      let agreementCardsHtml = '';
+      if (sigList.length > 0) {
+        agreementCardsHtml = sigList.map(s => {
+          const isDone = s.status === 'completed';
+          const isPending = s.status === 'pending' || s.status === 'viewed';
+          const isCancelled = s.status === 'cancelled';
+          const isDeclined = s.status === 'declined';
+
+          let statusBadge = '';
+          let metaText = '';
+
+          if (isDone) {
+            statusBadge = `<span class="badge completed" style="font-size:0.72rem;padding:2px 7px;">✓ Signed & Executed</span>`;
+            const signedAtStr = (s.signers && s.signers[0]?.signed_at)
+              ? new Date(s.signers[0].signed_at).toLocaleDateString()
+              : new Date(s.updated_at || s.created_at).toLocaleDateString();
+            metaText = `Executed on ${signedAtStr} · Cryptographically verified SHA-256`;
+          } else if (isPending) {
+            let validityNote = '';
+            if (s.expires_at) {
+              const expDate = new Date(s.expires_at);
+              const diffMs = expDate.getTime() - Date.now();
+              const diffDays = Math.ceil(diffMs / 86400000);
+              const daysText = diffDays > 0 ? `${diffDays}d remaining` : 'Expired';
+              validityNote = ` · Valid until ${expDate.toLocaleDateString()} (${daysText})`;
+            }
+            if (s.status === 'viewed') {
+              statusBadge = `<span class="badge viewed" style="font-size:0.72rem;padding:2px 7px;">👁️ Viewed by Signer</span>`;
+              metaText = `Created ${new Date(s.created_at).toLocaleDateString()}${validityNote} · Awaiting execution`;
+            } else {
+              statusBadge = `<span class="badge pending" style="font-size:0.72rem;padding:2px 7px;">⏳ Awaiting Signature</span>`;
+              metaText = `Created ${new Date(s.created_at).toLocaleDateString()}${validityNote}`;
+            }
+          } else if (isCancelled) {
+            statusBadge = `<span class="badge rejected" style="font-size:0.72rem;padding:2px 7px;">Cancelled</span>`;
+            metaText = `Cancelled on ${new Date(s.updated_at || s.created_at).toLocaleDateString()}`;
+          } else if (isDeclined) {
+            statusBadge = `<span class="badge rejected" style="font-size:0.72rem;padding:2px 7px;">Declined</span>`;
+            metaText = `Declined by candidate`;
+          } else {
+            statusBadge = badge(s.status);
+            metaText = `Created ${new Date(s.created_at).toLocaleDateString()}`;
+          }
+
+          // Document action button:
+          const docAction = isDone
+            ? `<a href="/api/signatures/${s.id}/document?version=signed" target="_blank" class="button" style="font-size:0.78rem;padding:5px 12px;">Download Signed PDF</a>`
+            : `<a href="/api/signatures/${s.id}/document?version=original" target="_blank" class="button secondary" style="font-size:0.78rem;padding:5px 12px;">View Document</a>`;
+
+          // Resend / Send email invitation button:
+          const sendEmailBtn = (isPending && allows('recruit'))
+            ? `<button type="button" class="button secondary" data-action="resend-sig-email" data-id="${s.id}" data-candidate-id="${c.id}" style="font-size:0.78rem;padding:5px 11px;" title="Send or resend email invitation with signing link">✉️ Send Email</button>`
+            : '';
+
+          // Copy sign link ONLY if pending/viewed - NEVER when completed, cancelled, or declined
+          const firstSigner = (s.signers && s.signers[0]) || null;
+          const copyLinkBtn = (isPending)
+            ? `<button type="button" class="button secondary" data-action="copy-sig-link" data-id="${s.id}" data-token="${escape(firstSigner?.token || '')}" style="font-size:0.78rem;padding:5px 11px;" title="Copy secure electronic signing link">📋 Copy Link</button>`
+            : '';
+
+          // Cancel action ONLY if pending/viewed
+          const cancelBtn = (isPending && allows('recruit'))
+            ? `<button type="button" class="secondary text-button" data-action="cancel-signature-request" data-id="${s.id}" data-candidate-id="${c.id}" style="font-size:0.78rem;color:var(--negative);padding:0 6px;">Cancel</button>`
+            : '';
+
+          const itemClass = isDone ? 'completed' : (isPending ? 'pending' : (isCancelled ? 'cancelled' : 'declined'));
+
+          return `
+            <div class="sig-agreement-item ${itemClass}">
+              <div class="sig-item-info">
+                <div class="sig-item-title-row">
+                  <span class="sig-item-title">${escape(s.title)}</span>
+                  ${statusBadge}
+                </div>
+                <div class="sig-item-meta">${metaText}</div>
+              </div>
+              <div class="sig-item-actions">
+                ${docAction}
+                ${sendEmailBtn}
+                ${copyLinkBtn}
+                ${cancelBtn}
+              </div>
+            </div>
+          `;
+        }).join('');
+      } else {
+        agreementCardsHtml = `<div class="sig-empty-state">No e-signature agreements created for this candidate yet.</div>`;
+      }
+
+      // Action footer guidance
+      let footerActionHtml = '';
+      if (allows('recruit')) {
+        if (hasCompleted) {
+          footerActionHtml = `
+            <div class="sig-action-footer">
+              <span class="sig-status-notice" style="color:var(--positive);font-weight:550;">✓ Offer agreement completed and legally executed</span>
+              <button type="button" class="secondary text-button" data-action="new-signature-request" data-id="${c.id}" style="font-size:0.78rem;color:var(--muted);">+ Send Additional Document</button>
+            </div>
+          `;
+        } else if (hasActivePending) {
+          footerActionHtml = `
+            <div class="sig-action-footer">
+              <span class="sig-status-notice" style="color:var(--warning);font-weight:550;">⏳ Offer letter is currently awaiting candidate signature</span>
+              <span class="muted" style="font-size:0.75rem;">To send a revised offer, cancel the pending request above first.</span>
+            </div>
+          `;
+        } else {
+          footerActionHtml = `
+            <div class="sig-action-footer" style="justify-content:flex-start;">
+              <button type="button" class="button secondary" data-action="new-signature-request" data-id="${c.id}" style="font-size:0.82rem;">+ Create Offer / Signature Request</button>
+            </div>
+          `;
+        }
+      }
+
+      const totalBadge = hasCompleted
+        ? `<span class="badge completed" style="font-size:0.74rem;">✓ Executed</span>`
+        : (hasActivePending
+          ? `<span class="badge pending" style="font-size:0.74rem;">⏳ Pending Signature</span>`
+          : (sigList.length ? `<span class="badge rejected" style="font-size:0.74rem;">Inactive</span>` : `<span class="badge draft" style="font-size:0.74rem;">0 Agreements</span>`));
+
+      signaturesHtml = `
+        <div class="signature-agreements-card">
+          <div class="sig-card-header">
+            <h3>E-Signature & Offer Agreements</h3>
+            ${totalBadge}
+          </div>
+          <div class="sig-agreements-list">
+            ${agreementCardsHtml}
+          </div>
+          ${footerActionHtml}
+        </div>
+      `;
+
+      let fraudHtml = '';
+      if (fraudData) {
+        const riskBadge = fraudData.risk_level === 'high'
+          ? `<span class="badge rejected">High Risk</span>`
+          : fraudData.risk_level === 'medium'
+            ? `<span class="badge" style="background:var(--amber-bg,#fef3c7);color:var(--amber-text,#92400e);">Medium Risk</span>`
+            : `<span class="badge active">Low Risk</span>`;
+        const statusBadge = fraudData.status === 'resolved' || fraudData.status === 'cleared'
+          ? `<span class="badge active">${escape(fraudData.status.toUpperCase())}</span>`
+          : `<span class="badge" style="background:var(--amber-bg,#fef3c7);color:var(--amber-text,#92400e);">${escape(fraudData.status.toUpperCase())}</span>`;
+        const flags = fraudData.flags || [];
+        const flagsList = flags.length
+          ? `<div class="fraud-flags-list" style="margin-top:8px;">${flags.map(f=>`
+              <div class="fraud-flag-item" style="border:1px solid var(--line);border-radius:6px;padding:8px 10px;margin-bottom:6px;background:var(--surface);">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                  <strong>${escape(f.title)}</strong>
+                  <span class="badge ${f.severity==='high'?'rejected':'pending'}" style="font-size:0.75rem;">${escape(f.severity.toUpperCase())}</span>
+                </div>
+                <p style="font-size:0.85rem;margin:4px 0 2px;">${escape(f.description)}</p>
+                <p class="muted" style="font-size:0.8rem;margin:2px 0;"><strong>Evidence:</strong> ${escape(f.evidence)}</p>
+                <p class="muted" style="font-size:0.8rem;margin:2px 0;"><em>Recommendation:</em> ${escape(f.recommendation)}</p>
+              </div>
+            `).join('')}</div>`
+          : `<p class="muted" style="font-size:0.85rem;margin-top:6px;">No potential inconsistencies or duplicate signals detected.</p>`;
+
+        const reviewerNote = fraudData.resolution_notes
+          ? `<p class="score-note" style="margin-top:6px;font-size:0.85rem;"><strong>Reviewer notes (${escape(fraudData.reviewer?.name || 'Reviewer')}):</strong> ${escape(fraudData.resolution_notes)}</p>`
+          : '';
+
+        const resolveAction = (allows('recruit') || allows('admin'))
+          ? button(fraudData.status === 'pending' ? 'Review & resolve flags' : 'Update review decision', 'resolve-fraud', c.id, 'class="secondary" style="margin-top:8px;font-size:0.82rem;"')
+          : '';
+
+        fraudHtml = `
+          <div class="fraud-review-card" style="margin:14px 0;padding:12px 14px;background:var(--surface-alt);border:1px solid var(--line);border-radius:8px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+              <h3 style="margin:0;font-size:0.95rem;">Fraud & Inconsistency Review</h3>
+              <div style="display:inline-flex;gap:6px;">${riskBadge} ${statusBadge}</div>
+            </div>
+            ${flagsList}
+            ${reviewerNote}
+            ${resolveAction}
+            <p class="muted" style="font-size:0.78rem;margin-top:8px;margin-bottom:0;">Safeguard: Signals are review indicators for human verification, not proof of fraud. Never disqualify candidates automatically based solely on risk flags.</p>
+          </div>
+        `;
+      }
+
+      const showFooterOfferBtn = allows('recruit') && !hasCompleted && !hasActivePending;
+      const offerFooterBtn = showFooterOfferBtn ? button('Offer & E-Sign','new-signature-request',c.id,'class="secondary" style="margin-right:8px;"') : '';
+      const emailAction = allows('recruit') ? `${offerFooterBtn}${button('Send email','send-candidate-email',c.id,'class="primary" style="margin-right:8px;"')}${button('Edit','edit-candidate',c.id,'class="secondary"')}` : '';
+      modal(c.name,`<p>${escape(c.email)}${c.phone?` · ${escape(c.phone)}`:''}${consentBadge}</p><p>${escape((c.skills||[]).join(', '))}</p>${appsHtml}${resumeHtml}${signaturesHtml}<h3>Experience / Resume</h3><p class="score-note">${escape(c.resume_text||c.experience||'No resume text provided.')}</p>${fraudHtml}${commsHtml}${emailAction?`<div class="actions" style="margin-top:16px">${emailAction}</div>`:''}`);
+    }
+    if(a==='send-candidate-email'){
+      const [templateData, commsData] = await Promise.all([
+        api(`candidates/${id}/templates`),
+        api(`candidates/${id}/communications`).catch(() => ({ consent: { opted_out: false } }))
+      ]);
+      const c = templateData.candidate;
+      const isOptedOut = Boolean(commsData.consent?.opted_out);
+      const apps = templateData.applications || [];
+      const appOptions = apps.map(app => [app.requisition_id, `${app.title} (${app.stage})`]);
+      if (!appOptions.length) appOptions.push(['', 'General Inquiry (No active application)']);
+      const tplOptions = (templateData.templates || []).map(t => [t.id, `${t.name}${t.isEssential ? ' (Operational)' : ''}`]);
+
+      const optOutWarning = isOptedOut
+        ? `<div class="notice-inline error" style="margin-bottom:12px;"><strong>Candidate is opted out:</strong> Non-essential recruitment emails will be rejected. Only operational interview and offer templates are permitted.</div>`
+        : '';
+
+      const formHtml = `
+        ${optOutWarning}
+        <div class="form-grid">
+          <p class="full"><strong>Recipient:</strong> ${escape(c.name)} &lt;${escape(c.email)}&gt;</p>
+          ${select('Email template', 'template_id', tplOptions, 'application_acknowledgement')}
+          ${select('Associated job / application', 'requisition_id', appOptions, appOptions[0]?.[0] || '')}
+          ${field('Custom Subject (Leave blank for default)', 'subject', 'text', '', false)}
+          ${area('Additional notes or details (Optional)', 'notes', '', false)}
+        </div>
+      `;
+
+      modal(`Send email to ${c.name}`, formHtml, async v => {
+        const payload = {
+          candidate_id: id,
+          template_id: v.template_id,
+          requisition_id: v.requisition_id || undefined,
+          subject: v.subject?.trim() || undefined,
+          notes: v.notes?.trim() || undefined,
+          idempotency_key: `send_${id}_${v.template_id}_${Date.now()}`
+        };
+        const res = await api(`candidates/${id}/communications`, 'POST', payload);
+        return `Email sent to ${c.email} (Status: ${res.status}).`;
+      });
+    }
+    if(a==='new-application'){
+      const [cs,rs]=await Promise.all([api('candidates'),api('requisitions')]);
+      const openReqs=rs.filter(r=>r.status==='open');
+      if(!cs.length||!openReqs.length)throw new Error('Add a candidate and approve a requisition first.');
+      modal('Add application',searchableSelect('Candidate','candidate_id',cs.map(c=>[c.id,`${c.name} — ${c.email}`]),'',true,'Search by name or email')+searchableSelect('Open requisition','requisition_id',openReqs.map(r=>[r.id,`${r.title} — ${r.id} — ${r.team}`]),'',true,'Search by title, ID or team'),async v=>{
+        await api('applications','POST',v);
+        return 'Application created successfully.';
+      });
+      bindSearchableSelect('candidate_id');
+      bindSearchableSelect('requisition_id');
+    }
+    if(a==='move'||a==='reject-app'){const stage=a==='move'?b.dataset.stage:'Rejected';modal('Change application stage',`<p>Move this application to <strong>${escape(stage)}</strong>?</p>`,async ()=>{await api(`applications/${id}/stage`,'POST',{stage});return stage==='Rejected'?'Application rejected.':`Application moved to ${stage} successfully.`;});}
+    if(a==='match'){
+      const r=await api(`applications/${id}/match`);
+      const matchedChips = (r.matched && r.matched.length)
+        ? r.matched.map(s => `<span class="skill-chip" style="background:var(--surface);border:1px solid var(--accent);">${escape(s)}</span>`).join(' ')
+        : '<span class="muted">None</span>';
+      const missingChips = (r.missing && r.missing.length)
+        ? r.missing.map(s => `<span class="skill-chip" style="background:var(--surface-alt);border:1px dashed var(--line);">${escape(s)}</span>`).join(' ')
+        : '<span class="muted">None</span>';
+      const expBlock = r.breakdown?.experience_assessment
+        ? `<div style="margin:8px 0;"><h4 style="margin:0 0 4px;font-size:0.85rem;">Experience Assessment</h4><p style="font-size:0.85rem;margin:0;">${escape(r.breakdown.experience_assessment)}</p></div>`
+        : '';
+      const evidenceBlock = (r.evidence && r.evidence.length)
+        ? `<div style="margin:8px 0;"><h4 style="margin:0 0 4px;font-size:0.85rem;">Attributed Evidence</h4><ul style="font-size:0.82rem;margin:0;padding-left:18px;">${r.evidence.slice(0, 4).map(e=>`<li>${escape(typeof e==='string'?e:(e.snippet||e.requirement))}</li>`).join('')}</ul></div>`
+        : '';
+      const reductionsBlock = (r.reasons_for_reductions && r.reasons_for_reductions.length)
+        ? `<div style="margin:8px 0;"><h4 style="margin:0 0 4px;font-size:0.85rem;">Score Deductions & Notes</h4><ul style="font-size:0.82rem;margin:0;padding-left:18px;">${r.reasons_for_reductions.map(red=>`<li>${escape(red)}</li>`).join('')}</ul></div>`
+        : '';
+      const recalcAction = allows('recruit')
+        ? `<div style="margin-top:10px;">${button('Recalculate match','recalc-match',id,'class="secondary" style="font-size:0.82rem;"')}</div>`
+        : '';
+      modal('Skill match explanation',`
+        <p class="eyebrow">${escape(r.method)}</p>
+        <div style="display:flex;align-items:baseline;gap:10px;margin:6px 0 10px;">
+          <h1 style="margin:0;font-size:2.2rem;">${r.score===null?'Unscored':r.score+'%'}</h1>
+          <span class="muted">Match score</span>
+        </div>
+        <p>${escape(r.explanation)}</p>
+        <h3 style="margin-top:10px;font-size:0.95rem;">Matched</h3>
+        <p>${matchedChips}</p>
+        <h3 style="margin-top:10px;font-size:0.95rem;">Not found in skills</h3>
+        <p>${missingChips}</p>
+        ${expBlock}
+        ${evidenceBlock}
+        ${reductionsBlock}
+        ${recalcAction}
+        <p class="muted" style="margin-top:12px;font-size:0.78rem;">This does not assess ability, potential or suitability. Never use this score as an automatic rejection rule.</p>
+      `);
+    }
+    if(a==='recalc-match'){
+      const r = await api(`applications/${id}/match`, 'POST');
+      notice(`Match recomputed: ${r.score === null ? 'Unscored' : r.score + '%'} (${r.method}).`, 'success');
+      const bFake = document.createElement('button');
+      bFake.dataset.action = 'match';
+      bFake.dataset.id = id;
+      bFake.click();
+    }
+    if(a==='resolve-fraud'){
+      const fraudData = await api(`candidates/${id}/fraud-review`);
+      const statusOptions = [
+        ['resolved', 'Resolved (Verified with candidate)'],
+        ['cleared', 'Cleared (False alarm / Disregarded)'],
+        ['reviewed', 'Reviewed (Noted for interview exploration)']
+      ];
+      modal('Review consistency signals', `<div class="form-grid">
+        <p class="full muted">Document your human assessment and verification decision for audit compliance.</p>
+        ${select('Review decision', 'status', statusOptions, fraudData.status === 'pending' ? 'resolved' : fraudData.status)}
+        ${area('Reviewer notes & justification', 'resolution_notes', fraudData.resolution_notes || '', true)}
+      </div>`, async v => {
+        if (!v.resolution_notes || !v.resolution_notes.trim()) {
+          throw new Error('Resolution notes are required.');
+        }
+        await api(`candidates/${id}/fraud-review`, 'POST', {
+          action: 'resolve',
+          status: v.status,
+          resolution_notes: v.resolution_notes.trim()
+        });
+        return 'Review decision recorded successfully.';
+      });
+    }
+    if(a==='new-interview'){const [apps,users]=await Promise.all([api('applications'),api('interviewers')]);const active=apps.filter(a=>!['Hired','Rejected'].includes(a.stage));if(!active.length||!users.length)throw new Error('An active application and interviewer are required.');const todayMin=getLocalTodayMin();modal('Plan interview',select('Application','application_id',active.map(a=>[a.id,`${a.name} · ${a.title}`]))+select('Interviewer','interviewer_id',users.map(u=>[u.id,u.name]))+field('Date and time (your timezone)','scheduled_at','datetime-local','',true,`min="${todayMin}"`)+select('Duration','duration_minutes',[['30','30 minutes'],['45','45 minutes (Standard)'],['60','60 minutes'],['90','90 minutes']],'45',false)+field('Competencies, comma separated','competencies','text','Role knowledge, Problem solving')+area('Agenda / Notes (Optional)','notes','',false)+'<p class="status-note">This schedules the interview and creates a Microsoft Teams meeting and candidate invite when configured.</p>',async v=>{const scheduledDate=new Date(v.scheduled_at);if(!Number.isFinite(scheduledDate.getTime())||scheduledDate.getTime()<Date.now()){throw new Error('Enter a future interview date.');}await api('interviews','POST',{...v,scheduled_at:scheduledDate.toISOString(),competencies:skills(v.competencies),duration_minutes:Number(v.duration_minutes)||45,notes:v.notes?.trim()||undefined});return 'Interview scheduled successfully.';});const dateInp=$('#edit-form [name="scheduled_at"]');if(dateInp)dateInp.min=todayMin;}
     if(a==='edit-interview'||a==='reschedule-interview'){
       const interviews=await api('interviews');
       const i=interviews.find(item=>item.id===id)||await api(`interviews/${id}`);
@@ -915,7 +1615,7 @@ document.addEventListener('click',async event=>{
         interviewerOptions.unshift([i.interviewer_id, `${i.interviewer || 'Assigned interviewer'} (Current)`]);
       }
       const todayMin=getLocalTodayMin();
-      modal('Edit interview',`<div class="form-grid"><p class="full"><strong>Candidate:</strong> ${escape(i.name)} · ${escape(i.title)}</p>${interviewerOptions.length?select('Interviewer','interviewer_id',interviewerOptions,i.interviewer_id):`<p class="full"><strong>Interviewer:</strong> ${escape(i.interviewer)}</p>`}${field('Date and time (your timezone)','scheduled_at','datetime-local',toLocal(i.scheduled_at),true,`min="${todayMin}"`)}${canManage?field('Competencies, comma separated','competencies','text',comps.join(', '),true):''}<p class="full status-note">This updates the scheduled interview date and time. It does not send a calendar invitation.</p></div>`,async v=>{
+      modal('Edit interview',`<div class="form-grid"><p class="full"><strong>Candidate:</strong> ${escape(i.name)} · ${escape(i.title)}</p>${interviewerOptions.length?select('Interviewer','interviewer_id',interviewerOptions,i.interviewer_id):`<p class="full"><strong>Interviewer:</strong> ${escape(i.interviewer)}</p>`}${field('Date and time (your timezone)','scheduled_at','datetime-local',toLocal(i.scheduled_at),true,`min="${todayMin}"`)}${select('Duration','duration_minutes',[['30','30 minutes'],['45','45 minutes (Standard)'],['60','60 minutes'],['90','90 minutes']],String(i.duration_minutes||45),false)}${canManage?field('Competencies, comma separated','competencies','text',comps.join(', '),true):''}${area('Agenda / Update notes (Optional)','notes',i.notes||'',false)}<p class="full status-note">This updates the scheduled interview date and time and synchronizes with Microsoft Teams when configured.</p></div>`,async v=>{
         const scheduledDate=new Date(v.scheduled_at);
         if(!Number.isFinite(scheduledDate.getTime())||scheduledDate.getTime()<Date.now()){
           throw new Error('Enter a future interview date.');
@@ -927,6 +1627,8 @@ document.addEventListener('click',async event=>{
         }
         const payload={
           scheduled_at:scheduledDate.toISOString(),
+          duration_minutes:Number(v.duration_minutes)||45,
+          notes:v.notes?.trim()||undefined,
           ...(v.interviewer_id?{interviewer_id:v.interviewer_id}:{}),
           ...(updatedComps?{competencies:updatedComps}:{})
         };
@@ -934,7 +1636,16 @@ document.addEventListener('click',async event=>{
         return 'Interview updated successfully.';
       });
     }
-    if(a==='scorecard'){const i=(await api('interviews')).find(i=>i.id===id);if(!i)throw new Error('Interview not found.');if(!feedbackReady(i))throw new Error(FEEDBACK_LOCKED_MESSAGE);const comps=JSON.parse(i.competencies);modal('Submit independent feedback',comps.map((c,n)=>select(`${escape(c)} (1 low – 5 high)`,`rating${n}`,['1','2','3','4','5'],'3')).join('')+select('Recommendation','recommendation',['Strong yes','Yes','No','Strong no'])+area('Job-related evidence','notes','',true)+'<p class="muted">Submitted feedback is final in this phase. Other feedback stays hidden until you submit your assigned scorecards.</p>',v=>{if(!feedbackReady(i))throw new Error(FEEDBACK_LOCKED_MESSAGE);return api(`interviews/${id}/scorecards`,'POST',{ratings:Object.fromEntries(comps.map((c,n)=>[c,Number(v[`rating${n}`])])),recommendation:v.recommendation,notes:v.notes});});}
+    if(a==='cancel-interview'){
+      const interviews=await api('interviews');
+      const i=interviews.find(item=>item.id===id)||await api(`interviews/${id}`);
+      if(!i)throw new Error('Interview not found.');
+      modal('Cancel interview',`<p>Are you sure you want to cancel the interview for <strong>${escape(i.name)}</strong> (${escape(i.title)})?</p><p class="muted">This will update the interview status, cancel any associated Microsoft Teams calendar events, and notify the candidate.</p>${area('Reason for cancellation (Optional)','reason','',false)}`,async v=>{
+        await api(`interviews/${id}/cancel`,'POST',{reason:v.reason?.trim()||undefined});
+        return 'Interview cancelled successfully.';
+      });
+    }
+    if(a==='scorecard'){const i=(await api('interviews')).find(i=>i.id===id);if(!i)throw new Error('Interview not found.');if(!feedbackReady(i))throw new Error(FEEDBACK_LOCKED_MESSAGE);const comps=JSON.parse(i.competencies);modal('Submit independent feedback',comps.map((c,n)=>select(`${escape(c)} (1 low – 5 high)`,`rating${n}`,['1','2','3','4','5'],'3')).join('')+select('Recommendation','recommendation',['Strong yes','Yes','No','Strong no'])+area('Job-related evidence','notes','',true)+'<p class="muted">Submitted feedback is final in this phase. Other feedback stays hidden until you submit your assigned scorecards.</p>',async v=>{if(!feedbackReady(i))throw new Error(FEEDBACK_LOCKED_MESSAGE);await api(`interviews/${id}/scorecards`,'POST',{ratings:Object.fromEntries(comps.map((c,n)=>[c,Number(v[`rating${n}`])])),recommendation:v.recommendation,notes:v.notes});return 'Scorecard submitted successfully.';});}
     if(a==='scorecard-proxy'){
       const i=(await api('interviews')).find(i=>i.id===id)||await api(`interviews/${id}`);
       if(!feedbackReady(i))throw new Error(FEEDBACK_LOCKED_MESSAGE);
@@ -1014,10 +1725,342 @@ document.addEventListener('click',async event=>{
       if(!r.can_delete)throw new Error(r.status==='Withdrawn'?'Withdrawn referrals are retained for history and cannot be deleted.':'This referral cannot be deleted because it is linked to a candidate or application, or you do not have permission.');
       deleteDialog('referral',`Referral for ${r.name}`,'This removes the referral from active lists. Linked candidates and applications would be blocked from deletion and are never removed silently.',`referrals/${id}`,'Referral deleted successfully.');
     }
-    if(a==='new-user'){const roles=(await api('me')).roles.filter(r=>r!=='Agency');modal('Add Microsoft 365 user',field('Full name','name')+field('Microsoft email','email','email')+field('Entra object ID','oid')+field('Entra tenant ID','tenant')+select('Role','role',roles,'Employee/Referral')+teamSelect('Team','team','',true)+'<p class="muted">This grants approved access to the exact Entra identity. It does not create a Microsoft account or an ATS password.</p>',v=>api('admin/users','POST',v));}
-    if(a==='manage-user'){const u=window.currentUsers.find(u=>u.id===id);const roles=(await api('me')).roles.filter(r=>r!=='Agency');const actions=u.status==='pending'?['approve','reject']:u.status==='active'?['update','disable','force-logout']:['reactivate','update'];modal(`Manage ${u.name}`,`<p>${escape(u.email)} · ${badge(u.status)}</p><p class="mono">Entra object: ${escape(u.oid)}</p>`+select('Action','action',actions)+select('Role','role',roles,u.role)+teamSelect('Team','team',u.team||'',true)+'<p class="muted">Access changes revoke all current ATS sessions.</p>',v=>api(`admin/users/${id}/${v.action}`,'POST',v));}
-    if(a==='edit-pipeline'){const stages=await api('pipeline');modal('Edit pipeline',area('Stages, one per line','stages',stages.join('\n'),true),v=>api('pipeline','PUT',{stages:v.stages.split('\n').map(s=>s.trim()).filter(Boolean)}));}
-  }catch(e){notice(e.message);}
+    if(a==='new-user'){const roles=(await api('me')).roles.filter(r=>r!=='Agency');modal('Add Microsoft 365 user',field('Full name','name')+field('Microsoft email','email','email')+field('Entra object ID','oid')+field('Entra tenant ID','tenant')+select('Role','role',roles,'Employee/Referral')+teamSelect('Team','team','',true)+'<p class="muted">This grants approved access to the exact Entra identity. It does not create a Microsoft account or an ATS password.</p>',async v=>{await api('admin/users','POST',v);return 'User provisioned successfully.';});}
+    if(a==='manage-user'){const u=window.currentUsers.find(u=>u.id===id);const roles=(await api('me')).roles.filter(r=>r!=='Agency');const actions=u.status==='pending'?['approve','reject']:u.status==='active'?['update','disable','force-logout']:['reactivate','update'];modal(`Manage ${u.name}`,`<p>${escape(u.email)} · ${badge(u.status)}</p><p class="mono">Entra object: ${escape(u.oid)}</p>`+select('Action','action',actions)+select('Role','role',roles,u.role)+teamSelect('Team','team',u.team||'',true)+'<p class="muted">Access changes revoke all current ATS sessions.</p>',async v=>{await api(`admin/users/${id}/${v.action}`,'POST',v);return `User ${v.action} completed successfully.`;});}
+    if(a==='edit-pipeline'){const stages=await api('pipeline');modal('Edit pipeline',area('Stages, one per line','stages',stages.join('\n'),true),async v=>{await api('pipeline','PUT',{stages:v.stages.split('\n').map(s=>s.trim()).filter(Boolean)});return 'Pipeline updated successfully.';});}
+    if(a==='new-signature-request'){
+      const cand = (await api('candidates')).find(c=>c.id===id)||await api(`candidates/${id}`);
+      if(!cand) throw new Error('Candidate not found.');
+      const reqs = await api('requisitions');
+      const reqOptions = (cand.applications||[]).map(app=>[app.requisition_id, `${app.title} (${app.stage})`]);
+      for (const r of reqs.filter(r=>r.status==='open')) {
+        if (!reqOptions.some(([rid])=>rid===r.id)) reqOptions.push([r.id, `${r.title} (${r.team})`]);
+      }
+      if (!reqOptions.length) reqOptions.push(['', 'General Position (No active requisition)']);
+
+      modal(`Create Offer & E-Signature Request for ${escape(cand.name)}`, `
+        <div class="form-grid">
+          ${field('Document title', 'title', 'text', 'Employment Offer Letter')}
+          ${select('Associated position', 'requisition_id', reqOptions)}
+          ${field('Signer legal name', 'signer_name', 'text', cand.name)}
+          ${field('Signer email', 'signer_email', 'email', cand.email)}
+          ${field('Annual base salary', 'salary', 'text', '120,000')}
+          ${field('Currency', 'currency', 'text', 'USD')}
+          ${field('Anticipated start date', 'start_date', 'text', 'Two weeks following signature acceptance')}
+          ${field('Expiration in days', 'expires_days', 'number', '7')}
+          <p class="full status-note">Orbit will generate an official Offer of Employment PDF, attach cryptographic SHA-256 integrity verification, and generate a secure signing session token.</p>
+        </div>
+      `, async v => {
+        const payload = {
+          title: v.title?.trim() || 'Employment Offer Letter',
+          candidate_id: cand.id,
+          requisition_id: v.requisition_id || undefined,
+          salary: v.salary?.trim() || '120,000',
+          currency: v.currency?.trim()?.toUpperCase() || 'USD',
+          start_date: v.start_date?.trim(),
+          expires_days: Number(v.expires_days) || 7,
+          signers: [{
+            name: v.signer_name?.trim() || cand.name,
+            email: v.signer_email?.trim() || cand.email,
+            role: 'Candidate'
+          }]
+        };
+        await api('signatures', 'POST', payload);
+        notice('Offer signature request created successfully!', 'success');
+        return 'Signature request created successfully.';
+      });
+    }
+    if(a==='cancel-signature-request'){
+      if (!confirm('Are you sure you want to cancel this signature request?')) return;
+      await api(`signatures/${id}/cancel`, 'POST', { reason: 'Cancelled by recruiter' });
+      notice('Signature request cancelled.', 'success');
+      const candId = b.dataset.candidateId;
+      if (candId) {
+        const trigger = document.querySelector(`[data-action="candidate-details"][data-id="${candId}"]`);
+        if (trigger) {
+          trigger.click();
+          return;
+        }
+      }
+      await render();
+    }
+    if(a==='copy-sig-link'){
+      let token = b.dataset.token;
+      if (!token && b.dataset.id) {
+        try {
+          const reqData = await api(`signatures/${b.dataset.id}`);
+          token = reqData.signers?.[0]?.token;
+        } catch {}
+      }
+      if (token) {
+        const fullUrl = `${location.origin}/sign/${token}`;
+        const prevText = b.textContent;
+        navigator.clipboard?.writeText?.(fullUrl)?.then(()=>{
+          notice('Signing link copied to clipboard!', 'success');
+          b.textContent = '✓ Copied!';
+          setTimeout(() => { b.textContent = prevText; }, 2000);
+        })?.catch(()=>{
+          prompt('Copy signing link:', fullUrl);
+        });
+      } else {
+        notice('Signing link is being initialized. Try clicking "Send Email" to generate an active link.', 'error');
+      }
+    }
+    if(a==='resend-sig-email'){
+      b.disabled = true;
+      const prevText = b.textContent;
+      b.textContent = 'Sending…';
+      try {
+        const res = await api(`signatures/${id}/send-email`, 'POST', {});
+        notice(res.results?.[0]?.simulated ? 'Invitation email simulated locally (signing link active).' : 'Invitation email sent successfully to candidate!', 'success');
+        b.textContent = '✓ Sent!';
+        setTimeout(() => { b.textContent = prevText; b.disabled = false; }, 2500);
+      } catch (err) {
+        notice(err.message, 'error');
+        b.textContent = prevText;
+        b.disabled = false;
+      }
+    }
+    if(a==='new-agency'){
+      modal('Register recruitment agency',`<div class="form-grid">
+        ${field('Agency name','name','text','',true)}
+        ${field('Agency code (2–10 uppercase chars)','code','text','',true)}
+        ${field('Primary contact name','contact_name','text','',true)}
+        ${field('Contact email','contact_email','email','',true)}
+        ${field('Contact phone (optional)','contact_phone','tel','',false)}
+        ${area('Notes / Terms (optional)','notes','',false)}
+      </div><p class="muted" style="margin-top:8px;font-size:0.8rem;">An agency account will be created in active status. You can invite agency recruiters next.</p>`,async v=>{
+        const code = (v.code||'').trim().toUpperCase();
+        if(!code || code.length < 2 || code.length > 10){
+          throw new Error('Agency code must be between 2 and 10 alphanumeric characters.');
+        }
+        await api('agencies','POST',{
+          name: v.name.trim(),
+          code,
+          contact_name: v.contact_name.trim(),
+          contact_email: v.contact_email.trim(),
+          contact_phone: v.contact_phone?.trim()||undefined,
+          notes: v.notes?.trim()||undefined
+        });
+        return 'Recruitment agency registered successfully.';
+      });
+    }
+    if(a==='manage-agency'){
+      const details = await api(`agencies/${id}`);
+      const ag = details.agency;
+      const mems = details.members || [];
+      const ass = details.assignments || [];
+      const subs = details.submissions || [];
+
+      const statusActionButtons = allows('admin') ? `
+        <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
+          ${ag.status!=='active'?button('Activate agency','set-agency-status',ag.id,'data-status="active" class="primary"'):''}
+          ${ag.status==='active'?button('Suspend agency','set-agency-status',ag.id,'data-status="suspended" class="secondary"'):''}
+          ${ag.status!=='deactivated'?button('Deactivate agency','set-agency-status',ag.id,'data-status="deactivated" class="secondary"'):''}
+          ${button('Assign role','agency-assign-job',ag.id,'class="secondary"')}
+          ${button('Add recruiter','agency-add-recruiter-modal',ag.id,'class="secondary"')}
+        </div>
+      ` : '';
+
+      const membersList = mems.length ? `
+        <div class="table-wrap" style="margin-top:8px;">
+          <table class="table"><thead><tr><th scope="col">Name</th><th scope="col">Email</th><th scope="col">Role</th><th scope="col">Status</th></tr></thead>
+          <tbody>${mems.map(m=>`<tr><td><strong>${escape(m.name)}</strong></td><td>${escape(m.email)}</td><td><span class="badge ${m.role==='Agency Admin'?'completed':'clean'}">${escape(m.role)}</span></td><td>${badge(m.status)}</td></tr>`).join('')}</tbody>
+          </table>
+        </div>
+      ` : '<p class="muted" style="font-size:0.85rem;margin-top:6px;">No recruiters added to this agency yet.</p>';
+
+      const assignmentsList = ass.length ? `
+        <div class="table-wrap" style="margin-top:8px;">
+          <table class="table"><thead><tr><th scope="col">Requisition</th><th scope="col">Deadline</th><th scope="col">Instructions</th><th scope="col">Action</th></tr></thead>
+          <tbody>${ass.map(j=>`<tr><td><strong>${escape(j.title)}</strong><br><small>${escape(j.team)}</small></td><td>${j.submission_deadline?escape(new Date(j.submission_deadline).toLocaleDateString()):'None'}</td><td><small class="muted">${escape(j.sourcing_instructions||'—')}</small></td><td>${allows('admin')?button('Revoke','revoke-agency-req',ag.id,`data-req-id="${j.requisition_id}" class="secondary text-button"`):'—'}</td></tr>`).join('')}</tbody>
+          </table>
+        </div>
+      ` : '<p class="muted" style="font-size:0.85rem;margin-top:6px;">No requisitions currently assigned.</p>';
+
+      const subsList = subs.length ? `
+        <div class="table-wrap" style="margin-top:8px;">
+          <table class="table"><thead><tr><th scope="col">Ref</th><th scope="col">Candidate</th><th scope="col">Role</th><th scope="col">Status</th><th scope="col">Feedback</th></tr></thead>
+          <tbody>${subs.map(s=>`<tr><td class="mono">${escape(s.submission_ref)}</td><td><strong>${escape(s.candidate_name)}</strong></td><td>${escape(s.requisition_title)}</td><td>${badge(s.agency_status)}</td><td>${button('Publish feedback','publish-agency-feedback',s.id,'class="secondary text-button"')}</td></tr>`).join('')}</tbody>
+          </table>
+        </div>
+      ` : '<p class="muted" style="font-size:0.85rem;margin-top:6px;">No candidate submissions received from this agency yet.</p>';
+
+      modal(`Agency: ${ag.name} (${ag.code})`, `
+        <div style="background:var(--surface-alt);border:1px solid var(--line);border-radius:8px;padding:12px;margin-bottom:14px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <strong>${escape(ag.contact_name||'Primary Contact')}</strong>
+            ${badge(ag.status)}
+          </div>
+          <p class="muted" style="margin:4px 0 0;font-size:0.85rem;">${escape(ag.contact_email||'')} ${ag.contact_phone?`· ${escape(ag.contact_phone)}`:''}</p>
+          ${ag.notes?`<p style="margin:8px 0 0;font-size:0.85rem;">${escape(ag.notes)}</p>`:''}
+          ${statusActionButtons}
+        </div>
+        <h3>Agency Recruiters (${mems.length})</h3>
+        ${membersList}
+        <h3 style="margin-top:16px;">Assigned Requisitions (${ass.length})</h3>
+        ${assignmentsList}
+        <h3 style="margin-top:16px;">Candidate Submissions (${subs.length})</h3>
+        ${subsList}
+      `);
+    }
+    if(a==='set-agency-status'){
+      const targetStatus = b.dataset.status;
+      if (!confirm(`Are you sure you want to set this agency's status to "${targetStatus}"?`)) return;
+      await api(`agencies/${id}/status`,'POST',{status:targetStatus,reason:`Updated by ${me.name}`});
+      notice(`Agency status updated to ${targetStatus}.`,'success');
+      closeModal();
+      await render();
+    }
+    if(a==='agency-add-recruiter-modal'){
+      modal('Add Recruiter to Agency',`<div class="form-grid">
+        ${field('Recruiter full name','name','text','',true)}
+        ${field('Recruiter email','email','email','',true)}
+        ${select('Agency role','role',[['Agency Recruiter','Agency Recruiter (Submissions & assigned roles)'],['Agency Admin','Agency Admin (Can manage agency recruiters)']],'Agency Recruiter')}
+      </div>`,async v=>{
+        await api(`agencies/${id}/members`,'POST',{
+          name: v.name.trim(),
+          email: v.email.trim(),
+          role: v.role
+        });
+        return 'Agency recruiter invited and granted portal access.';
+      });
+    }
+    if(a==='agency-assign-job'){
+      const reqs = (await api('requisitions')).filter(r=>r.status==='open');
+      if(!reqs.length) throw new Error('No open requisitions available to assign.');
+      modal('Assign Requisition to Agency',`<div class="form-grid">
+        ${select('Select open requisition','requisition_id',reqs.map(r=>[r.id,`${r.title} (${r.team})`]))}
+        ${field('Submission deadline (optional)','submission_deadline','date','')}
+        ${area('Sourcing instructions / Guidelines (optional)','sourcing_instructions','',false)}
+      </div><p class="muted" style="font-size:0.8rem;margin-top:6px;">This requisition will become visible in the agency recruiter portal for candidate submission.</p>`,async v=>{
+        await api(`agencies/${id}/assignments`,'POST',{
+          requisition_id: v.requisition_id,
+          submission_deadline: v.submission_deadline||undefined,
+          sourcing_instructions: v.sourcing_instructions?.trim()||undefined
+        });
+        return 'Requisition assigned to agency successfully.';
+      });
+    }
+    if(a==='revoke-agency-req'){
+      const reqId = b.dataset.reqId;
+      if(!confirm('Revoke this requisition from the agency? Future candidate submissions will be blocked.')) return;
+      await api(`agencies/${id}/assignments/${reqId}`,'DELETE');
+      notice('Requisition assignment revoked.','success');
+      closeModal();
+      await render();
+    }
+    if(a==='publish-agency-feedback'){
+      modal('Publish Feedback to Agency Recruiter',`<div class="form-grid">
+        <p class="full muted">Feedback published here will be visible to the external agency on their portal submissions dashboard.</p>
+        ${area('Approved feedback for agency recruiter','feedback','',true)}
+      </div>`,async v=>{
+        if(!v.feedback||!v.feedback.trim()) throw new Error('Feedback text is required.');
+        await api(`agencies/submissions/${id}/feedback`,'POST',{
+          feedback: v.feedback.trim()
+        });
+        return 'Feedback published to agency recruiter.';
+      });
+    }
+    if(a==='agency-submit-candidate'){
+      const assigned = await api('agency/requisitions');
+      if(!assigned.length) throw new Error('Your agency does not have any active open requisitions assigned.');
+      const reqOptions = assigned.map(r=>[r.id,`${r.title} (${r.team})`]);
+      const defaultReq = id || assigned[0].id;
+
+      modal('Submit Candidate to Orbit',`<div class="form-grid">
+        ${select('Assigned Requisition','requisition_id',reqOptions,defaultReq)}
+        ${field('Candidate Full Name','name','text','',true)}
+        ${field('Candidate Email','email','email','',true)}
+        ${field('Candidate Phone (Optional)','phone','tel','',false)}
+        ${field('Key Skills (comma separated)','skills','text','',true)}
+        <div class="full">
+          <label>${formatLabel('Upload Resume (PDF, DOCX, TXT)', false)}
+            <input type="file" id="resume-file-input" accept=".pdf,.docx,.doc,.txt" style="margin-top:6px;">
+          </label>
+          <div id="resume-upload-status" style="margin-top:6px;font-size:0.85rem;"></div>
+          <input type="hidden" name="resume_id" id="resume-id-input">
+        </div>
+        <div class="full">
+          ${area('Resume Qualifications / Extracted Text','resume_text','',true)}
+        </div>
+        <div class="full">
+          ${area('Agency Sourcing Notes / Cover Summary (Optional)','notes','',false)}
+        </div>
+        <label class="full" style="display:flex;align-items:flex-start;gap:8px;margin-top:10px;font-size:0.85rem;cursor:pointer;background:var(--surface-alt);padding:10px 12px;border:1px solid var(--line);border-radius:6px;">
+          <input type="checkbox" name="representation_confirmed" value="true" required style="margin-top:3px;">
+          <span><strong>Representation & Consent Authorization:</strong> I certify that this candidate has authorized our agency to represent them for this requisition and that they have explicitly consented to having their personal information and resume shared with Mechlin Orbit.</span>
+        </label>
+      </div>`,async v=>{
+        const emailErr = checkEmail(v.email);
+        if(emailErr) throw new Error(emailErr);
+        if(!v.representation_confirmed) throw new Error('Affirmative representation authorization is required to submit candidates.');
+        if(!v.resume_text?.trim() && !v.resume_id) throw new Error('Resume text or resume upload is required.');
+
+        const result = await api('agency/submissions','POST',{
+          requisition_id: v.requisition_id,
+          name: v.name.trim(),
+          email: v.email.trim(),
+          phone: v.phone?.trim()||undefined,
+          skills: skills(v.skills),
+          resume_text: v.resume_text.trim(),
+          resume_id: v.resume_id||undefined,
+          representation_confirmed: true,
+          consent_confirmed: true,
+          consent: true,
+          notes: v.notes?.trim()||undefined
+        });
+        return `Candidate submitted successfully. Reference: ${result.submission?.submission_ref}`;
+      });
+
+      bindResumeUpload();
+      bindValidation('email',checkEmail);
+      bindValidation('phone',checkPhone);
+    }
+    if(a==='view-agency-feedback'){
+      const sub = await api(`agency/submissions/${id}`);
+      modal(`Submission Feedback: ${sub.candidate_name}`,`
+        <div style="background:var(--surface-alt);border:1px solid var(--line);border-radius:8px;padding:12px;margin-bottom:14px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <strong>${escape(sub.requisition_title)}</strong>
+            ${badge(sub.agency_status)}
+          </div>
+          <p class="mono muted" style="font-size:0.8rem;margin:4px 0 0;">Reference: ${escape(sub.submission_ref)}</p>
+        </div>
+        <h3 style="margin-top:12px;">Published Feedback from Hiring Team</h3>
+        ${sub.published_feedback?`
+          <div class="agency-feedback-box">
+            <p class="feedback-text">${escape(sub.published_feedback)}</p>
+            <div class="feedback-meta">Published on ${escape(new Date(sub.feedback_published_at||sub.created_at).toLocaleString())}</div>
+          </div>
+        `:'<p class="muted">No feedback published yet. Your candidate is currently under active evaluation by the hiring team.</p>'}
+      `);
+    }
+    if(a==='new-agency-recruiter'){
+      modal('Add Recruiter to Your Agency Team',`<div class="form-grid">
+        ${field('Full Name','name','text','',true)}
+        ${field('Email Address','email','email','',true)}
+        ${select('Role','role',[['Agency Recruiter','Agency Recruiter (Candidate submissions)'],['Agency Admin','Agency Admin (Team management)']],'Agency Recruiter')}
+      </div>`,async v=>{
+        const emailErr = checkEmail(v.email);
+        if(emailErr) throw new Error(emailErr);
+        await api('agency/members','POST',{
+          name: v.name.trim(),
+          email: v.email.trim(),
+          role: v.role
+        });
+        return 'Recruiter added to your agency successfully.';
+      });
+      bindValidation('email',checkEmail);
+    }
+    if(a==='toggle-agency-recruiter-status'){
+      const targetStatus = b.dataset.status;
+      if(!confirm(`Are you sure you want to ${targetStatus === 'active' ? 'reactivate' : 'suspend'} this recruiter?`)) return;
+      await api(`agency/members/${id}/status`,'POST',{status:targetStatus});
+      notice(`Recruiter has been ${targetStatus === 'active' ? 'reactivated' : 'suspended'}.`,'success');
+      await render();
+    }
+  }catch(e){notice(e.message,'error');}
 });
 window.addEventListener('hashchange',()=>{
   if(!me)return;
@@ -1029,5 +2072,562 @@ window.addEventListener('hashchange',()=>{
   }
 });
 window.addEventListener('offline',()=>notice('You are offline. Changes cannot be saved.','error'));
-window.addEventListener('online',()=>notice('Connection restored.','success'));
-(async()=>{try{const data=await api('me');me=data.user;csrf=data.csrf;permissions=data.permissions;loadSavedPages();const nav=getNavList();current=getSavedNav(nav);await render();}catch{login();}if('serviceWorker'in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{});})();
+function trimCanvas(canvas, pad = 4) {
+  try {
+    const ctx = canvas.getContext('2d');
+    const w = canvas.width;
+    const h = canvas.height;
+    const imgData = ctx.getImageData(0, 0, w, h);
+    const data = imgData.data;
+    let minX = w, minY = h, maxX = 0, maxY = 0;
+    let hasInk = false;
+
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const alpha = data[(y * w + x) * 4 + 3];
+        if (alpha > 15) {
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+          hasInk = true;
+        }
+      }
+    }
+
+    if (!hasInk) return canvas;
+
+    minX = Math.max(0, minX - pad);
+    minY = Math.max(0, minY - pad);
+    maxX = Math.min(w - 1, maxX + pad);
+    maxY = Math.min(h - 1, maxY + pad);
+
+    const cropW = maxX - minX + 1;
+    const cropH = maxY - minY + 1;
+
+    const cropped = document.createElement('canvas');
+    cropped.width = cropW;
+    cropped.height = cropH;
+    const cCtx = cropped.getContext('2d');
+    cCtx.drawImage(canvas, minX, minY, cropW, cropH, 0, 0, cropW, cropH);
+    return cropped;
+  } catch {
+    return canvas;
+  }
+}
+
+async function renderSigningPortal(token) {
+  applyTheme(appearance?.theme || 'mechlin');
+  $('#app').innerHTML = `<main id="main" class="signing-portal"><p class="muted">Loading secure electronic signing session…</p></main>`;
+  try {
+    const res = await fetch(`/api/signatures/sign/${encodeURIComponent(token)}`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      $('#main').innerHTML = `
+        <div class="signing-header">
+          <div class="product-brand"><span class="orbit-symbol"></span><span>Orbit<small>Talent workspace</small></span></div>
+        </div>
+        <div class="signing-doc-info">
+          <h2>Unable to Open Signing Session</h2>
+          <p class="error">${escape(err.error || 'This signing session link is invalid or has expired.')}</p>
+          <p class="muted">Please contact your recruitment team to request a new invitation.</p>
+        </div>
+      `;
+      return;
+    }
+    const session = await res.json();
+    const isCompleted = session.request.status === 'completed';
+
+    if (isCompleted) {
+      $('#main').innerHTML = `
+        <div class="signing-header">
+          <div class="product-brand"><span class="orbit-symbol"></span><span>Orbit<small>Talent workspace</small></span></div>
+          <span class="badge completed">Completed</span>
+        </div>
+        <div class="signing-doc-info">
+          <h2>Document Successfully Signed</h2>
+          <p>Thank you, <strong>${escape(session.signer.name)}</strong>. Your electronic signature has been recorded and verified.</p>
+          <p class="mono" style="margin-top:8px;">Original Digest: ${escape(session.request.original_document_hash)}</p>
+          <div style="margin-top:16px;">
+            <a href="/api/signatures/sign/${encodeURIComponent(token)}/document" target="_blank" class="button">Download Completed Document (PDF)</a>
+          </div>
+        </div>
+      `;
+      return;
+    }
+
+    let activeTab = 'typed';
+    let selectedStyle = 'cursive';
+    let uploadedBase64 = null;
+    let hasDrawn = false;
+    let isDrawing = false;
+
+    const signerName = escape(session.signer.name);
+    $('#main').innerHTML = `
+      <div class="signing-header">
+        <div class="product-brand"><span class="orbit-symbol"></span><span>Orbit<small>Secure Electronic Signing</small></span></div>
+        <span class="badge pending">Awaiting Signature</span>
+      </div>
+      <div class="signing-doc-info">
+        <h1 style="font-size:1.35rem;margin:0 0 6px;">${escape(session.request.title)}</h1>
+        <p class="muted" style="margin:0 0 8px;">Recipient: <strong>${signerName}</strong> &lt;${escape(session.signer.email)}&gt; · Role: ${escape(session.signer.role)}</p>
+        ${session.request.expires_at ? `
+          <div style="font-size:0.82rem;color:var(--text-muted,#475569);margin-bottom:8px;">
+            ⏱️ <strong>Link Validity:</strong> Valid until ${escape(new Date(session.request.expires_at).toLocaleDateString())} (${Math.max(0, Math.ceil((new Date(session.request.expires_at).getTime() - Date.now()) / 86400000))} days remaining)
+          </div>
+        ` : ''}
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:10px;">
+          <a href="/api/signatures/sign/${encodeURIComponent(token)}/document" target="_blank" class="button secondary" style="font-size:0.82rem;padding:6px 12px;">
+            Review Document PDF
+          </a>
+          <span class="mono muted" style="font-size:0.75rem;">SHA-256: ${escape(session.request.original_document_hash.slice(0, 16))}…</span>
+        </div>
+      </div>
+
+      <section class="panel" style="margin-top:18px;">
+        <h2 style="margin-top:0;">Create Your Signature</h2>
+        <div class="sig-tabs" role="tablist">
+          <button type="button" class="sig-tab active" data-sig-tab="typed">Type Signature</button>
+          <button type="button" class="sig-tab" data-sig-tab="upload">Upload Image</button>
+          <button type="button" class="sig-tab" data-sig-tab="drawn">Draw Signature</button>
+        </div>
+
+        <div id="sig-tab-content">
+          <!-- Typed tab -->
+          <div id="tab-typed-content" class="sig-tab-panel active" style="display:block;">
+            <label>
+              <span class="label-heading">Your Full Legal Name</span>
+              <input type="text" id="typed-sig-input" value="${signerName}" maxlength="100" placeholder="Enter your full name">
+            </label>
+            <p class="muted" style="font-size:0.8rem;margin:6px 0 10px;">Select a signature style:</p>
+            <div class="sig-style-grid">
+              <div class="sig-style-card selected" data-style="cursive">
+                <span class="sig-style-cursive style-label" id="preview-style-cursive">${signerName}</span>
+                <div class="muted" style="font-size:0.72rem;margin-top:4px;">Cursive Script</div>
+              </div>
+              <div class="sig-style-card" data-style="handwritten">
+                <span class="sig-style-handwritten style-label" id="preview-style-handwritten">${signerName}</span>
+                <div class="muted" style="font-size:0.72rem;margin-top:4px;">Handwritten Flow</div>
+              </div>
+              <div class="sig-style-card" data-style="formal">
+                <span class="sig-style-formal style-label" id="preview-style-formal">${signerName}</span>
+                <div class="muted" style="font-size:0.72rem;margin-top:4px;">Formal Serif</div>
+              </div>
+              <div class="sig-style-card" data-style="clean">
+                <span class="sig-style-clean style-label" id="preview-style-clean">${signerName}</span>
+                <div class="muted" style="font-size:0.72rem;margin-top:4px;">Clean Modern</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Upload tab -->
+          <div id="tab-upload-content" class="sig-tab-panel" hidden style="display:none;">
+            <label class="sig-upload-box">
+              <span class="label-heading">Upload Signature Image (PNG or JPEG)</span>
+              <span class="muted" style="font-size:0.8rem;margin:4px 0 10px;">Transparent PNG or JPEG (Max 2 MB)</span>
+              <input type="file" id="upload-sig-input" accept="image/png,image/jpeg" style="font-size:0.85rem;">
+            </label>
+            <div id="upload-preview-area" class="sig-upload-preview" hidden style="display:none;">
+              <img id="upload-preview-img" src="" alt="Uploaded Signature Preview" style="max-height:80px;max-width:100%;object-fit:contain;border:1px solid var(--line);border-radius:6px;padding:6px;background:#fff;">
+              <div style="margin-top:6px;">
+                <button type="button" class="secondary text-button" id="remove-upload-btn" style="font-size:0.8rem;">Remove Image</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Draw tab -->
+          <div id="tab-drawn-content" class="sig-tab-panel" hidden style="display:none;">
+            <p class="muted" style="font-size:0.8rem;margin:0 0 8px;">Draw your signature using your mouse, touchscreen, or stylus:</p>
+            <div class="sig-canvas-wrap">
+              <canvas id="sig-canvas" width="480" height="140"></canvas>
+            </div>
+            <div style="margin-top:8px;">
+              <button type="button" class="secondary" id="clear-canvas-btn" style="font-size:0.8rem;padding:6px 12px;">Clear Signature</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Adopted signature preview -->
+        <div class="sig-preview-box">
+          <span class="muted" style="font-size:0.75rem;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.06em;">Adopted Signature Preview</span>
+          <div id="live-adopted-preview" style="font-size:1.6rem;min-height:45px;display:flex;align-items:center;justify-content:center;">
+            <span class="sig-style-cursive">${signerName}</span>
+          </div>
+          <span class="muted" style="font-size:0.75rem;margin-top:4px;">Legally bound signer: <strong>${signerName}</strong></span>
+        </div>
+
+        <!-- Consent Checkbox -->
+        <div style="margin-top:18px;border-top:1px solid var(--line);padding-top:16px;">
+          <label class="checkbox-row" style="font-size:0.85rem;line-height:1.45;">
+            <input type="checkbox" id="sig-consent-checkbox">
+            <span>I agree to use electronic records and signatures. By checking this box and clicking "Adopt and Sign Document", I affirm my legal intent to sign and execute this agreement electronically under the U.S. Electronic Signatures in Global and National Commerce Act (ESIGN) and Uniform Electronic Transactions Act (UETA).</span>
+          </label>
+        </div>
+
+        <!-- Action Buttons -->
+        <div style="margin-top:20px;display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;">
+          <button type="button" class="secondary" id="decline-sig-btn" style="color:var(--negative);">Decline to Sign</button>
+          <button type="button" class="button" id="submit-sig-btn">Adopt and Sign Document</button>
+        </div>
+      </section>
+    `;
+
+    const canvas = $('#sig-canvas');
+    if (canvas) {
+      const ctx = canvas.getContext('2d');
+      ctx.lineWidth = 2.5;
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = '#17283e';
+
+      const getPos = e => {
+        const rect = canvas.getBoundingClientRect();
+        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+        return {
+          x: (clientX - rect.left) * (canvas.width / rect.width),
+          y: (clientY - rect.top) * (canvas.height / rect.height)
+        };
+      };
+
+      const startDraw = e => {
+        isDrawing = true;
+        hasDrawn = true;
+        const p = getPos(e);
+        ctx.beginPath();
+        ctx.moveTo(p.x, p.y);
+        e.preventDefault();
+      };
+
+      const moveDraw = e => {
+        if (!isDrawing) return;
+        const p = getPos(e);
+        ctx.lineTo(p.x, p.y);
+        ctx.stroke();
+        e.preventDefault();
+      };
+
+      const stopDraw = () => {
+        if (!isDrawing) return;
+        isDrawing = false;
+        ctx.closePath();
+        updateAdoptedPreview();
+      };
+
+      canvas.addEventListener('mousedown', startDraw);
+      canvas.addEventListener('mousemove', moveDraw);
+      window.addEventListener('mouseup', stopDraw);
+
+      canvas.addEventListener('touchstart', startDraw, { passive: false });
+      canvas.addEventListener('touchmove', moveDraw, { passive: false });
+      window.addEventListener('touchend', stopDraw);
+
+      const clearBtn = $('#clear-canvas-btn');
+      if (clearBtn) {
+        clearBtn.onclick = () => {
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          hasDrawn = false;
+          updateAdoptedPreview();
+        };
+      }
+    }
+
+    const updateAdoptedPreview = () => {
+      const liveBox = $('#live-adopted-preview');
+      if (!liveBox) return;
+      const typedVal = ($('#typed-sig-input')?.value || session.signer.name).trim();
+
+      if (activeTab === 'typed') {
+        liveBox.innerHTML = `<span class="sig-style-${selectedStyle}">${escape(typedVal)}</span>`;
+      } else if (activeTab === 'upload') {
+        if (uploadedBase64) {
+          liveBox.innerHTML = `<img src="${uploadedBase64}" alt="Adopted Signature" style="max-height:45px;max-width:200px;object-fit:contain;">`;
+        } else {
+          liveBox.innerHTML = `<span class="muted" style="font-size:0.85rem;">No signature image uploaded yet</span>`;
+        }
+      } else if (activeTab === 'drawn') {
+        const c = $('#sig-canvas');
+        if (c && hasDrawn) {
+          liveBox.innerHTML = `<img src="${c.toDataURL('image/png')}" alt="Adopted Signature" style="max-height:45px;max-width:200px;object-fit:contain;">`;
+        } else {
+          liveBox.innerHTML = `<span class="muted" style="font-size:0.85rem;">Draw your signature in the box above</span>`;
+        }
+      }
+    };
+
+    // Tab switching handler
+    const setSigTab = tab => {
+      activeTab = tab;
+      document.querySelectorAll('[data-sig-tab]').forEach(b => b.classList.toggle('active', b.dataset.sigTab === activeTab));
+      const tabConfigs = [
+        { id: '#tab-typed-content', key: 'typed' },
+        { id: '#tab-upload-content', key: 'upload' },
+        { id: '#tab-drawn-content', key: 'drawn' }
+      ];
+      for (const { id, key } of tabConfigs) {
+        const panel = $(id);
+        if (!panel) continue;
+        const isCurrent = key === activeTab;
+        panel.classList.toggle('active', isCurrent);
+        if (isCurrent) {
+          panel.removeAttribute('hidden');
+          panel.style.display = 'block';
+        } else {
+          panel.setAttribute('hidden', '');
+          panel.style.display = 'none';
+        }
+      }
+      updateAdoptedPreview();
+    };
+
+    // Tab buttons
+    document.querySelectorAll('[data-sig-tab]').forEach(btn => {
+      btn.onclick = () => setSigTab(btn.dataset.sigTab);
+    });
+
+    // Style cards
+    document.querySelectorAll('[data-style]').forEach(card => {
+      card.onclick = () => {
+        selectedStyle = card.dataset.style;
+        document.querySelectorAll('[data-style]').forEach(c => c.classList.toggle('selected', c === card));
+        updateAdoptedPreview();
+      };
+    });
+
+    // Typed input
+    const typedInp = $('#typed-sig-input');
+    if (typedInp) {
+      typedInp.oninput = () => {
+        const v = typedInp.value.trim() || session.signer.name;
+        document.querySelectorAll('.style-label').forEach(el => el.textContent = v);
+        updateAdoptedPreview();
+      };
+    }
+
+    // Upload input
+    const uploadInp = $('#upload-sig-input');
+    if (uploadInp) {
+      uploadInp.onchange = () => {
+        const file = uploadInp.files?.[0];
+        if (!file) return;
+        if (!['image/png', 'image/jpeg'].includes(file.type)) {
+          alert('Please upload a valid PNG or JPEG image.');
+          return;
+        }
+        if (file.size > 2 * 1024 * 1024) {
+          alert('Signature image file size must be under 2 MB.');
+          return;
+        }
+        const reader = new FileReader();
+        reader.onload = e => {
+          uploadedBase64 = e.target.result;
+          const previewImg = $('#upload-preview-img');
+          const previewArea = $('#upload-preview-area');
+          if (previewImg) previewImg.src = uploadedBase64;
+          if (previewArea) {
+            previewArea.classList.add('visible');
+            previewArea.removeAttribute('hidden');
+            previewArea.style.display = 'block';
+          }
+          updateAdoptedPreview();
+        };
+        reader.readAsDataURL(file);
+      };
+    }
+
+    const removeUploadBtn = $('#remove-upload-btn');
+    if (removeUploadBtn) {
+      removeUploadBtn.onclick = () => {
+        uploadedBase64 = null;
+        if (uploadInp) uploadInp.value = '';
+        const previewImg = $('#upload-preview-img');
+        const previewArea = $('#upload-preview-area');
+        if (previewImg) previewImg.src = '';
+        if (previewArea) {
+          previewArea.classList.remove('visible');
+          previewArea.setAttribute('hidden', '');
+          previewArea.style.display = 'none';
+        }
+        updateAdoptedPreview();
+      };
+    }
+
+    // Submit signature
+    const submitBtn = $('#submit-sig-btn');
+    if (submitBtn) {
+      submitBtn.onclick = async () => {
+        const consentBox = $('#sig-consent-checkbox');
+        if (!consentBox?.checked) {
+          alert('Please confirm your affirmative consent by checking the agreement checkbox before signing.');
+          return;
+        }
+
+        let sigPayload = {
+          signature_type: activeTab === 'upload' ? 'uploaded' : activeTab,
+          consent: true
+        };
+
+        if (activeTab === 'typed') {
+          const name = ($('#typed-sig-input')?.value || session.signer.name).trim();
+          if (name.length < 2) {
+            alert('Please enter your full legal name (at least 2 characters).');
+            return;
+          }
+          sigPayload.signature_data = name;
+          sigPayload.signature_style = selectedStyle;
+
+          try {
+            if (document.fonts?.ready) {
+              await document.fonts.ready;
+            }
+
+            const scale = 2;
+            let fontStr = "bold 34px Inter, 'Segoe UI', Arial, sans-serif";
+            let colorStr = "#0f2b48";
+            let textToRender = name;
+
+            if (selectedStyle === 'cursive') {
+              fontStr = "italic 46px 'Dancing Script', 'Segoe Script', 'Brush Script MT', cursive";
+            } else if (selectedStyle === 'handwritten') {
+              fontStr = "italic 42px 'Caveat', 'Segoe Print', 'Bradley Hand', cursive";
+            } else if (selectedStyle === 'formal') {
+              fontStr = "italic bold 38px 'Georgia', 'Times New Roman', serif";
+            } else if (selectedStyle === 'clean') {
+              fontStr = "bold 28px Inter, 'Segoe UI', Arial, sans-serif";
+              textToRender = name.toUpperCase();
+            }
+
+            const tempCanvas = document.createElement('canvas');
+            const tempCtx = tempCanvas.getContext('2d');
+            tempCtx.font = fontStr;
+            const textMetrics = tempCtx.measureText(textToRender);
+            const textWidth = Math.max(Math.ceil(textMetrics.width), 120);
+            const canvasWidth = (textWidth + 60) * scale;
+            const canvasHeight = 100 * scale;
+
+            const offCanvas = document.createElement('canvas');
+            offCanvas.width = canvasWidth;
+            offCanvas.height = canvasHeight;
+            const ctx = offCanvas.getContext('2d');
+            ctx.scale(scale, scale);
+            ctx.font = fontStr;
+            ctx.fillStyle = colorStr;
+            ctx.textBaseline = 'middle';
+            ctx.fillText(textToRender, 20, 50);
+
+            const trimmed = trimCanvas(offCanvas, 6);
+            sigPayload.signature_image = trimmed.toDataURL('image/png');
+          } catch {}
+        } else if (activeTab === 'upload') {
+          if (!uploadedBase64) {
+            alert('Please select and upload a signature image file.');
+            return;
+          }
+          try {
+            const img = new Image();
+            await new Promise((res, rej) => {
+              img.onload = res;
+              img.onerror = rej;
+              img.src = uploadedBase64;
+            });
+            const off = document.createElement('canvas');
+            off.width = img.naturalWidth || img.width;
+            off.height = img.naturalHeight || img.height;
+            const oCtx = off.getContext('2d');
+            oCtx.drawImage(img, 0, 0);
+            const trimmed = trimCanvas(off, 6);
+            const trimmedData = trimmed.toDataURL('image/png');
+            sigPayload.signature_data = trimmedData.replace(/^data:image\/[a-z]+;base64,/i, '');
+          } catch {
+            const base64Data = uploadedBase64.replace(/^data:image\/[a-z]+;base64,/i, '');
+            sigPayload.signature_data = base64Data;
+          }
+        } else if (activeTab === 'drawn') {
+          const c = $('#sig-canvas');
+          if (!c || !hasDrawn) {
+            alert('Please draw your signature before submitting.');
+            return;
+          }
+          const trimmed = trimCanvas(c, 6);
+          sigPayload.signature_data = trimmed.toDataURL('image/png');
+        }
+
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Executing Signature…';
+
+        try {
+          const res = await fetch(`/api/signatures/sign/${encodeURIComponent(token)}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(sigPayload)
+          });
+          const result = await res.json();
+          if (!res.ok) throw new Error(result.error || 'Failed to submit electronic signature.');
+          renderSigningPortal(token);
+        } catch (err) {
+          alert(err.message);
+          submitBtn.disabled = false;
+          submitBtn.textContent = 'Adopt and Sign Document';
+        }
+      };
+    }
+
+    // Decline signature
+    const declineBtn = $('#decline-sig-btn');
+    if (declineBtn) {
+      declineBtn.onclick = async () => {
+        const reason = prompt('Please enter your reason for declining this agreement (Optional):');
+        if (reason === null) return;
+        try {
+          const res = await fetch(`/api/signatures/decline/${encodeURIComponent(token)}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ reason: reason.trim() })
+          });
+          const result = await res.json();
+          if (!res.ok) throw new Error(result.error || 'Failed to decline document.');
+          $('#main').innerHTML = `
+            <div class="signing-header">
+              <div class="product-brand"><span class="orbit-symbol"></span><span>Orbit<small>Talent workspace</small></span></div>
+              <span class="badge declined">Declined</span>
+            </div>
+            <div class="signing-doc-info">
+              <h2>Signature Request Declined</h2>
+              <p>You have declined to sign <strong>${escape(session.request.title)}</strong>.</p>
+              ${reason ? `<p class="muted">Reason recorded: "${escape(reason)}"</p>` : ''}
+              <p class="muted">Your recruitment team has been notified.</p>
+            </div>
+          `;
+        } catch (err) {
+          alert(err.message);
+        }
+      };
+    }
+  } catch (err) {
+    $('#main').innerHTML = `<p class="error">${escape(err.message)}</p>`;
+  }
+}
+
+(async()=>{
+  const signToken = (location.pathname.startsWith('/sign/') ? location.pathname.split('/')[2] : '') ||
+    new URLSearchParams(location.search).get('sign') ||
+    (location.hash.startsWith('#sign=') ? location.hash.replace('#sign=', '') : '');
+
+  if (signToken) {
+    renderSigningPortal(signToken);
+    return;
+  }
+
+  try{
+    const data=await api('me');
+    me={ ...data.user, agency: data.agency };
+    csrf=data.csrf;
+    permissions=data.permissions;
+    loadSavedPages();
+    const nav=getNavList();
+    current=getSavedNav(nav);
+    await render();
+  }catch{
+    login();
+  }
+  if('serviceWorker'in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{});
+})();
