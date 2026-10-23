@@ -659,16 +659,17 @@ export const INTEGRATION_REGISTRY = [
         label: 'HRMS Base API URL',
         type: 'text',
         required: true,
-        placeholder: 'https://hrms.internal.company.com/api/v1',
-        helpText: 'Base HTTPS endpoint of the enterprise HRMS.',
+        placeholder: 'https://sdwvesrggcifhpatfhon.supabase.co',
+        helpText: 'Base HTTPS endpoint of your enterprise HRMS or Supabase project URL.',
         validate: v => validateSafeUrl(v, { label: 'HRMS Base URL', requireHttps: true })
       },
       {
         key: 'resourcePath',
         label: 'Handoff Resource Path',
         type: 'text',
-        default: '/hires',
-        placeholder: '/hires',
+        default: '/rest/v1',
+        placeholder: '/rest/v1',
+        helpText: 'API resource path prefix (/rest/v1 for Supabase Data API, or custom /hires).',
         validate: v => {
           const path = String(v || '').trim();
           if (!path.startsWith('/')) throw new HttpError(400, 'Resource path must start with "/".');
@@ -682,7 +683,7 @@ export const INTEGRATION_REGISTRY = [
         required: true,
         default: 'bearer',
         options: [
-          { value: 'bearer', label: 'Bearer Token (Authorization: Bearer <token>)' },
+          { value: 'bearer', label: 'Bearer Token (Authorization: Bearer <token> / Supabase service_role)' },
           { value: 'api_key', label: 'API Key Header (X-API-Key: <key>)' },
           { value: 'basic', label: 'HTTP Basic Auth (Authorization: Basic <base64>)' }
         ]
@@ -694,7 +695,7 @@ export const INTEGRATION_REGISTRY = [
         secret: true,
         required: true,
         placeholder: '••••••••',
-        helpText: 'Secret credentials for HRMS API access.'
+        helpText: 'Secret credentials for API access (use Supabase service_role key for Supabase).'
       },
       {
         key: 'timeoutMs',

@@ -12,6 +12,7 @@ import { analyzeFraudRisk } from './fraud/detector.js';
 import { draftJobDescription } from './ai/draft.js';
 import { createSignatureRequest } from './signature/service.js';
 import { getEffectiveIntegrationConfig } from './integrations/storage.js';
+import { existsSync, readFileSync } from 'node:fs';
 import { validateSafeUrl } from './integrations/registry.js';
 
 export class AdapterNotConfigured extends Error {
@@ -294,6 +295,22 @@ export class HrmsAdapter {
     this.transport = options.transport || fetch;
   }
 
+  isSupabase() {
+    const base = String(this.baseUrl || '').toLowerCase();
+    const res = String(this.resourcePath || '').toLowerCase();
+    return base.includes('supabase.co') || res.includes('rest/v1');
+  }
+
+  getSupabaseHeaders(customPrefer = 'return=representation,resolution=merge-duplicates') {
+    return {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      'apikey': this.apiKey,
+      'Authorization': `Bearer ${this.apiKey}`,
+      'Prefer': customPrefer
+    };
+  }
+
   async handoff({ hireId, approvedFields = {}, idempotencyKey } = {}) {
     if (!this.configured || !this.baseUrl || !this.apiKey) {
       throw new AdapterNotConfigured('HRMS');
@@ -306,8 +323,244 @@ export class HrmsAdapter {
 
     const cleanBase = this.baseUrl.replace(/\/+$/, '');
     const cleanPath = this.resourcePath.startsWith('/') ? this.resourcePath : `/${this.resourcePath}`;
-    const targetUrl = `${cleanBase}${cleanPath}`;
 
+    // Handle Native Supabase BaaS Mode
+    if (this.isSupabase()) {
+      const restBasePath = cleanPath.endsWith('/users')
+        ? cleanPath.replace(/\/users$/, '')
+        : (cleanPath.includes('rest/v1') ? cleanPath.replace(/\/+$/, '') : '/rest/v1');
+
+      const userUrl = `${cleanBase}${restBasePath}/users?on_conflict=email`;
+      const documentsUrl = `${cleanBase}${restBasePath}/employee_documents?on_conflict=employee_id,document_type_id`;
+      const referralsUrl = `${cleanBase}${restBasePath}/referrals`;
+
+      const candidate = approvedFields.candidate || {};
+      const requisition = approvedFields.requisition || {};
+      const offer = approvedFields.offer || {};
+
+      const fullName = approvedFields.full_name || approvedFields.fullName || candidate.name || approvedFields.name || 'New Hire';
+      const email = approvedFields.company_email || approvedFields.email || candidate.email || '';
+      const personalEmail = approvedFields.personal_email || candidate.email || approvedFields.email || null;
+      const phone = approvedFields.phone || candidate.phone || null;
+      const position = approvedFields.position || approvedFields.jobTitle || requisition.title || approvedFields.title || null;
+      const designationOfferLetter = approvedFields.designation_offer_letter || approvedFields.designation || offer.designation || position;
+      const departmentId = approvedFields.department_id || requisition.department_id || null;
+      const managerId = approvedFields.manager_id || requisition.manager_id || null;
+      const salary = approvedFields.salary || offer.annual_salary || requisition.salary_min || null;
+      const monthlyCtc = approvedFields.monthly_ctc || (salary ? String(Math.round(Number(salary) / 12)) : null);
+      const dateOfJoining = approvedFields.date_of_joining || approvedFields.joining_date || offer.joining_date || null;
+
+      // Resolve department UUID if team name is provided
+      const KNOWN_DEPARTMENTS = {
+        'human resources': '68733254-c417-4cb9-a085-0b3be3d0f358',
+        'hr': '68733254-c417-4cb9-a085-0b3be3d0f358',
+        'finance': 'f9c3d859-911c-4a4f-a401-7153637f309b',
+        'business development': '0aadecce-c5ee-4108-b2b0-ed4135acde06',
+        'bd': '0aadecce-c5ee-4108-b2b0-ed4135acde06',
+        'service delivery': 'cabdcb45-e5fe-4614-b4f0-54ca7e9f35d7',
+        'sd': 'cabdcb45-e5fe-4614-b4f0-54ca7e9f35d7',
+        'quality assurance': 'bf4c86d3-f6ab-4edf-b89b-9689873b031f',
+        'qa': 'bf4c86d3-f6ab-4edf-b89b-9689873b031f',
+        'engineering': 'e278a419-424d-45c3-b64e-4ae7682a6c19',
+        'marketing': 'e68c6f65-a9fe-4e3d-8500-e0786368fea7',
+        'project management': '18ebe2d4-7625-4d30-bccf-dbd4f97c32d6',
+        'pmo': '18ebe2d4-7625-4d30-bccf-dbd4f97c32d6'
+      };
+
+      let resolvedDeptId = null;
+      const rawDept = departmentId || requisition.team || candidate.team;
+      if (rawDept) {
+        if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(rawDept))) {
+          resolvedDeptId = rawDept;
+        } else {
+          resolvedDeptId = KNOWN_DEPARTMENTS[String(rawDept).toLowerCase().trim()] || null;
+        }
+      }
+
+      const userRow = {
+        full_name: fullName,
+        email: email,
+        personal_email: personalEmail,
+        phone: phone,
+        position: position,
+        designation_offer_letter: designationOfferLetter,
+        status: approvedFields.status || 'active',
+        auth_provider: approvedFields.auth_provider || 'manual',
+        role_id: approvedFields.role_id || '743fe423-7695-46c5-a6dc-19d0636add9b',
+        provider_user_id: String(hireId || candidate.id || `orbit_${Date.now()}`)
+      };
+      if (resolvedDeptId) userRow.department_id = resolvedDeptId;
+      if (managerId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(managerId))) {
+        userRow.manager_id = managerId;
+      }
+      if (salary !== null && salary !== undefined && salary !== '') userRow.salary = Number(salary);
+      if (monthlyCtc) userRow.monthly_ctc = String(monthlyCtc);
+      if (dateOfJoining) userRow.date_of_joining = dateOfJoining;
+
+      return withRetries(async () => {
+        const userRes = await this.transport(userUrl, {
+          method: 'POST',
+          headers: this.getSupabaseHeaders(),
+          body: JSON.stringify(userRow),
+          signal: AbortSignal.timeout(this.timeoutMs)
+        });
+
+        if (!userRes.ok) {
+          const errText = await userRes.text().catch(() => '');
+          const err = new Error(`Supabase HRMS user creation failed with HTTP ${userRes.status}: ${errText.slice(0, 150)}`);
+          err.status = userRes.status;
+          throw err;
+        }
+
+        const createdData = await userRes.json().catch(() => ({}));
+        const createdUser = Array.isArray(createdData) ? (createdData[0] || {}) : createdData;
+        const employeeId = createdUser.id || null;
+
+        // If signed document URL is available, attach to employee_documents
+        const docUrl = offer.signed_document_url || approvedFields.signed_document_url;
+        let attachedDocument = null;
+        if (employeeId && docUrl) {
+          const docTypeId = approvedFields.document_type_id || offer.document_type_id || 'eff934e6-8951-4912-b065-f7056352f394';
+          const docName = approvedFields.document_name || offer.document_name || 'Signed Offer Letter';
+          try {
+            const docRes = await this.transport(documentsUrl, {
+              method: 'POST',
+              headers: this.getSupabaseHeaders('return=representation,resolution=merge-duplicates'),
+              body: JSON.stringify({
+                employee_id: employeeId,
+                document_type_id: docTypeId,
+                document_name: docName,
+                file_url: docUrl,
+                status: 'uploaded'
+              }),
+              signal: AbortSignal.timeout(this.timeoutMs)
+            });
+            if (docRes.ok) {
+              const docData = await docRes.json().catch(() => ({}));
+              attachedDocument = Array.isArray(docData) ? (docData[0] || null) : docData;
+            } else {
+              const errBody = await docRes.text().catch(() => '');
+              console.error(`Supabase employee_documents insert failed [HTTP ${docRes.status}]: ${errBody.slice(0, 200)}`);
+            }
+          } catch (docErr) {
+            console.error('Supabase employee_documents error:', docErr.message);
+          }
+        }
+
+        // If candidate resume is available, upload to storage and attach to employee_documents
+        const resumeInfo = approvedFields.resume || candidate.resume || null;
+        let attachedResume = null;
+        if (employeeId && resumeInfo) {
+          const resumeTypeId = approvedFields.resume_document_type_id || resumeInfo.document_type_id || 'f75aafd6-416c-4683-9a72-bc4c12027b3d';
+          const resumeName = resumeInfo.filename || approvedFields.resume_filename || 'Candidate Resume';
+          let resumeFileUrl = resumeInfo.url || resumeInfo.download_url || null;
+
+          // If resume binary buffer or local storage path is present, upload to Supabase Storage
+          if (resumeInfo.buffer || (resumeInfo.storage_path && existsSync(resumeInfo.storage_path))) {
+            try {
+              const fileBuf = resumeInfo.buffer || readFileSync(resumeInfo.storage_path);
+              const folderName = String(fullName || 'employee').replace(/[^a-zA-Z0-9_-]/g, '_');
+              const cleanFileName = String(resumeName).replace(/[^a-zA-Z0-9._-]/g, '_');
+              const storagePath = `${folderName}/${cleanFileName}`;
+              const storageUploadUrl = `${cleanBase}/storage/v1/object/employee-documents/${storagePath}`;
+
+              const upRes = await this.transport(storageUploadUrl, {
+                method: 'POST',
+                headers: {
+                  'apikey': this.apiKey,
+                  'Authorization': `Bearer ${this.apiKey}`,
+                  'Content-Type': resumeInfo.mime_type || 'application/pdf',
+                  'x-upsert': 'true'
+                },
+                body: fileBuf,
+                signal: AbortSignal.timeout(this.timeoutMs)
+              });
+
+              if (upRes.ok) {
+                resumeFileUrl = `${cleanBase}/storage/v1/object/public/employee-documents/${storagePath}`;
+              }
+            } catch (upErr) {
+              console.error('Supabase resume storage upload error:', upErr.message);
+            }
+          }
+
+          if (resumeFileUrl) {
+            try {
+              const resDocRes = await this.transport(documentsUrl, {
+                method: 'POST',
+                headers: this.getSupabaseHeaders('return=representation,resolution=merge-duplicates'),
+                body: JSON.stringify({
+                  employee_id: employeeId,
+                  document_type_id: resumeTypeId,
+                  document_name: resumeName,
+                  file_url: resumeFileUrl,
+                  file_size: resumeInfo.file_size || null,
+                  mime_type: resumeInfo.mime_type || 'application/pdf',
+                  status: 'uploaded'
+                }),
+                signal: AbortSignal.timeout(this.timeoutMs)
+              });
+              if (resDocRes.ok) {
+                const resDocData = await resDocRes.json().catch(() => ({}));
+                attachedResume = Array.isArray(resDocData) ? (resDocData[0] || null) : resDocData;
+              } else {
+                const errBody = await resDocRes.text().catch(() => '');
+                console.error(`Supabase resume employee_documents insert failed [HTTP ${resDocRes.status}]: ${errBody.slice(0, 200)}`);
+              }
+            } catch (rErr) {
+              console.error('Supabase resume employee_documents error:', rErr.message);
+            }
+          }
+        }
+
+        // If referral exists for this candidate, mark referral as Hired and attach resume_url
+        const resumeUrl = attachedResume?.file_url || approvedFields.resume?.url || approvedFields.resume?.download_url || null;
+        if (personalEmail) {
+          const referralPayload = { status: 'Hired', bonus_eligible: true };
+          if (resumeUrl) {
+            referralPayload.resume_url = resumeUrl;
+          }
+          await this.transport(`${referralsUrl}?candidate_email=eq.${encodeURIComponent(personalEmail)}`, {
+            method: 'PATCH',
+            headers: this.getSupabaseHeaders('return=minimal'),
+            body: JSON.stringify(referralPayload),
+            signal: AbortSignal.timeout(this.timeoutMs)
+          }).catch(() => null);
+        }
+
+        // Sync candidate profile and resume_url to Supabase candidates table
+        const candidatesUrl = `${cleanBase}${restBasePath}/candidates?on_conflict=email`;
+        await this.transport(candidatesUrl, {
+          method: 'POST',
+          headers: this.getSupabaseHeaders('return=representation,resolution=merge-duplicates'),
+          body: JSON.stringify({
+            full_name: fullName,
+            email: email,
+            phone: phone,
+            position_applied: position || designationOfferLetter || 'New Hire',
+            resume_url: resumeUrl,
+            status: 'hired',
+            user_id: employeeId
+          }),
+          signal: AbortSignal.timeout(this.timeoutMs)
+        }).catch(() => null);
+
+        return {
+          ok: true,
+          status: 'accepted',
+          provider: 'supabase',
+          hireId,
+          employeeId,
+          providerReference: employeeId || `hrms_${hireId}`,
+          data: createdUser,
+          document: attachedDocument,
+          resume: attachedResume
+        };
+      }, { maxRetries: this.maxRetries });
+    }
+
+    // Generic Webhook / Enterprise API Mode
+    const targetUrl = `${cleanBase}${cleanPath}`;
     const headers = {
       'Content-Type': 'application/json',
       'Accept': 'application/json'
@@ -354,6 +607,34 @@ export class HrmsAdapter {
         data
       };
     }, { maxRetries: this.maxRetries });
+  }
+
+  async getDepartments() {
+    if (!this.configured || !this.baseUrl || !this.apiKey) throw new AdapterNotConfigured('HRMS');
+    validateSafeUrl(this.baseUrl, { label: 'HRMS Base URL', requireHttps: true });
+    const cleanBase = this.baseUrl.replace(/\/+$/, '');
+    const cleanPath = this.resourcePath.startsWith('/') ? this.resourcePath : `/${this.resourcePath}`;
+    const targetUrl = this.isSupabase()
+      ? `${cleanBase}${cleanPath.replace(/\/users$/, '')}/departments?select=id,name,description`
+      : `${cleanBase}/departments`;
+    const headers = this.isSupabase() ? this.getSupabaseHeaders('return=representation') : { 'Accept': 'application/json' };
+    const res = await this.transport(targetUrl, { method: 'GET', headers, signal: AbortSignal.timeout(this.timeoutMs) });
+    if (!res.ok) throw new Error(`Failed to fetch departments from HRMS: HTTP ${res.status}`);
+    return await res.json();
+  }
+
+  async getActiveEmployees() {
+    if (!this.configured || !this.baseUrl || !this.apiKey) throw new AdapterNotConfigured('HRMS');
+    validateSafeUrl(this.baseUrl, { label: 'HRMS Base URL', requireHttps: true });
+    const cleanBase = this.baseUrl.replace(/\/+$/, '');
+    const cleanPath = this.resourcePath.startsWith('/') ? this.resourcePath : `/${this.resourcePath}`;
+    const targetUrl = this.isSupabase()
+      ? `${cleanBase}${cleanPath.replace(/\/users$/, '')}/users?select=id,full_name,email,position,department_id&status=eq.active`
+      : `${cleanBase}/employees?status=active`;
+    const headers = this.isSupabase() ? this.getSupabaseHeaders('return=representation') : { 'Accept': 'application/json' };
+    const res = await this.transport(targetUrl, { method: 'GET', headers, signal: AbortSignal.timeout(this.timeoutMs) });
+    if (!res.ok) throw new Error(`Failed to fetch active employees from HRMS: HTTP ${res.status}`);
+    return await res.json();
   }
 }
 
