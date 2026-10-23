@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fixture, user, testConfig } from './helpers.js';
+import { fixture, user, testConfig, reqBody, candidateBody } from './helpers.js';
 import { service } from '../src/service.js';
 import { HrmsAdapter, AdapterNotConfigured } from '../src/adapters.js';
 import { encryptSecret, decryptSecret, isMasked, MASKED_VALUE } from '../src/integrations/crypto.js';
@@ -446,3 +446,231 @@ test('Configuration Precedence: Database-persisted configuration overrides envir
 
   f.db.close();
 });
+
+test('Supabase HRMS Data API: Outbound handoff formats table rows, attaches documents, and updates referrals', async () => {
+  const capturedRequests = [];
+  const mockTransport = async (url, opts) => {
+    capturedRequests.push({ url, ...opts });
+    if (url.includes('/users')) {
+      return {
+        ok: true,
+        status: 201,
+        json: async () => [{
+          id: 'user_supabase_uuid_101',
+          full_name: 'Aarav Patel',
+          email: 'aarav.patel@mechlin.com',
+          status: 'onboarding'
+        }]
+      };
+    }
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({})
+    };
+  };
+
+  const adapter = new HrmsAdapter({
+    baseUrl: 'https://sdwvesrggcifhpatfhon.supabase.co',
+    resourcePath: '/rest/v1',
+    authType: 'bearer',
+    apiKey: 'supabase_service_role_secret_abc123',
+    transport: mockTransport
+  });
+
+  assert.equal(adapter.isSupabase(), true);
+
+  const result = await adapter.handoff({
+    hireId: 'app_hire_789',
+    approvedFields: {
+      candidate: {
+        id: 'cand_999',
+        name: 'Aarav Patel',
+        email: 'aarav.patel@gmail.com',
+        phone: '+91 98765 12345'
+      },
+      requisition: {
+        title: 'Senior Frontend Engineer',
+        department_id: 'dept_uuid_555'
+      },
+      offer: {
+        designation: 'Senior Frontend Engineer',
+        annual_salary: 2400000,
+        joining_date: '2026-11-15',
+        signed_document_url: 'https://orbit.corp/api/docs/signed_offer_aarav.pdf'
+      },
+      resume: {
+        filename: 'Aarav_Patel_Resume.pdf',
+        download_url: 'https://orbit.corp/api/candidates/cand_999/resume',
+        file_size: 15420,
+        mime_type: 'application/pdf'
+      }
+    },
+    idempotencyKey: 'idemp_supabase_123'
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.provider, 'supabase');
+  assert.equal(result.employeeId, 'user_supabase_uuid_101');
+
+  // Verify requests sent to Supabase PostgREST
+  assert.equal(capturedRequests.length, 5);
+
+  // 1. users table insert
+  const userReq = capturedRequests[0];
+  assert.equal(userReq.url, 'https://sdwvesrggcifhpatfhon.supabase.co/rest/v1/users?on_conflict=email');
+  assert.equal(userReq.headers['apikey'], 'supabase_service_role_secret_abc123');
+  assert.equal(userReq.headers['Authorization'], 'Bearer supabase_service_role_secret_abc123');
+  assert.equal(userReq.headers['Prefer'], 'return=representation,resolution=merge-duplicates');
+  const userBody = JSON.parse(userReq.body);
+  assert.equal(userBody.full_name, 'Aarav Patel');
+  assert.equal(userBody.email, 'aarav.patel@gmail.com');
+  assert.equal(userBody.salary, 2400000);
+  assert.equal(userBody.monthly_ctc, '200000');
+  assert.equal(userBody.date_of_joining, '2026-11-15');
+  assert.equal(userBody.status, 'active');
+  assert.equal(userBody.auth_provider, 'manual');
+
+  // 2. employee_documents insert (Offer Letter)
+  const docReq = capturedRequests[1];
+  assert.equal(docReq.url, 'https://sdwvesrggcifhpatfhon.supabase.co/rest/v1/employee_documents?on_conflict=employee_id,document_type_id');
+  const docBody = JSON.parse(docReq.body);
+  assert.equal(docBody.employee_id, 'user_supabase_uuid_101');
+  assert.equal(docBody.file_url, 'https://orbit.corp/api/docs/signed_offer_aarav.pdf');
+  assert.equal(docBody.document_type_id, 'eff934e6-8951-4912-b065-f7056352f394');
+  assert.equal(docBody.status, 'uploaded');
+
+  // 3. employee_documents insert (Resume / CV)
+  const resumeReq = capturedRequests[2];
+  assert.equal(resumeReq.url, 'https://sdwvesrggcifhpatfhon.supabase.co/rest/v1/employee_documents?on_conflict=employee_id,document_type_id');
+  const resumeBody = JSON.parse(resumeReq.body);
+  assert.equal(resumeBody.employee_id, 'user_supabase_uuid_101');
+  assert.equal(resumeBody.file_url, 'https://orbit.corp/api/candidates/cand_999/resume');
+  assert.equal(resumeBody.document_type_id, 'f75aafd6-416c-4683-9a72-bc4c12027b3d');
+  assert.equal(resumeBody.status, 'uploaded');
+
+  // 4. referrals update
+  const refReq = capturedRequests[3];
+  assert.equal(refReq.url, 'https://sdwvesrggcifhpatfhon.supabase.co/rest/v1/referrals?candidate_email=eq.aarav.patel%40gmail.com');
+  assert.equal(refReq.method, 'PATCH');
+  const refBody = JSON.parse(refReq.body);
+  assert.equal(refBody.status, 'Hired');
+  assert.equal(refBody.bonus_eligible, true);
+  assert.equal(refBody.resume_url, 'https://orbit.corp/api/candidates/cand_999/resume');
+
+  // 5. candidates table sync
+  const candReq = capturedRequests[4];
+  assert.equal(candReq.url, 'https://sdwvesrggcifhpatfhon.supabase.co/rest/v1/candidates?on_conflict=email');
+  const candBody = JSON.parse(candReq.body);
+  assert.equal(candBody.full_name, 'Aarav Patel');
+  assert.equal(candBody.email, 'aarav.patel@gmail.com');
+  assert.equal(candBody.resume_url, 'https://orbit.corp/api/candidates/cand_999/resume');
+  assert.equal(candBody.user_id, 'user_supabase_uuid_101');
+  assert.equal(candBody.status, 'hired');
+});
+
+test('Supabase HRMS: Connection test authenticates against /rest/v1/ with apikey header', async () => {
+  const f = fixture();
+  f.config = testConfig();
+
+  let capturedUrl = null;
+  let capturedHeaders = null;
+  const mockTransport = async (url, opts) => {
+    capturedUrl = url;
+    capturedHeaders = opts.headers;
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ swagger: '2.0', info: { title: 'PostgREST API' } })
+    };
+  };
+
+  const testResult = await call(f, f.admin, 'POST', 'admin/integrations/hrms/test', {
+    config: {
+      baseUrl: 'https://sdwvesrggcifhpatfhon.supabase.co',
+      resourcePath: '/rest/v1',
+      authType: 'bearer'
+    },
+    secrets: {
+      apiKey: 'mock_service_role_key'
+    }
+  }, null, { transport: mockTransport });
+
+  assert.equal(testResult.ok, true);
+  assert.equal(testResult.status, 'connected');
+  assert.equal(testResult.details.provider, 'supabase');
+  assert.equal(capturedUrl, 'https://sdwvesrggcifhpatfhon.supabase.co/rest/v1/');
+  assert.equal(capturedHeaders['apikey'], 'mock_service_role_key');
+  assert.equal(capturedHeaders['Authorization'], 'Bearer mock_service_role_key');
+
+  f.db.close();
+});
+
+test('Stage transition to Hired dispatches automated HRMS handoff when syncEnabled', async () => {
+  const f = fixture();
+  f.config = testConfig();
+
+  // Configure HRMS with syncEnabled
+  await call(f, f.admin, 'PUT', 'admin/integrations/hrms', {
+    enabled: true,
+    config: {
+      baseUrl: 'https://sdwvesrggcifhpatfhon.supabase.co',
+      resourcePath: '/rest/v1',
+      authType: 'bearer',
+      syncEnabled: true
+    },
+    secrets: {
+      apiKey: 'test_service_key'
+    }
+  });
+
+  let handoffDispatched = false;
+  const mockTransport = async (url, opts) => {
+    if (url.includes('/users')) {
+      handoffDispatched = true;
+      return {
+        ok: true,
+        status: 201,
+        json: async () => [{ id: 'user_hire_sync_1' }]
+      };
+    }
+    return { ok: true, status: 200, json: async () => ({}) };
+  };
+
+  // Create requisition and approve
+  const req = await call(f, f.recruiter, 'POST', 'requisitions', reqBody);
+  await call(f, f.recruiter, 'POST', `requisitions/${req.id}/submit`);
+  await call(f, f.manager, 'POST', `requisitions/${req.id}/approve`, {});
+  await call(f, f.finance, 'POST', `requisitions/${req.id}/approve`, {});
+
+  // Create candidate and application
+  const cand = await call(f, f.recruiter, 'POST', 'candidates', candidateBody);
+  const app = await call(f, f.recruiter, 'POST', 'applications', { candidate_id: cand.id, requisition_id: req.id });
+
+  // Transition: Applied -> Screening -> Interview -> Offer
+  await call(f, f.recruiter, 'POST', `applications/${app.id}/stage`, { stage: 'Screening' });
+  await call(f, f.recruiter, 'POST', `applications/${app.id}/stage`, { stage: 'Interview' });
+  await call(f, f.recruiter, 'POST', `applications/${app.id}/stage`, { stage: 'Offer' });
+
+  // Move to Hired with mock transport
+  await call(f, f.recruiter, 'POST', `applications/${app.id}/stage`, {
+    stage: 'Hired'
+  }, new URLSearchParams(), { ...f.config, transport: mockTransport });
+
+  assert.equal(handoffDispatched, true);
+
+  // Verify audit entry for automatic handoff
+  const auditRow = f.db.prepare("SELECT * FROM audit WHERE event = 'application.hrms_handoff_success' AND target = ?").get(app.id);
+  assert.ok(auditRow);
+  const detail = JSON.parse(auditRow.detail);
+  assert.equal(detail.employeeId, 'user_hire_sync_1');
+  assert.equal(detail.provider, 'supabase');
+
+  // Test manual handoff endpoint POST applications/:id/hrms-handoff
+  const manualResult = await call(f, f.recruiter, 'POST', `applications/${app.id}/hrms-handoff`, {}, null, { ...f.config, transport: mockTransport });
+  assert.equal(manualResult.ok, true);
+  assert.equal(manualResult.provider, 'supabase');
+
+  f.db.close();
+});
+
