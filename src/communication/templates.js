@@ -49,8 +49,11 @@ function baseLayout({ title, bodyHtml, candidateName, isOperational = false }) {
 }
 
 function interviewSchedule(vars = {}) {
-  const requestedTimezone = vars.timezone ? String(vars.timezone) : 'UTC';
+  const requestedTimezone = vars.timezone ? String(vars.timezone) : 'Asia/Kolkata';
   let timezone = requestedTimezone;
+  if (timezone === 'UTC') {
+    timezone = 'Asia/Kolkata';
+  }
   let scheduledAt = 'To be confirmed';
   if (vars.scheduled_at) {
     const date = new Date(vars.scheduled_at);
@@ -66,7 +69,7 @@ function interviewSchedule(vars = {}) {
           minute: '2-digit'
         }).format(date);
       } catch {
-        timezone = 'UTC';
+        timezone = 'Asia/Kolkata';
         scheduledAt = new Intl.DateTimeFormat('en-US', {
           timeZone: timezone,
           weekday: 'long',
@@ -80,10 +83,11 @@ function interviewSchedule(vars = {}) {
     }
   }
   const parsedDuration = Number(vars.duration_minutes);
+  const displayTz = (timezone === 'Asia/Kolkata' || timezone === 'Asia/Calcutta' || timezone === 'IST') ? 'IST' : timezone;
   return {
-    scheduledAt: `${scheduledAt} (${timezone})`,
+    scheduledAt: `${scheduledAt} (${displayTz})`,
     duration: Number.isFinite(parsedDuration) && parsedDuration > 0 ? parsedDuration : 45,
-    timezone
+    timezone: displayTz
   };
 }
 
@@ -119,6 +123,11 @@ export const TEMPLATES = {
       const candidateName = vars.candidate_name || 'Candidate';
       const reqTitle = vars.requisition_title || 'Open Position';
       const team = vars.team ? ` on the ${vars.team} team` : '';
+      const notes = vars.notes ? `
+        <div style="background-color: #f8fafc; border-left: 3px solid #4f46e5; border-radius: 4px; padding: 14px 16px; margin: 18px 0;">
+          <p style="margin: 0; font-size: 14px; color: #334155;"><strong>Additional Details:</strong><br>${escapeHtml(vars.notes)}</p>
+        </div>
+      ` : '';
       const title = `Application received: ${reqTitle}`;
       const subject = `Application received: ${reqTitle} at Mechlin Orbit`;
 
@@ -130,6 +139,7 @@ export const TEMPLATES = {
           <p style="font-size: 15px; margin-bottom: 16px;">Dear ${escapeHtml(candidateName)},</p>
           <p style="font-size: 15px; margin-bottom: 16px;">Thank you for your interest in joining Mechlin! We have received your application for the <strong>${escapeHtml(reqTitle)}</strong> position${escapeHtml(team)}.</p>
           <p style="font-size: 15px; margin-bottom: 16px;">Our talent acquisition team and hiring managers are reviewing your background and qualifications. If your skills and experience align with what we are seeking for this role, a member of our team will reach out to discuss next steps.</p>
+          ${notes}
           <p style="font-size: 15px; margin-bottom: 0;">We appreciate the time you took to share your qualifications with us.</p>
         `
       });
@@ -139,7 +149,7 @@ export const TEMPLATES = {
 Thank you for your interest in joining Mechlin! We have received your application for the ${reqTitle} position${team}.
 
 Our talent acquisition team and hiring managers are reviewing your background and qualifications. If your skills and experience align with what we are seeking for this role, a member of our team will reach out to discuss next steps.
-
+${vars.notes ? `\nAdditional Details:\n${vars.notes}\n` : ''}
 We appreciate the time you took to share your qualifications with us.
 
 Warm regards,
@@ -270,7 +280,28 @@ The Mechlin Talent Team`;
     render(vars) {
       const candidateName = vars.candidate_name || 'Candidate';
       const reqTitle = vars.requisition_title || 'Position';
-      const scheduledAt = vars.scheduled_at ? new Date(vars.scheduled_at).toUTCString() : '';
+      let scheduledAt = '';
+      if (vars.scheduled_at) {
+        const date = new Date(vars.scheduled_at);
+        if (Number.isFinite(date.getTime())) {
+          let tz = vars.timezone || 'Asia/Kolkata';
+          if (tz === 'UTC') tz = 'Asia/Kolkata';
+          const displayTz = (tz === 'Asia/Kolkata' || tz === 'Asia/Calcutta' || tz === 'IST') ? 'IST' : tz;
+          try {
+            scheduledAt = `${new Intl.DateTimeFormat('en-US', {
+              timeZone: tz === 'IST' ? 'Asia/Kolkata' : tz,
+              weekday: 'short',
+              year: 'numeric',
+              month: 'short',
+              day: 'numeric',
+              hour: 'numeric',
+              minute: '2-digit'
+            }).format(date)} (${displayTz})`;
+          } catch {
+            scheduledAt = `${date.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })} (IST)`;
+          }
+        }
+      }
       const reason = vars.notes ? `<p style="font-size: 14px; background: #f8fafc; border-left: 3px solid #0f172a; padding: 12px; margin: 16px 0;"><strong>Reason / Notes:</strong><br>${escapeHtml(vars.notes)}</p>` : '';
       const title = `Interview Cancelled: ${reqTitle}`;
       const subject = `Interview cancelled: ${reqTitle} at Mechlin Orbit`;
@@ -308,6 +339,11 @@ The Mechlin Talent Team`;
     render(vars) {
       const candidateName = vars.candidate_name || 'Candidate';
       const reqTitle = vars.requisition_title || 'Position';
+      const notes = vars.notes ? `
+        <div style="background-color: #f8fafc; border-left: 3px solid #64748b; border-radius: 4px; padding: 14px 16px; margin: 18px 0;">
+          <p style="margin: 0; font-size: 14px; color: #334155;"><strong>Feedback / Additional Notes:</strong><br>${escapeHtml(vars.notes)}</p>
+        </div>
+      ` : '';
       const title = `Update on your application: ${reqTitle}`;
       const subject = `Update regarding your application for ${reqTitle}`;
 
@@ -319,6 +355,7 @@ The Mechlin Talent Team`;
           <p style="font-size: 15px; margin-bottom: 16px;">Dear ${escapeHtml(candidateName)},</p>
           <p style="font-size: 15px; margin-bottom: 16px;">Thank you for your interest in Mechlin and for the time and energy you invested in applying for the <strong>${escapeHtml(reqTitle)}</strong> position.</p>
           <p style="font-size: 15px; margin-bottom: 16px;">We received a strong response from many qualified candidates, and after thoughtful consideration, we have decided to move forward with other applicants whose experience more closely matches our immediate needs for this specific role.</p>
+          ${notes}
           <p style="font-size: 15px; margin-bottom: 16px;">We were impressed by your skills and would love to stay connected for future opportunities that may be a strong fit for your career goals.</p>
           <p style="font-size: 15px; margin-bottom: 0;">We wish you every success in your ongoing job search and professional journey.</p>
         `
@@ -329,7 +366,7 @@ The Mechlin Talent Team`;
 Thank you for your interest in Mechlin and for the time and energy you invested in applying for the ${reqTitle} position.
 
 We received a strong response from many qualified candidates, and after thoughtful consideration, we have decided to move forward with other applicants whose experience more closely matches our immediate needs for this specific role.
-
+${vars.notes ? `\nFeedback / Additional Notes:\n${vars.notes}\n` : ''}
 We were impressed by your skills and would love to stay connected for future opportunities that may be a strong fit for your career goals.
 
 We wish you every success in your ongoing job search and professional journey.
