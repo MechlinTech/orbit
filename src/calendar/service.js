@@ -6,14 +6,39 @@
 import { audit } from '../db.js';
 import { getGraphAccessToken, createTeamsMeetingEvent, updateTeamsMeetingEvent, cancelTeamsMeetingEvent } from './graph.js';
 import { escapeHtml } from '../communication/templates.js';
+import { getEffectiveIntegrationConfig } from '../integrations/storage.js';
 
-export function getCalendarConfig(c = {}) {
-  const adapter = c?.calendarAdapter;
-  const tenant = c.entraTenantId || adapter?.tenant || process.env.ENTRA_TENANT_ID || process.env.MICROSOFT_TENANT_ID || null;
-  const client = c.entraClientId || adapter?.client || process.env.ENTRA_CLIENT_ID || process.env.MICROSOFT_CLIENT_ID || null;
-  const secret = c.entraClientSecret || adapter?.secret || process.env.ENTRA_CLIENT_SECRET || process.env.MICROSOFT_CLIENT_SECRET || null;
-  const organizerEmail = c.teamsOrganizerEmail || adapter?.organizerEmail || process.env.TEAMS_ORGANIZER_EMAIL || process.env.MICROSOFT_ORGANIZER_EMAIL || null;
-  const enabled = process.env.ENABLE_TEAMS_CALENDAR !== 'false' && (c.enableTeamsCalendar !== false) && (adapter ? Boolean(adapter.configured) : true);
+export function getCalendarConfig(c = {}, db = null) {
+  let targetDb = db;
+  let conf = c || {};
+  if (c && typeof c.prepare === 'function') {
+    targetDb = c;
+    conf = {};
+  } else if (!targetDb && c?.db) {
+    targetDb = c.db;
+  }
+
+  let dyn = null;
+  if (targetDb) {
+    try {
+      const eff = getEffectiveIntegrationConfig(targetDb, 'microsoft_calendar');
+      if (eff && eff.enabled && eff.isConfigured) {
+        dyn = {
+          tenant: eff.config.tenantId,
+          client: eff.config.clientId,
+          secret: eff.secrets.clientSecret,
+          organizerEmail: eff.config.organizerEmail
+        };
+      }
+    } catch {}
+  }
+
+  const adapter = conf?.calendarAdapter;
+  const tenant = conf.entraTenantId || adapter?.tenant || dyn?.tenant || process.env.ENTRA_TENANT_ID || process.env.MICROSOFT_TENANT_ID || null;
+  const client = conf.entraClientId || adapter?.client || dyn?.client || process.env.ENTRA_CLIENT_ID || process.env.MICROSOFT_CLIENT_ID || null;
+  const secret = conf.entraClientSecret || adapter?.secret || dyn?.secret || process.env.ENTRA_CLIENT_SECRET || process.env.MICROSOFT_CLIENT_SECRET || null;
+  const organizerEmail = conf.teamsOrganizerEmail || adapter?.organizerEmail || dyn?.organizerEmail || process.env.TEAMS_ORGANIZER_EMAIL || process.env.MICROSOFT_ORGANIZER_EMAIL || null;
+  const enabled = process.env.ENABLE_TEAMS_CALENDAR !== 'false' && (conf.enableTeamsCalendar !== false) && (adapter ? Boolean(adapter.configured) : true);
 
   return {
     tenant,
@@ -24,8 +49,8 @@ export function getCalendarConfig(c = {}) {
   };
 }
 
-export function isCalendarConfigured(c = {}) {
-  return getCalendarConfig(c).enabled;
+export function isCalendarConfigured(c = {}, db = null) {
+  return getCalendarConfig(c, db).enabled;
 }
 
 /**
@@ -56,7 +81,7 @@ export async function syncScheduleMeeting({
   transport = fetch,
   config = {}
 }) {
-  const conf = getCalendarConfig(config);
+  const conf = getCalendarConfig(config, db);
   if (!conf.enabled) {
     return {
       synced: false,
@@ -75,6 +100,37 @@ export async function syncScheduleMeeting({
       meeting_url: existing.meeting_url,
       calendar_event_id: existing.calendar_event_id,
       idempotent_replay: true
+    };
+  }
+
+  const isDemo = Boolean(
+    (conf.tenant && conf.tenant.includes('demo')) ||
+    (conf.client && conf.client.includes('demo')) ||
+    (process.env.SIMULATE_TEAMS_MEETING === 'true')
+  );
+
+  if (isDemo && transport === fetch) {
+    const demoMeetingUrl = `https://teams.microsoft.com/l/meetup-join/orbit-demo-meeting-${interviewId}`;
+    const demoEventId = `teams-evt-demo-${interviewId}`;
+    db.prepare(`
+      UPDATE interviews
+      SET meeting_url = ?, calendar_event_id = ?, calendar_status = 'synced'
+      WHERE id = ?
+    `).run(demoMeetingUrl, demoEventId, interviewId);
+
+    audit(db, user?.id || 'system', 'calendar.event_created', interviewId, {
+      event_id: demoEventId,
+      meeting_url: demoMeetingUrl,
+      organizer: conf.organizerEmail,
+      simulated: true
+    });
+
+    return {
+      synced: true,
+      calendar_status: 'synced',
+      meeting_url: demoMeetingUrl,
+      calendar_event_id: demoEventId,
+      simulated: true
     };
   }
 
@@ -170,7 +226,7 @@ export async function syncRescheduleMeeting({
   transport = fetch,
   config = {}
 }) {
-  const conf = getCalendarConfig(config);
+  const conf = getCalendarConfig(config, db);
   if (!conf.enabled) {
     return {
       synced: false,
@@ -196,6 +252,35 @@ export async function syncRescheduleMeeting({
       transport,
       config
     });
+  }
+
+  const isDemo = Boolean(
+    (conf.tenant && conf.tenant.includes('demo')) ||
+    (conf.client && conf.client.includes('demo')) ||
+    (process.env.SIMULATE_TEAMS_MEETING === 'true')
+  );
+
+  if (isDemo && transport === fetch) {
+    const demoMeetingUrl = current.meeting_url || `https://teams.microsoft.com/l/meetup-join/orbit-demo-meeting-${interviewId}`;
+    db.prepare(`
+      UPDATE interviews
+      SET calendar_status = 'synced', meeting_url = ?
+      WHERE id = ?
+    `).run(demoMeetingUrl, interviewId);
+
+    audit(db, user?.id || 'system', 'calendar.event_updated', interviewId, {
+      event_id: current.calendar_event_id,
+      meeting_url: demoMeetingUrl,
+      simulated: true
+    });
+
+    return {
+      synced: true,
+      calendar_status: 'synced',
+      meeting_url: demoMeetingUrl,
+      calendar_event_id: current.calendar_event_id,
+      simulated: true
+    };
   }
 
   const endsAt = calculateEndTime(scheduledAt, durationMinutes);
@@ -283,7 +368,7 @@ export async function syncCancelMeeting({
   transport = fetch,
   config = {}
 }) {
-  const conf = getCalendarConfig(config);
+  const conf = getCalendarConfig(config, db);
   const current = db.prepare('SELECT calendar_event_id FROM interviews WHERE id = ?').get(interviewId);
 
   if (!conf.enabled || !current?.calendar_event_id) {
@@ -293,6 +378,28 @@ export async function syncCancelMeeting({
       WHERE id = ?
     `).run(interviewId);
     return { cancelled: true, remoteCancelled: false };
+  }
+
+  const isDemo = Boolean(
+    (conf.tenant && conf.tenant.includes('demo')) ||
+    (conf.client && conf.client.includes('demo')) ||
+    (process.env.SIMULATE_TEAMS_MEETING === 'true')
+  );
+
+  if (isDemo && transport === fetch) {
+    db.prepare(`
+      UPDATE interviews
+      SET calendar_status = 'cancelled'
+      WHERE id = ?
+    `).run(interviewId);
+
+    audit(db, user?.id || 'system', 'calendar.event_cancelled', interviewId, {
+      event_id: current.calendar_event_id,
+      comment,
+      simulated: true
+    });
+
+    return { cancelled: true, remoteCancelled: true, simulated: true };
   }
 
   try {
