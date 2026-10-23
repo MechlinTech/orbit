@@ -265,13 +265,46 @@ const formatLabel = (label, required) => {
 const field = (label,name,type='text',value='',required=true,extra='') => `<label>${formatLabel(label, required)}<input name="${name}" type="${type}" value="${escape(value)}" ${required?'required aria-required="true"':''} ${extra}><span class="field-error error" id="${name}-error" role="alert"></span></label>`;
 const area = (label,name,value='',required=false) => `<label class="full">${formatLabel(label, required)}<textarea name="${name}" ${required?'required aria-required="true"':''}>${escape(value)}</textarea></label>`;
 const select = (label,name,values,selected='',required=true) => `<label>${formatLabel(label, required)}<select name="${name}" ${required?'required aria-required="true"':''}>${values.map(v=>{const [id,title]=Array.isArray(v)?v:[v,v];return `<option value="${escape(id)}" ${id===selected?'selected':''}>${escape(title)}</option>`;}).join('')}</select></label>`;
-const searchableSelect = (label,name,values,selected='',required=true,placeholder='Search options') => `<label>${formatLabel(label, required)}<input type="search" class="select-search" data-search-select="${name}" placeholder="${escape(placeholder)}" aria-label="${escape(`Search ${label}`)}" autocomplete="off"><select name="${name}" ${required?'required aria-required="true"':''}>${values.map(v=>{const [id,title]=Array.isArray(v)?v:[v,v];return `<option value="${escape(id)}" data-search="${escape(String(title).toLowerCase())}" ${id===selected?'selected':''}>${escape(title)}</option>`;}).join('')}</select></label>`;
+const searchableSelect = (label,name,values,selected='',required=true,placeholder='Search options') => {
+  const options = values.map(v=>{const [id,title]=Array.isArray(v)?v:[v,v];return {id:String(id),title:String(title)};});
+  const selectedOption = options.find(o=>o.id===String(selected));
+  return `<label class="searchable-field" data-searchable-field="${name}">${formatLabel(label, required)}
+    <div class="searchable-combobox">
+      <input type="search" class="select-search" data-search-select="${name}" placeholder="${escape(placeholder)}" aria-label="${escape(`Search ${label}`)}" autocomplete="off" role="combobox" aria-expanded="false" aria-autocomplete="list" aria-controls="${name}-options" value="${escape(selectedOption?.title||'')}">
+      <button type="button" class="searchable-toggle" tabindex="-1" aria-label="${escape(`Show ${label} options`)}">▾</button>
+      <div class="searchable-options" id="${name}-options" role="listbox" aria-label="${escape(label)}" hidden>
+        ${options.map(o=>`<button type="button" class="searchable-option" role="option" data-value="${escape(o.id)}" data-search="${escape(o.title.toLowerCase())}" aria-selected="${o.id===String(selected)?'true':'false'}">${escape(o.title)}</button>`).join('')}
+      </div>
+    </div>
+    <select name="${name}" class="searchable-native" ${required?'required aria-required="true"':''} tabindex="-1" aria-hidden="true">${options.map(o=>`<option value="${escape(o.id)}" data-search="${escape(o.title.toLowerCase())}" ${o.id===String(selected)?'selected':''}>${escape(o.title)}</option>`).join('')}</select>
+  </label>`;
+};
 const bindSearchableSelect = name => {
-  const input = $(`#edit-form [data-search-select="${name}"]`);
-  const el = $(`#edit-form select[name="${name}"]`);
+  const fieldRoot = $(`#edit-form [data-searchable-field="${name}"]`);
+  const input = fieldRoot?.querySelector(`[data-search-select="${name}"]`);
+  const el = fieldRoot?.querySelector(`select[name="${name}"]`);
+  const list = fieldRoot?.querySelector(`#${CSS.escape(name)}-options`);
   if(!input || !el) return;
   const options = Array.from(el.options).map(o=>({value:o.value,text:o.textContent,search:(o.dataset.search||o.textContent).toLowerCase()}));
-  input.oninput = () => {
+  const optionButtons = list ? Array.from(list.querySelectorAll('.searchable-option')) : [];
+  const selectedOption = el.selectedOptions[0];
+  if (selectedOption && selectedOption.value) input.value = selectedOption.textContent;
+
+  const setOpen = open => {
+    if (list) list.hidden = !open;
+    input.setAttribute('aria-expanded', String(open));
+  };
+  const selectValue = option => {
+    if (!option) return;
+    if (!Array.from(el.options).some(o=>o.value===option.value)) {
+      el.insertAdjacentHTML('beforeend', `<option value="${escape(option.value)}" data-search="${escape(option.search)}">${escape(option.text)}</option>`);
+    }
+    el.value = option.value;
+    input.value = option.text;
+    optionButtons.forEach(b=>b.setAttribute('aria-selected', String(b.dataset.value === option.value)));
+    setOpen(false);
+  };
+  const filter = () => {
     const query = input.value.trim().toLowerCase();
     const current = el.value;
     const matches = options.filter(o=>!query||o.search.includes(query));
@@ -279,9 +312,51 @@ const bindSearchableSelect = name => {
       ? matches.map(o=>`<option value="${escape(o.value)}" data-search="${escape(o.search)}">${escape(o.text)}</option>`).join('')
       : '<option value="" disabled selected>No matching options</option>';
     if(matches.some(o=>o.value===current)) el.value = current;
+    else if(matches.length) el.value = matches[0].value;
+    const matchingValues = new Set(matches.map(o=>o.value));
+    optionButtons.forEach(b=>{ b.hidden = !matchingValues.has(b.dataset.value); });
+    setOpen(true);
   };
+
+  input.oninput = filter;
+  input.onfocus = () => setOpen(true);
+  input.onkeydown = event => {
+    if (event.key === 'Escape') { setOpen(false); return; }
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    const firstVisible = optionButtons.find(b=>!b.hidden);
+    const match = firstVisible && options.find(o=>o.value===firstVisible.dataset.value);
+    if (match) selectValue(match);
+  };
+  input.addEventListener('blur', () => setTimeout(()=>setOpen(false), 150));
+  optionButtons.forEach(btn => {
+    btn.addEventListener('mousedown', event => event.preventDefault());
+    btn.addEventListener('click', () => selectValue(options.find(o=>o.value===btn.dataset.value)));
+  });
+  const toggle = fieldRoot.querySelector('.searchable-toggle');
+  if (toggle) toggle.addEventListener('click', () => {
+    const open = !list || list.hidden;
+    setOpen(open);
+    if (open) input.focus();
+  });
 };
 const FEEDBACK_LOCKED_MESSAGE = 'Feedback can be submitted after the scheduled interview time.';
+const SIGNATURE_BLOCKED_STAGES = Object.freeze(['Rejected','Withdrawn']);
+const signatureEligibility = applications => {
+  const apps = Array.isArray(applications) ? applications : [];
+  const blockedApps = apps.filter(app => SIGNATURE_BLOCKED_STAGES.includes(app?.stage));
+  if (apps.length > 0 && blockedApps.length === apps.length) {
+    const hasRejected = blockedApps.some(app => app.stage === 'Rejected');
+    return {
+      eligible: false,
+      applications: [],
+      reason: hasRejected
+        ? 'Cannot create an offer or signature request for a candidate with a rejected application.'
+        : 'Cannot create an offer or signature request for a candidate with a withdrawn application.'
+    };
+  }
+  return { eligible: true, applications: apps.filter(app => !SIGNATURE_BLOCKED_STAGES.includes(app?.stage)), reason: '' };
+};
 const feedbackReady = interview => {
   const scheduled = Date.parse(interview?.scheduled_at);
   return Number.isFinite(scheduled) && scheduled <= Date.now();
@@ -749,7 +824,7 @@ async function render() {
         if(r.can_edit)actions.push(button('Edit','edit-referral',r.id,'class="secondary"'));
         if(r.can_process)actions.push(button('Process','process-referral',r.id));
         if(r.can_withdraw)actions.push(button('Withdraw','withdraw-referral',r.id,'class="secondary"'));
-        return `<tr><td><button type="button" class="text-button person-link" data-action="referral-details" data-id="${escape(r.id)}" title="${escape(r.name)}">${escape(r.name)}</button>${r.application_id?`<small>Application linked</small>`:''}</td><td>${escape(r.email)}</td><td>${position}</td><td>${badge(r.status)}${r.application_id&&r.status!=='Withdrawn'?`<small>${escape(r.status==='Submitted'?'New referral':'Application status')}</small>`:''}</td><td>${escape(new Date(r.at).toLocaleDateString())}</td><td>${escape(r.referrer_name||'You')}</td><td><div class="actions">${actions.join('')}</div></td></tr>`;
+        return `<tr><td><button type="button" class="text-button person-link" data-action="referral-details" data-id="${escape(r.id)}" title="${escape(r.name)}">${escape(r.name)}</button></td><td>${escape(r.email)}</td><td>${position}</td><td class="referral-status-cell">${badge(r.status)}</td><td>${escape(new Date(r.at).toLocaleDateString())}</td><td>${escape(r.referrer_name||'You')}</td><td><div class="actions">${actions.join('')}</div></td></tr>`;
       });
       html=heading(canProcess?`Review employee referrals for ${escape(me.team||'your organization')}.`:'Recommend a colleague for an open position.',button('+ Make referral','new-referral'))+`<section class="panel"><h2>${scopeTitle}</h2>${table(['Candidate','Email','Job Position','Referral Status','Referred','Referrer','Actions'],rows,'referrals-table')}${pag}</section>`;
     }
@@ -955,7 +1030,7 @@ async function render() {
       const dash = await api('agency/dashboard');
       const assigned = dash.assignedRequisitions || [];
       const recent = dash.recentSubmissions || [];
-      html=heading(`Welcome, ${escape(me.name.split(' ')[0])}. Review assigned roles and submit top talent.`,button('+ Submit candidate','agency-submit-candidate'))+
+      html=heading(`Welcome, ${escape(me.name.split(' ')[0])}. Review assigned roles and submit top talent.`,button('+ Add candidate','agency-submit-candidate'))+
       `<div class="agency-scope-banner"><div><span class="agency-scope-label">PARTNER AGENCY PORTAL</span><strong>${escape(dash.agency?.name || 'Partner Agency')}</strong> <span class="mono" style="opacity:0.85;">(${escape(dash.agency?.code || '')})</span></div><div><span class="badge badge-active">${escape((dash.agency?.status || 'active').toUpperCase())}</span></div></div>`+
       `<div class="agency-stats-grid">`+
         `<div class="agency-stat-card"><div class="agency-stat-label">Assigned open roles</div><div class="agency-stat-val">${dash.stats.assignedRequisitions||0}</div><small class="muted">Roles open for sourcing</small></div>`+
@@ -966,7 +1041,7 @@ async function render() {
       `</div>`+
       `<div class="split">`+
         `<section class="panel"><div class="panel-head"><div><h2>Assigned requisitions</h2><p class="muted">Active roles open for your agency</p></div>${button('View all assigned','navigate','','class="text-button" data-view="Assigned Roles"')}</div>`+
-        `${table(['Position','Team','Deadline','Action'],assigned.slice(0,5).map(r=>`<tr><td><strong>${escape(r.title)}</strong><br><small>${escape((r.skills||[]).join(', '))}</small></td><td>${escape(r.team)}</td><td>${r.submission_deadline?escape(new Date(r.submission_deadline).toLocaleDateString()):'Open'}</td><td><div class="actions">${button('Submit','agency-submit-candidate',r.id,'class="primary"')}</div></td></tr>`))}`+
+        `${table(['Position','Team','Deadline','Action'],assigned.slice(0,5).map(r=>`<tr><td><strong>${escape(r.title)}</strong><br><small>${escape((r.skills||[]).join(', '))}</small></td><td>${escape(r.team)}</td><td>${r.submission_deadline?escape(new Date(r.submission_deadline).toLocaleDateString()):'Open'}</td><td><div class="actions">${button('Add candidate','agency-submit-candidate',r.id,'class="primary"')}</div></td></tr>`))}`+
         `</section>`+
         `<section class="panel"><div class="panel-head"><div><h2>Recent submissions</h2><p class="muted">Live status & feedback from internal recruiters</p></div>${button('View all submissions','navigate','','class="text-button" data-view="Submissions"')}</div>`+
         `${table(['Candidate / Ref','Requisition','Status','Feedback'],recent.slice(0,5).map(s=>`<tr><td><strong>${escape(s.candidate_name)}</strong><br><small class="mono">${escape(s.submission_ref)}</small></td><td>${escape(s.requisition_title)}</td><td>${badge(s.agency_status)}</td><td>${s.published_feedback?button('View feedback','view-agency-feedback',s.id,'class="text-button"'):'<span class="muted" style="font-size:0.8rem;">Under evaluation</span>'}</td></tr>`))}`+
@@ -978,9 +1053,9 @@ async function render() {
       const {paged,page,totalPages,total,start}=paginate(roles,pageState['Assigned Roles']||1,10);
       pageState['Assigned Roles']=page;
       const pag=renderPagination('Assigned Roles',page,totalPages,total,start,10);
-      html=heading('Job requisitions assigned to your agency for candidate sourcing.',button('+ Submit candidate','agency-submit-candidate'))+
+      html=heading('Job requisitions assigned to your agency for candidate sourcing.',button('+ Add candidate','agency-submit-candidate'))+
       `<section class="panel"><div class="panel-head"><div><h2>Active assigned requisitions</h2><p class="muted">Ensure candidate representation authorization before submitting.</p></div></div>`+
-      `${table(['Position','Team / Location','Skills & requirements','Deadline','Sourcing instructions','Submit'],paged.map(r=>`<tr><td><strong>${escape(r.title)}</strong><br><small class="mono">${escape(r.team)}</small></td><td>${escape(r.team)}<br><small class="muted">Full-time</small></td><td><div class="skill-list">${(r.skills||[]).map(s=>`<span class="skill-chip">${escape(s)}</span>`).join('')}</div></td><td>${r.submission_deadline?`<span class="badge ${new Date(r.submission_deadline)<new Date()?'rejected':'pending'}">${escape(new Date(r.submission_deadline).toLocaleDateString())}</span>`:'<span class="badge active">Open</span>'}</td><td style="max-width:240px;"><small class="muted">${escape(r.sourcing_instructions||'Standard requirements apply.')}</small></td><td><div class="actions">${button('Submit candidate','agency-submit-candidate',r.id,'class="primary"')}</div></td></tr>`))}`+
+      `${table(['Position','Team / Location','Skills & requirements','Deadline','Sourcing instructions','Add candidate'],paged.map(r=>`<tr><td><strong>${escape(r.title)}</strong><br><small class="mono">${escape(r.team)}</small></td><td>${escape(r.team)}<br><small class="muted">Full-time</small></td><td><div class="skill-list">${(r.skills||[]).map(s=>`<span class="skill-chip">${escape(s)}</span>`).join('')}</div></td><td>${r.submission_deadline?`<span class="badge ${new Date(r.submission_deadline)<new Date()?'rejected':'pending'}">${escape(new Date(r.submission_deadline).toLocaleDateString())}</span>`:'<span class="badge active">Open</span>'}</td><td style="max-width:240px;"><small class="muted">${escape(r.sourcing_instructions||'Standard requirements apply.')}</small></td><td><div class="actions">${button('Add candidate','agency-submit-candidate',r.id,'class="primary"')}</div></td></tr>`))}`+
       `${pag}</section>`;
     }
     if(current==='Submissions') {
@@ -1660,8 +1735,8 @@ document.addEventListener('click',async event=>{
       const hasActivePending = sigList.some(s => s.status === 'pending' || s.status === 'viewed');
       const candApps = c.applications || [];
       const hasApps = candApps.length > 0;
-      const isRejected = hasApps && candApps.every(a => a.stage === 'Rejected');
-      const hasActiveApplications = candApps.some(a => a.stage !== 'Rejected');
+      const signatureState = signatureEligibility(candApps);
+      const isRejected = !signatureState.eligible;
 
       let agreementCardsHtml = '';
       if (sigList.length > 0) {
@@ -1750,9 +1825,9 @@ document.addEventListener('click',async event=>{
         }).join('');
       } else {
         if (isRejected) {
-          agreementCardsHtml = `<div class="sig-empty-state">Candidate application has been rejected. Offer agreements cannot be created.</div>`;
+          agreementCardsHtml = `<div class="sig-empty-state">${escape(signatureState.reason)}</div>`;
         } else if (!hasApps) {
-          agreementCardsHtml = `<div class="sig-empty-state">Candidate is in the talent pool without an active application. Assign candidate to an open requisition to start the hiring pipeline before sending an offer agreement.</div>`;
+          agreementCardsHtml = `<div class="sig-empty-state">No e-signature agreements created for this candidate yet. General documents can still be sent without an application.</div>`;
         } else {
           agreementCardsHtml = `<div class="sig-empty-state">No e-signature agreements created for this candidate yet.</div>`;
         }
@@ -1765,7 +1840,7 @@ document.addEventListener('click',async event=>{
           if (sigList.length > 0) {
             footerActionHtml = `
               <div class="sig-action-footer">
-                <span class="sig-status-notice" style="color:var(--negative);font-weight:550;">✕ Candidate application is rejected — offer agreements are unavailable</span>
+                <span class="sig-status-notice" style="color:var(--negative);font-weight:550;">✕ ${escape(signatureState.reason)} Offer agreements are unavailable</span>
               </div>
             `;
           }
@@ -1773,7 +1848,7 @@ document.addEventListener('click',async event=>{
           if (sigList.length > 0) {
             footerActionHtml = `
               <div class="sig-action-footer">
-                <span class="sig-status-notice muted" style="font-size:0.83rem;">Candidate is in the talent pool without an active application.</span>
+                <span class="sig-status-notice muted" style="font-size:0.83rem;">Candidate is in the talent pool without an application. General documents can still be sent.</span>
               </div>
             `;
           }
@@ -1801,7 +1876,7 @@ document.addEventListener('click',async event=>{
       }
 
       const totalBadge = isRejected
-        ? `<span class="badge rejected" style="font-size:0.74rem;">Rejected</span>`
+        ? `<span class="badge rejected" style="font-size:0.74rem;">${signatureState.reason.includes('withdrawn application') ? 'Withdrawn' : 'Rejected'}</span>`
         : (hasCompleted
           ? `<span class="badge completed" style="font-size:0.74rem;">✓ Executed</span>`
           : (hasActivePending
@@ -1870,7 +1945,7 @@ document.addEventListener('click',async event=>{
         `;
       }
 
-      const showFooterOfferBtn = allows('recruit') && hasActiveApplications && !hasCompleted && !hasActivePending && !isRejected;
+      const showFooterOfferBtn = allows('recruit') && signatureState.eligible && !hasCompleted && !hasActivePending;
       const offerFooterBtn = showFooterOfferBtn ? button('Offer & E-Sign','new-signature-request',c.id,'class="secondary" style="margin-right:8px;"') : '';
       const emailAction = allows('recruit') ? `${offerFooterBtn}${button('Send email','send-candidate-email',c.id,'class="primary" style="margin-right:8px;"')}${button('Edit','edit-candidate',c.id,'class="secondary"')}` : '';
       modal(c.name,`<p>${escape(c.email)}${c.phone?` · ${escape(c.phone)}`:''}${consentBadge}</p><p>${escape((c.skills||[]).join(', '))}</p>${appsHtml}${resumeHtml}${signaturesHtml}<h3>Experience / Resume</h3><p class="score-note">${escape(c.resume_text||c.experience||'No resume text provided.')}</p>${fraudHtml}${commsHtml}${emailAction?`<div class="actions" style="margin-top:16px">${emailAction}</div>`:''}`);
@@ -2281,14 +2356,10 @@ document.addEventListener('click',async event=>{
       const cand = (await api('candidates')).find(c=>c.id===id)||await api(`candidates/${id}`);
       if(!cand) throw new Error('Candidate not found.');
       const candApps = cand.applications || [];
-      if (candApps.length > 0 && candApps.every(app => app.stage === 'Rejected')) {
-        throw new Error('Cannot create an offer or signature request for a candidate with rejected applications.');
-      }
-      if (candApps.length === 0) {
-        throw new Error('Candidate has no applications. Please assign the candidate to a job requisition before creating an offer agreement.');
-      }
+      const eligibility = signatureEligibility(candApps);
+      if (!eligibility.eligible) throw new Error(eligibility.reason);
       const reqs = await api('requisitions');
-      const activeApps = candApps.filter(app => app.stage !== 'Rejected');
+      const activeApps = eligibility.applications;
       const reqOptions = activeApps.map(app => [app.requisition_id, `${app.title} (${app.stage})`]);
       for (const r of reqs.filter(r=>r.status==='open')) {
         if (!reqOptions.some(([rid])=>rid===r.id)) reqOptions.push([r.id, `${r.title} (${r.team})`]);
@@ -2407,10 +2478,11 @@ document.addEventListener('click',async event=>{
     }
     if(a==='manage-agency'){
       const details = await api(`agencies/${id}`);
-      const ag = details.agency;
-      const mems = details.members || [];
-      const ass = details.assignments || [];
-      const subs = details.submissions || [];
+      const ag = details.agency || details;
+      if(!ag || !ag.id) throw new Error('Agency details could not be loaded.');
+      const mems = details.members || ag.members || [];
+      const ass = details.assignments || ag.assignments || [];
+      const subs = details.submissions || ag.submissions || [];
 
       const statusActionButtons = allows('admin') ? `
         <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
@@ -2433,7 +2505,7 @@ document.addEventListener('click',async event=>{
       const assignmentsList = ass.length ? `
         <div class="table-wrap" style="margin-top:8px;">
           <table class="table"><thead><tr><th scope="col">Requisition</th><th scope="col">Deadline</th><th scope="col">Instructions</th><th scope="col">Action</th></tr></thead>
-          <tbody>${ass.map(j=>`<tr><td><strong>${escape(j.title)}</strong><br><small>${escape(j.team)}</small></td><td>${j.submission_deadline?escape(new Date(j.submission_deadline).toLocaleDateString()):'None'}</td><td><small class="muted">${escape(j.sourcing_instructions||'—')}</small></td><td>${allows('admin')?button('Revoke','revoke-agency-req',ag.id,`data-req-id="${j.requisition_id}" class="secondary text-button"`):'—'}</td></tr>`).join('')}</tbody>
+          <tbody>${ass.map(j=>`<tr><td><strong>${escape(j.title)}</strong><br><small>${escape(j.team)}</small></td><td>${(j.submission_deadline||j.deadline)?escape(new Date(j.submission_deadline||j.deadline).toLocaleDateString()):'None'}</td><td><small class="muted">${escape(j.sourcing_instructions||j.instructions||'—')}</small></td><td>${allows('admin')?button('Revoke','revoke-agency-req',ag.id,`data-req-id="${j.requisition_id}" class="secondary text-button"`):'—'}</td></tr>`).join('')}</tbody>
           </table>
         </div>
       ` : '<p class="muted" style="font-size:0.85rem;margin-top:6px;">No requisitions currently assigned.</p>';
@@ -2489,15 +2561,25 @@ document.addEventListener('click',async event=>{
     if(a==='agency-assign-job'){
       const reqs = (await api('requisitions')).filter(r=>r.status==='open');
       if(!reqs.length) throw new Error('No open requisitions available to assign.');
+      const today = getLocalDateString();
       modal('Assign Requisition to Agency',`<div class="form-grid">
         ${select('Select open requisition','requisition_id',reqs.map(r=>[r.id,`${r.title} (${r.team})`]))}
-        ${field('Submission deadline (optional)','submission_deadline','date','')}
-        ${area('Sourcing instructions / Guidelines (optional)','sourcing_instructions','',false)}
+        ${field('Submission deadline (optional)','deadline','date','',false,`min="${today}"`)}
+        ${area('Sourcing instructions / Guidelines (optional)','instructions','',false)}
       </div><p class="muted" style="font-size:0.8rem;margin-top:6px;">This requisition will become visible in the agency recruiter portal for candidate submission.</p>`,async v=>{
-        await api(`agencies/${id}/assignments`,'POST',{
+        const deadline = v.deadline?.trim() || '';
+        if(deadline){
+          const deadlineDate = new Date(`${deadline}T23:59:59`);
+          if(!Number.isFinite(deadlineDate.getTime()) || deadlineDate.getTime() < Date.now()){
+            const inp = $('#edit-form [name="deadline"]');
+            if(inp){ inp.setCustomValidity('Submission deadline cannot be in the past.'); inp.reportValidity(); }
+            throw new Error('Submission deadline cannot be in the past.');
+          }
+        }
+        await api(`agencies/${id}/requisitions`,'POST',{
           requisition_id: v.requisition_id,
-          submission_deadline: v.submission_deadline||undefined,
-          sourcing_instructions: v.sourcing_instructions?.trim()||undefined
+          deadline: deadline||undefined,
+          instructions: v.instructions?.trim()||undefined
         });
         return 'Requisition assigned to agency successfully.';
       });
@@ -2505,7 +2587,7 @@ document.addEventListener('click',async event=>{
     if(a==='revoke-agency-req'){
       const reqId = b.dataset.reqId;
       if(!confirm('Revoke this requisition from the agency? Future candidate submissions will be blocked.')) return;
-      await api(`agencies/${id}/assignments/${reqId}`,'DELETE');
+      await api(`agencies/${id}/requisitions/${reqId}/revoke`,'POST',{});
       notice('Requisition assignment revoked.','success');
       closeModal();
       await render();
@@ -2528,7 +2610,7 @@ document.addEventListener('click',async event=>{
       const reqOptions = assigned.map(r=>[r.id,`${r.title} (${r.team})`]);
       const defaultReq = id || assigned[0].id;
 
-      modal('Submit Candidate to Orbit',`<div class="form-grid">
+      modal('Add Candidate to Orbit',`<div class="form-grid">
         ${select('Assigned Requisition','requisition_id',reqOptions,defaultReq)}
         ${field('Candidate Full Name','name','text','',true)}
         ${field('Candidate Email','email','email','',true)}

@@ -21,6 +21,42 @@ export function hashToken(token) {
 
 export const tokenCache = new Map();
 
+export const SIGNATURE_BLOCKED_STAGES = Object.freeze(['Rejected', 'Withdrawn']);
+
+/**
+ * Central eligibility rule for creating offer/e-signature requests.
+ * Candidates without applications remain eligible for general documents.
+ * An application is ineligible only when it is rejected or withdrawn, and a
+ * candidate is ineligible when every linked application is in one of those stages.
+ */
+export function getSignatureEligibility(db, { candidateId, applicationId, requisitionId } = {}) {
+  let applications = [];
+
+  if (applicationId) {
+    const app = db.prepare('SELECT id, candidate_id, requisition_id, stage FROM applications WHERE id = ?').get(applicationId);
+    if (app) applications = [app];
+  } else if (candidateId && requisitionId) {
+    const app = db.prepare('SELECT id, candidate_id, requisition_id, stage FROM applications WHERE candidate_id = ? AND requisition_id = ?').get(candidateId, requisitionId);
+    if (app) applications = [app];
+  } else if (candidateId) {
+    applications = db.prepare('SELECT id, candidate_id, requisition_id, stage FROM applications WHERE candidate_id = ?').all(candidateId);
+  }
+
+  const blocked = applications.filter(app => SIGNATURE_BLOCKED_STAGES.includes(app.stage));
+  if (applications.length > 0 && blocked.length === applications.length) {
+    const hasRejected = blocked.some(app => app.stage === 'Rejected');
+    return {
+      eligible: false,
+      applications,
+      reason: hasRejected
+        ? 'Cannot create an offer letter or signature request for a rejected application.'
+        : 'Cannot create an offer letter or signature request for a withdrawn application.'
+    };
+  }
+
+  return { eligible: true, applications, reason: '' };
+}
+
 /**
  * Dispatches an electronic signature invitation or completion confirmation email.
  * Supports production delivery via Resend/adapter and simulated delivery for local/dev
@@ -285,6 +321,9 @@ export async function createSignatureRequest(db, user, {
   const safeTitle = validateText(title || 'Employment Offer Letter', 'Title', 200);
   const storage = options.storage || new SignatureStorageManager();
 
+  const eligibility = getSignatureEligibility(db, { candidateId, applicationId, requisitionId });
+  if (!eligibility.eligible) throw new HttpError(409, eligibility.reason);
+
   // Obtain or generate document buffer
   let pdfBuffer = documentBuffer;
   let candidate = null;
@@ -294,18 +333,6 @@ export async function createSignatureRequest(db, user, {
     candidate = db.prepare('SELECT * FROM candidates WHERE id = ?').get(candidateId);
     if (!candidate) throw new HttpError(404, 'Candidate not found.');
     if (!can(user, 'admin')) requireTeam(user, candidate.team);
-
-    if (requisitionId) {
-      const app = db.prepare('SELECT stage FROM applications WHERE candidate_id = ? AND requisition_id = ?').get(candidateId, requisitionId);
-      if (app && app.stage === 'Rejected') {
-        throw new HttpError(409, 'Cannot create an offer letter or signature request for a rejected application.');
-      }
-    } else {
-      const apps = db.prepare('SELECT stage FROM applications WHERE candidate_id = ?').all(candidateId);
-      if (apps.length > 0 && apps.every(a => a.stage === 'Rejected')) {
-        throw new HttpError(409, 'Cannot create an offer letter or signature request for a candidate with rejected applications.');
-      }
-    }
   }
 
   if (requisitionId) {

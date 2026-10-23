@@ -96,7 +96,11 @@ export function getAgency(db, user, agencyId) {
     JOIN requisitions r ON r.id = ar.requisition_id
     WHERE ar.agency_id = ?
     ORDER BY ar.created_at DESC
-  `).all(agencyId);
+  `).all(agencyId).map(a => ({
+    ...a,
+    submission_deadline: a.deadline || null,
+    sourcing_instructions: a.instructions || ''
+  }));
 
   const submissions = db.prepare(`
     SELECT s.*, c.name as candidate_name, c.email as candidate_email,
@@ -245,9 +249,14 @@ export function assignRequisitionToAgency(db, user, agencyId, { requisitionId, i
 
   let deadlineIso = null;
   if (deadline) {
-    const d = new Date(deadline);
-    if (isNaN(d.getTime())) throw new HttpError(400, 'Enter a valid submission deadline.');
-    deadlineIso = d.toISOString();
+    const rawDeadline = String(deadline).trim();
+    // Date-only inputs represent the end of the selected day, not midnight UTC.
+    const deadlineDate = /^\d{4}-\d{2}-\d{2}$/.test(rawDeadline)
+      ? new Date(`${rawDeadline}T23:59:59.999Z`)
+      : new Date(rawDeadline);
+    if (isNaN(deadlineDate.getTime())) throw new HttpError(400, 'Enter a valid submission deadline.');
+    if (deadlineDate.getTime() < Date.now()) throw new HttpError(400, 'Submission deadline cannot be in the past.');
+    deadlineIso = deadlineDate.toISOString();
   }
 
   const existing = db.prepare('SELECT id, status FROM agency_requisitions WHERE agency_id=? AND requisition_id=?').get(agencyId, requisitionId);

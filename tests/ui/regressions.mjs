@@ -240,10 +240,10 @@ try {
   await click(`(() => { const row = [...document.querySelectorAll('.referrals-table tbody tr')].find(r => r.innerText.includes('UI Referral Candidate')); return row.querySelector('[data-action="process-referral"]'); })()`);
   await waitFor("document.querySelector('dialog').open && document.querySelector('#modal-body h2')?.textContent === 'Process referral'");
   await click(`document.querySelector('#edit-form [type="submit"]')`);
-  await waitFor("!document.querySelector('dialog').open && document.querySelector('.referrals-table')?.innerText.includes('Application linked')");
-  check('Processed referral shows the linked application workflow status', await evaluate(`(() => {
+  await waitFor("!document.querySelector('dialog').open && (() => { const row = [...document.querySelectorAll('.referrals-table tbody tr')].find(r => r.innerText.includes('UI Referral Candidate')); return Boolean(row) && row.innerText.includes('Applied'); })()");
+  check('Processed referral shows the linked application workflow status without redundant copy', await evaluate(`(() => {
     const row = [...document.querySelectorAll('.referrals-table tbody tr')].find(r => r.innerText.includes('UI Referral Candidate'));
-    return Boolean(row) && row.innerText.includes('Applied') && !row.querySelector('[data-action="process-referral"]');
+    return Boolean(row) && row.innerText.includes('Applied') && !row.innerText.includes('Application linked') && !row.querySelector('[data-action="process-referral"]');
   })()`));
   const candidatesBefore = await evaluate("(async () => (await api('candidates')).length)()");
   await click(`(() => { const row = [...document.querySelectorAll('.referrals-table tbody tr')].find(r => r.innerText.includes('UI Referral Candidate')); return row.querySelector('[data-action="withdraw-referral"]'); })()`);
