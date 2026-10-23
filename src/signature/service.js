@@ -75,7 +75,7 @@ export async function dispatchSignatureEmail(db, user, request, signer, options 
 
   const expiresDate = request.expires_at ? new Date(request.expires_at) : null;
   const expiresFormatted = expiresDate
-    ? expiresDate.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' })
+    ? expiresDate.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'Asia/Kolkata' })
     : '7 days';
 
   let validityText = '';

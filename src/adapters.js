@@ -46,7 +46,7 @@ export class CalendarAdapter {
     this.transport = options.transport || fetch;
   }
 
-  async schedule({ applicationId, interviewId, subject, bodyHtml, startsAt, endsAt, timeZone = 'UTC', attendees = [], idempotencyKey }) {
+  async schedule({ applicationId, interviewId, subject, bodyHtml, startsAt, endsAt, timeZone = 'Asia/Kolkata', attendees = [], idempotencyKey }) {
     if (!this.configured) throw new AdapterNotConfigured('Calendar');
     const isDemo = Boolean(
       (this.tenant && this.tenant.includes('demo')) ||
@@ -84,7 +84,7 @@ export class CalendarAdapter {
     });
   }
 
-  async reschedule({ providerEventId, subject, bodyHtml, startsAt, endsAt, timeZone = 'UTC', attendees, idempotencyKey }) {
+  async reschedule({ providerEventId, subject, bodyHtml, startsAt, endsAt, timeZone = 'Asia/Kolkata', attendees, idempotencyKey }) {
     if (!this.configured) throw new AdapterNotConfigured('Calendar');
     const isDemo = Boolean(
       (this.tenant && this.tenant.includes('demo')) ||

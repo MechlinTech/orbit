@@ -747,10 +747,13 @@ test('Calendar Integration: Demo Microsoft Calendar credentials generate simulat
   assert.equal(scheduleResult.calendar_status, 'synced');
   assert.ok(scheduleResult.meeting_url.startsWith('https://teams.microsoft.com/l/meetup-join/orbit-demo-meeting-'));
 
+  assert.equal(scheduleResult.timezone, 'Asia/Kolkata');
   assert.equal(sentEmails.length, 1);
   assert.equal(sentEmails[0].variables.meeting_url, scheduleResult.meeting_url);
   assert.ok(sentEmails[0].html.includes(scheduleResult.meeting_url));
   assert.ok(sentEmails[0].html.includes('Join Microsoft Teams Meeting'));
+  assert.ok(sentEmails[0].html.includes('Timezone:</strong> IST'));
+  assert.ok(sentEmails[0].html.includes('(IST)'));
 
   f.db.close();
 });

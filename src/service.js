@@ -954,7 +954,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       const scheduled = new Date(body.scheduled_at); if (!Number.isFinite(scheduled.getTime()) || scheduled.getTime() < Date.now()) throw new HttpError(400,'Enter a future interview date.');
       const competencies = list(body.competencies,'Competencies',10); if (!competencies.length) throw new HttpError(400,'At least one competency is required.');
       const duration = body.duration_minutes !== undefined ? integer(body.duration_minutes, 'Duration', 15, 480) : 45;
-      const timezone = body.timezone ? text(body.timezone, 'Timezone', 100, false) : 'UTC';
+      const timezone = body.timezone ? text(body.timezone, 'Timezone', 100, false) : 'Asia/Kolkata';
       const notes = body.notes ? text(body.notes, 'Notes', 5000, false) : '';
       const customMeetingUrl = body.meeting_url ? text(body.meeting_url, 'Meeting URL', 1000, false) : null;
       const cand = get(db, 'candidates', app.candidate_id);
@@ -1042,7 +1042,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
         if (!competencies.length) throw new HttpError(400, 'At least one competency is required.');
       }
       const duration = body.duration_minutes !== undefined ? integer(body.duration_minutes, 'Duration', 15, 480) : (interview.duration_minutes || 45);
-      const timezone = body.timezone !== undefined ? text(body.timezone, 'Timezone', 100, false) : (interview.timezone || 'UTC');
+      const timezone = body.timezone !== undefined ? text(body.timezone, 'Timezone', 100, false) : (interview.timezone || 'Asia/Kolkata');
       const notes = body.notes !== undefined ? text(body.notes, 'Notes', 5000, false) : (interview.notes || '');
       const title = body.title !== undefined ? text(body.title, 'Title', 200, false) : (interview.title || '');
       const cand = get(db, 'candidates', app.candidate_id);

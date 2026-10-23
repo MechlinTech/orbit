@@ -68,7 +68,7 @@ export async function createTeamsMeetingEvent({
   bodyHtml = '',
   startsAt,
   endsAt,
-  timeZone = 'UTC',
+  timeZone = 'Asia/Kolkata',
   attendees = [],
   transport = fetch
 }) {
@@ -86,11 +86,11 @@ export async function createTeamsMeetingEvent({
     },
     start: {
       dateTime: startsAt.endsWith('Z') ? startsAt.slice(0, -1) : startsAt,
-      timeZone: timeZone || 'UTC'
+      timeZone: timeZone || 'Asia/Kolkata'
     },
     end: {
       dateTime: endsAt.endsWith('Z') ? endsAt.slice(0, -1) : endsAt,
-      timeZone: timeZone || 'UTC'
+      timeZone: timeZone || 'Asia/Kolkata'
     },
     attendees: attendees.map(a => ({
       emailAddress: {
@@ -103,13 +103,14 @@ export async function createTeamsMeetingEvent({
     onlineMeetingProvider: 'teamsForBusiness'
   };
 
-  const res = await transport(userEndpoint, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-      'Prefer': 'outlook.timezone="UTC"'
-    },
+    const outlookTz = (timeZone === 'Asia/Kolkata' || timeZone === 'Asia/Calcutta' || timeZone === 'IST') ? 'India Standard Time' : (timeZone || 'UTC');
+    const res = await transport(userEndpoint, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'Prefer': `outlook.timezone="${outlookTz}"`
+      },
     body: JSON.stringify(payload),
     signal: AbortSignal.timeout(10000)
   });
@@ -146,7 +147,7 @@ export async function updateTeamsMeetingEvent({
   bodyHtml,
   startsAt,
   endsAt,
-  timeZone = 'UTC',
+  timeZone = 'Asia/Kolkata',
   attendees,
   transport = fetch
 }) {
@@ -164,13 +165,13 @@ export async function updateTeamsMeetingEvent({
   if (startsAt) {
     payload.start = {
       dateTime: startsAt.endsWith('Z') ? startsAt.slice(0, -1) : startsAt,
-      timeZone: timeZone || 'UTC'
+      timeZone: timeZone || 'Asia/Kolkata'
     };
   }
   if (endsAt) {
     payload.end = {
       dateTime: endsAt.endsWith('Z') ? endsAt.slice(0, -1) : endsAt,
-      timeZone: timeZone || 'UTC'
+      timeZone: timeZone || 'Asia/Kolkata'
     };
   }
   if (attendees) {
@@ -180,13 +181,14 @@ export async function updateTeamsMeetingEvent({
     }));
   }
 
-  const res = await transport(eventEndpoint, {
-    method: 'PATCH',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-      'Prefer': 'outlook.timezone="UTC"'
-    },
+    const outlookTz = (timeZone === 'Asia/Kolkata' || timeZone === 'Asia/Calcutta' || timeZone === 'IST') ? 'India Standard Time' : (timeZone || 'UTC');
+    const res = await transport(eventEndpoint, {
+      method: 'PATCH',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'Prefer': `outlook.timezone="${outlookTz}"`
+      },
     body: JSON.stringify(payload),
     signal: AbortSignal.timeout(10000)
   });
