@@ -424,6 +424,28 @@ try {
   await startView('Candidates');
   await waitFor("document.querySelector('#candidate-table') !== null");
 
+  // Verify candidate in pipeline on Offer stage does not show delete button in candidates directory
+  await click(`document.querySelector('#candidate-table [data-action="edit-candidate"][data-id="${setupApp.candidateId}"]')`);
+  await waitFor("document.querySelector('dialog').open && document.querySelector('#modal-body h2')?.textContent === 'Edit candidate'");
+  check('Candidate in pipeline on any stage does not show Delete button in candidates directory',
+    await evaluate("document.querySelector('[data-action=\"delete-candidate\"]') === null"));
+  await click("document.querySelector('#close-modal')");
+  await waitFor("!document.querySelector('dialog').open");
+
+  // Verify candidate not in pipeline DOES show delete button in candidates directory
+  const standaloneCandidate = await evaluate(`(async () => {
+    const c = await api('candidates', 'POST', { name: 'Standalone Pool Candidate', email: 'pool.standalone@example.com', team: 'Dev', skills: ['Testing'] });
+    await render();
+    return c;
+  })()`);
+  await waitFor(`Boolean(document.querySelector('#candidate-table [data-action="edit-candidate"][data-id="${standaloneCandidate.id}"]'))`);
+  await click(`document.querySelector('#candidate-table [data-action="edit-candidate"][data-id="${standaloneCandidate.id}"]')`);
+  await waitFor("document.querySelector('dialog').open && document.querySelector('#modal-body h2')?.textContent === 'Edit candidate'");
+  check('Candidate not in pipeline shows Delete button in candidates directory',
+    await evaluate("Boolean(document.querySelector('[data-action=\"delete-candidate\"]'))"));
+  await click("document.querySelector('#close-modal')");
+  await waitFor("!document.querySelector('dialog').open");
+
   f.db.exec('DELETE FROM candidate_communications; DELETE FROM signature_signers; DELETE FROM signature_requests; DELETE FROM signature_documents; DELETE FROM candidate_resumes; DELETE FROM stage_events; DELETE FROM scorecards; DELETE FROM interviews; DELETE FROM referrals; DELETE FROM applications; DELETE FROM candidates;');
   await evaluate('render()');
   await waitFor("document.querySelector('#candidate-table')?.innerText.includes('No candidates added yet')");
