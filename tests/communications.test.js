@@ -59,6 +59,17 @@ test('Templates: handles missing optional variables gracefully', () => {
   assert.match(rendered.text, /Dear Candidate/);
 });
 
+test('Templates: renders custom recruiter notes in application_acknowledgement and application_rejection', () => {
+  const customNote = 'Please complete the pre-interview questionnaire by Monday.';
+  const ack = renderTemplate('application_acknowledgement', { notes: customNote });
+  assert.match(ack.html, /Please complete the pre-interview questionnaire by Monday/);
+  assert.match(ack.text, /Please complete the pre-interview questionnaire by Monday/);
+
+  const rej = renderTemplate('application_rejection', { notes: 'We encourage you to reapply in 6 months.' });
+  assert.match(rej.html, /We encourage you to reapply in 6 months/);
+  assert.match(rej.text, /We encourage you to reapply in 6 months/);
+});
+
 test('CommunicationAdapter: unconfigured instance throws AdapterNotConfigured', async () => {
   const adapter = new CommunicationAdapter();
   assert.equal(adapter.configured, false);

@@ -220,7 +220,8 @@ export function openDb(path = 'data/talentos.sqlite') {
 
   try { db.exec('ALTER TABLE interviews ADD COLUMN title TEXT DEFAULT "";'); } catch {}
   try { db.exec('ALTER TABLE interviews ADD COLUMN duration_minutes INTEGER DEFAULT 45;'); } catch {}
-  try { db.exec('ALTER TABLE interviews ADD COLUMN timezone TEXT DEFAULT "UTC";'); } catch {}
+  try { db.exec('ALTER TABLE interviews ADD COLUMN timezone TEXT DEFAULT "Asia/Kolkata";'); } catch {}
+  try { db.exec("UPDATE interviews SET timezone = 'Asia/Kolkata' WHERE timezone = 'UTC' OR timezone IS NULL;"); } catch {}
   try { db.exec('ALTER TABLE interviews ADD COLUMN notes TEXT DEFAULT "";'); } catch {}
   try { db.exec('ALTER TABLE interviews ADD COLUMN meeting_url TEXT;'); } catch {}
   try { db.exec('ALTER TABLE interviews ADD COLUMN calendar_event_id TEXT;'); } catch {}
