@@ -1053,3 +1053,24 @@ input[type="checkbox"],input[type="radio"]{width:18px!important;min-height:18px!
   color: var(--negative) !important;
 }
 
+
+/* Searchable select: one visible combobox with a hidden native select fallback. */
+.searchable-field{position:relative;min-width:0}
+.searchable-combobox{position:relative;display:flex;align-items:center;min-width:0}
+.searchable-combobox .select-search{flex:1 1 auto;min-width:0;padding-right:42px}
+.searchable-toggle{position:absolute;right:2px;top:50%;transform:translateY(-50%);width:34px;height:34px;min-height:34px;min-width:34px;padding:0;display:inline-flex;align-items:center;justify-content:center;background:transparent;color:var(--muted);border:0;border-radius:6px;font-size:.8rem;line-height:1}
+.searchable-toggle:hover{background:var(--surface-alt);color:var(--ink);filter:none}
+.searchable-native{position:absolute!important;width:1px!important;height:1px!important;min-height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip:rect(0 0 0 0)!important;white-space:nowrap!important;border:0!important}
+.searchable-options{position:absolute;top:calc(100% + 4px);left:0;right:0;z-index:60;max-height:240px;overflow-y:auto;padding:4px;background:var(--surface);border:1px solid var(--line);border-radius:8px;box-shadow:0 12px 30px #00000024}
+.searchable-options[hidden]{display:none}
+.searchable-option{display:block;width:100%;min-height:38px;padding:9px 10px;background:transparent;color:var(--ink);border:0;border-radius:6px;font-size:.85rem;font-weight:500;line-height:1.35;text-align:left;white-space:normal}
+.searchable-option:hover,.searchable-option:focus-visible,.searchable-option[aria-selected=true]{background:var(--tint);color:var(--accent);filter:none}
+.searchable-option[hidden]{display:none}
+
+/* Keep row actions and optional/required field labels aligned. */
+.actions{align-items:center}
+.actions .feedback-locked{flex:1 1 100%;min-width:0;max-width:100%;white-space:normal;line-height:1.35}
+.form-grid>label{align-content:start;min-width:0}
+.form-grid .label-heading,.form-grid .field-optional{line-height:1.4}
+.form-grid .label-heading{min-height:1.4em}
+.referral-status-cell{white-space:nowrap}

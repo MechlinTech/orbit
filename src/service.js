@@ -921,6 +921,8 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
                 requisition_id: req.id,
                 template_id: 'interview_invitation',
                 scheduled_at: scheduled.toISOString(),
+                duration_minutes: duration,
+                timezone,
                 interviewer_name: interviewer.name,
                 meeting_url: meetingUrl || undefined,
                 notes: notes || undefined,
@@ -1004,6 +1006,8 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
                 requisition_id: req.id,
                 template_id: 'interview_update',
                 scheduled_at: scheduled.toISOString(),
+                duration_minutes: duration,
+                timezone,
                 interviewer_name: assignedInterviewer.name,
                 meeting_url: meetingUrl || undefined,
                 notes: notes || undefined,
@@ -1056,6 +1060,8 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
                 requisition_id: req.id,
                 template_id: 'interview_cancellation',
                 scheduled_at: interview.scheduled_at,
+                duration_minutes: interview.duration_minutes,
+                timezone: interview.timezone,
                 notes: reason || undefined,
                 idempotency_key: `interview_cancel_${key}`
               }, commAdapter);
@@ -1344,13 +1350,13 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       permit(user, 'admin');
       return addAgencyMember(db, user, key, body);
     }
-    if (key && action === 'requisitions') {
-      if (method === 'POST') {
+    if (key && (action === 'requisitions' || action === 'assignments')) {
+      if (method === 'POST' && (!parts[3] || parts[4] !== 'revoke')) {
         permit(user, 'recruit', 'admin');
         return assignRequisitionToAgency(db, user, key, {
-          requisitionId: body.requisition_id,
-          instructions: body.instructions,
-          deadline: body.deadline
+          requisitionId: body.requisition_id || body.requisitionId,
+          instructions: body.instructions ?? body.sourcing_instructions ?? '',
+          deadline: body.deadline ?? body.submission_deadline ?? null
         });
       }
       if (method === 'DELETE' || (method === 'POST' && parts[3] && parts[4] === 'revoke')) {

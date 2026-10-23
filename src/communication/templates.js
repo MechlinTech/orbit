@@ -23,10 +23,14 @@ function baseLayout({ title, bodyHtml, candidateName, isOperational = false }) {
 </head>
 <body style="margin: 0; padding: 0; background-color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #0f172a; line-height: 1.6;">
   <div style="max-width: 560px; margin: 32px auto; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);">
-    <div style="background-color: #0f172a; padding: 24px 32px; display: flex; align-items: center;">
-      <span style="font-size: 20px; font-weight: 700; color: #ffffff; letter-spacing: -0.5px;">Orbit</span>
-      <span style="font-size: 14px; color: #94a3b8; margin-left: 8px;">· Mechlin Recruitment</span>
-    </div>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#0f172a" style="border-collapse: collapse; background-color: #0f172a;">
+      <tr>
+        <td bgcolor="#0f172a" style="background-color: #0f172a; padding: 24px 32px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+          <span style="font-size: 20px; font-weight: 700; color: #ffffff; letter-spacing: -0.5px;">Orbit</span>
+          <span style="font-size: 14px; color: #cbd5e1; margin-left: 8px;">&middot; Mechlin Recruitment</span>
+        </td>
+      </tr>
+    </table>
     <div style="padding: 32px;">
       <h1 style="font-size: 20px; font-weight: 700; color: #0f172a; margin-top: 0; margin-bottom: 20px;">${escapeHtml(title)}</h1>
       ${bodyHtml}
@@ -42,6 +46,67 @@ function baseLayout({ title, bodyHtml, candidateName, isOperational = false }) {
   </div>
 </body>
 </html>`;
+}
+
+function interviewSchedule(vars = {}) {
+  const requestedTimezone = vars.timezone ? String(vars.timezone) : 'UTC';
+  let timezone = requestedTimezone;
+  let scheduledAt = 'To be confirmed';
+  if (vars.scheduled_at) {
+    const date = new Date(vars.scheduled_at);
+    if (Number.isFinite(date.getTime())) {
+      try {
+        scheduledAt = new Intl.DateTimeFormat('en-US', {
+          timeZone: timezone,
+          weekday: 'long',
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric',
+          hour: 'numeric',
+          minute: '2-digit'
+        }).format(date);
+      } catch {
+        timezone = 'UTC';
+        scheduledAt = new Intl.DateTimeFormat('en-US', {
+          timeZone: timezone,
+          weekday: 'long',
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric',
+          hour: 'numeric',
+          minute: '2-digit'
+        }).format(date);
+      }
+    }
+  }
+  const parsedDuration = Number(vars.duration_minutes);
+  return {
+    scheduledAt: `${scheduledAt} (${timezone})`,
+    duration: Number.isFinite(parsedDuration) && parsedDuration > 0 ? parsedDuration : 45,
+    timezone
+  };
+}
+
+function interviewMeetingHtml(vars = {}) {
+  if (vars.meeting_url) {
+    return `
+      <div style="margin: 20px 0; text-align: center;">
+        <a href="${escapeHtml(vars.meeting_url)}" style="background-color: #4f46e5; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: 600; display: inline-block;">Join Microsoft Teams Meeting</a>
+      </div>
+      <p style="font-size: 13px; color: #475569; word-break: break-all;">Meeting Link: <a href="${escapeHtml(vars.meeting_url)}">${escapeHtml(vars.meeting_url)}</a></p>
+    `;
+  }
+  return `
+    <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px 16px; margin: 18px 0;">
+      <p style="margin: 0; font-size: 14px; color: #334155;"><strong>Joining instructions:</strong> Your recruiter will send the Microsoft Teams meeting link before your interview. If you have not received it 24 hours before the scheduled time, please reply to this email and we will resend it.</p>
+    </div>
+  `;
+}
+
+function interviewMeetingText(vars = {}) {
+  return vars.meeting_url
+    ? `Microsoft Teams Meeting Link:\n${vars.meeting_url}`
+    : 'Joining instructions: Your recruiter will send the Microsoft Teams meeting link before your interview. If you have not received it 24 hours before the scheduled time, please reply to this email and we will resend it.';
 }
 
 export const TEMPLATES = {
@@ -92,15 +157,11 @@ The Mechlin Talent Team`;
     render(vars) {
       const candidateName = vars.candidate_name || 'Candidate';
       const reqTitle = vars.requisition_title || 'Position';
-      const scheduledAt = vars.scheduled_at ? new Date(vars.scheduled_at).toUTCString() : 'To be confirmed';
+      const schedule = interviewSchedule(vars);
+      const scheduledAt = schedule.scheduledAt;
       const interviewer = vars.interviewer_name || 'Our hiring team';
       const notes = vars.notes ? `<p style="font-size: 14px; background: #f8fafc; border-left: 3px solid #0f172a; padding: 12px; margin: 16px 0;"><strong>Details & Preparation:</strong><br>${escapeHtml(vars.notes)}</p>` : '';
-      const meetingButton = vars.meeting_url ? `
-        <div style="margin: 20px 0; text-align: center;">
-          <a href="${escapeHtml(vars.meeting_url)}" style="background-color: #4f46e5; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: 600; display: inline-block;">Join Microsoft Teams Meeting</a>
-        </div>
-        <p style="font-size: 13px; color: #64748b; word-break: break-all;">Meeting Link: <a href="${escapeHtml(vars.meeting_url)}">${escapeHtml(vars.meeting_url)}</a></p>
-      ` : '';
+      const meetingButton = interviewMeetingHtml(vars);
       const title = `Interview Invitation: ${reqTitle}`;
       const subject = `Interview invitation: ${reqTitle} at Mechlin Orbit`;
 
@@ -112,7 +173,9 @@ The Mechlin Talent Team`;
           <p style="font-size: 15px; margin-bottom: 16px;">Dear ${escapeHtml(candidateName)},</p>
           <p style="font-size: 15px; margin-bottom: 16px;">We were impressed by your profile and would like to invite you to interview for the <strong>${escapeHtml(reqTitle)}</strong> position at Mechlin.</p>
           <div style="background-color: #f1f5f9; border-radius: 8px; padding: 16px; margin: 20px 0;">
-            <p style="margin: 0 0 8px 0; font-size: 14px;"><strong>Date & Time (UTC):</strong> ${escapeHtml(scheduledAt)}</p>
+            <p style="margin: 0 0 8px 0; font-size: 14px;"><strong>Date & Time:</strong> ${escapeHtml(scheduledAt)}</p>
+            <p style="margin: 0 0 8px 0; font-size: 14px;"><strong>Duration:</strong> ${schedule.duration} minutes</p>
+            <p style="margin: 0 0 8px 0; font-size: 14px;"><strong>Timezone:</strong> ${escapeHtml(schedule.timezone)}</p>
             <p style="margin: 0; font-size: 14px;"><strong>Interviewer:</strong> ${escapeHtml(interviewer)}</p>
           </div>
           ${meetingButton}
@@ -127,9 +190,12 @@ The Mechlin Talent Team`;
 We were impressed by your profile and would like to invite you to interview for the ${reqTitle} position at Mechlin.
 
 Interview Details:
-- Date & Time (UTC): ${scheduledAt}
+- Date & Time: ${scheduledAt}
+- Duration: ${schedule.duration} minutes
+- Timezone: ${schedule.timezone}
 - Interviewer: ${interviewer}
-${vars.meeting_url ? `\nMicrosoft Teams Meeting Link:\n${vars.meeting_url}\n` : ''}${vars.notes ? `\nDetails & Preparation:\n${vars.notes}\n` : ''}
+${interviewMeetingText(vars)}${vars.notes ? `\n\nDetails & Preparation:\n${vars.notes}` : ''}
+
 If this time does not work for your schedule or if you require any accessibility accommodations, please let us know as soon as possible.
 
 We look forward to speaking with you!
@@ -149,15 +215,11 @@ The Mechlin Talent Team`;
     render(vars) {
       const candidateName = vars.candidate_name || 'Candidate';
       const reqTitle = vars.requisition_title || 'Position';
-      const scheduledAt = vars.scheduled_at ? new Date(vars.scheduled_at).toUTCString() : 'To be confirmed';
+      const schedule = interviewSchedule(vars);
+      const scheduledAt = schedule.scheduledAt;
       const interviewer = vars.interviewer_name || 'Our hiring team';
       const reason = vars.notes ? `<p style="font-size: 14px; background: #f8fafc; border-left: 3px solid #0f172a; padding: 12px; margin: 16px 0;"><strong>Update Note:</strong><br>${escapeHtml(vars.notes)}</p>` : '';
-      const meetingButton = vars.meeting_url ? `
-        <div style="margin: 20px 0; text-align: center;">
-          <a href="${escapeHtml(vars.meeting_url)}" style="background-color: #4f46e5; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: 600; display: inline-block;">Join Microsoft Teams Meeting</a>
-        </div>
-        <p style="font-size: 13px; color: #64748b; word-break: break-all;">Meeting Link: <a href="${escapeHtml(vars.meeting_url)}">${escapeHtml(vars.meeting_url)}</a></p>
-      ` : '';
+      const meetingButton = interviewMeetingHtml(vars);
       const title = `Interview Updated: ${reqTitle}`;
       const subject = `Interview update: ${reqTitle} at Mechlin Orbit`;
 
@@ -169,7 +231,9 @@ The Mechlin Talent Team`;
           <p style="font-size: 15px; margin-bottom: 16px;">Dear ${escapeHtml(candidateName)},</p>
           <p style="font-size: 15px; margin-bottom: 16px;">Your interview schedule for the <strong>${escapeHtml(reqTitle)}</strong> position has been updated.</p>
           <div style="background-color: #f1f5f9; border-radius: 8px; padding: 16px; margin: 20px 0;">
-            <p style="margin: 0 0 8px 0; font-size: 14px;"><strong>Updated Date & Time (UTC):</strong> ${escapeHtml(scheduledAt)}</p>
+            <p style="margin: 0 0 8px 0; font-size: 14px;"><strong>Updated Date & Time:</strong> ${escapeHtml(scheduledAt)}</p>
+            <p style="margin: 0 0 8px 0; font-size: 14px;"><strong>Duration:</strong> ${schedule.duration} minutes</p>
+            <p style="margin: 0 0 8px 0; font-size: 14px;"><strong>Timezone:</strong> ${escapeHtml(schedule.timezone)}</p>
             <p style="margin: 0; font-size: 14px;"><strong>Interviewer:</strong> ${escapeHtml(interviewer)}</p>
           </div>
           ${meetingButton}
@@ -183,9 +247,12 @@ The Mechlin Talent Team`;
 Your interview schedule for the ${reqTitle} position has been updated.
 
 Updated Details:
-- Date & Time (UTC): ${scheduledAt}
+- Date & Time: ${scheduledAt}
+- Duration: ${schedule.duration} minutes
+- Timezone: ${schedule.timezone}
 - Interviewer: ${interviewer}
-${vars.meeting_url ? `\nMicrosoft Teams Meeting Link:\n${vars.meeting_url}\n` : ''}${vars.notes ? `\nUpdate Note:\n${vars.notes}\n` : ''}
+${interviewMeetingText(vars)}${vars.notes ? `\n\nUpdate Note:\n${vars.notes}` : ''}
+
 Please reach out if you have any questions or if you need to adjust this schedule.
 
 Warm regards,
