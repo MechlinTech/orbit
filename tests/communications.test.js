@@ -591,3 +591,43 @@ test('Pipeline: stage change succeeds gracefully without errors even when email 
     f.db.close();
   }
 });
+
+test('Candidate communication endpoint loads CommunicationAdapter using database integration config', async () => {
+  const f = fixture();
+  try {
+    // Configure email_communication in database
+    await service(f.db, f.admin, 'PUT', 'admin/integrations/email_communication', {
+      enabled: true,
+      config: {
+        provider: 'resend',
+        fromEmail: 'recruiting@mechlin.com',
+        fromName: 'Mechlin Careers'
+      },
+      secrets: {
+        apiKey: 're_live_secret_key_12345'
+      }
+    });
+
+    const cand = await service(f.db, f.recruiter, 'POST', 'candidates', candidateBody);
+    let sent = false;
+    let requestPayload = null;
+    const testTransport = async (url, opts) => {
+      sent = true;
+      requestPayload = JSON.parse(opts.body);
+      return { ok: true, status: 200, json: async () => ({ id: 'email_test_db_cfg' }) };
+    };
+
+    // When c has transport but no communicationAdapter, service should load adapter from db:
+    const res = await service(f.db, f.recruiter, 'POST', `candidates/${cand.id}/communications`, {
+      template_id: 'application_acknowledgement'
+    }, null, { transport: testTransport });
+
+    assert.equal(res.status, 'accepted');
+    assert.equal(res.provider_message_id, 'email_test_db_cfg');
+    assert.equal(sent, true);
+    assert.equal(requestPayload.from, 'recruiting@mechlin.com');
+  } finally {
+    f.db.close();
+  }
+});
+

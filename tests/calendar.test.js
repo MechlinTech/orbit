@@ -5,6 +5,9 @@ import { openDb } from '../src/db.js';
 import { createApp } from '../src/server.js';
 import { createSession } from '../src/auth.js';
 import { fixture, testConfig, user } from './helpers.js';
+import { service } from '../src/service.js';
+import { encryptSecret } from '../src/integrations/crypto.js';
+import { ensureIntegrationTable } from '../src/integrations/storage.js';
 import { CalendarAdapter, CommunicationAdapter, AdapterNotConfigured } from '../src/adapters.js';
 import { getGraphAccessToken, resetGraphTokenCache, createTeamsMeetingEvent, updateTeamsMeetingEvent, cancelTeamsMeetingEvent } from '../src/calendar/graph.js';
 import { isCalendarConfigured, getCalendarConfig, calculateEndTime, syncScheduleMeeting, syncRescheduleMeeting, syncCancelMeeting } from '../src/calendar/service.js';
@@ -603,4 +606,151 @@ test('HTTP API: validates interview inputs, past dates, closed applications, and
     })
   });
   assert.equal(editCancelledRes.status, 409);
+});
+
+test('Calendar Integration: Database-configured Microsoft Calendar syncs Teams meeting and attaches meeting_url to interview invitation email', async () => {
+  resetGraphTokenCache();
+  const f = fixture();
+  const recruiter = user(f.db, 'Recruiter', 'Engineering');
+  const interviewer = user(f.db, 'Interviewer', 'Engineering');
+
+  // Ensure integration table and insert active Microsoft Calendar in DB
+  ensureIntegrationTable(f.db);
+  f.db.prepare(`
+    INSERT INTO integration_configs(id, category, name, enabled, config_json, encrypted_secrets_json, status, created_at, updated_at)
+    VALUES(?, ?, ?, 1, ?, ?, 'healthy', ?, ?)
+  `).run(
+    'microsoft_calendar',
+    'Calendar & Scheduling',
+    'Microsoft Calendar',
+    JSON.stringify({
+      tenantId: '11111111-2222-3333-4444-555555555555',
+      clientId: '66666666-7777-8888-9999-000000000000',
+      organizerEmail: 'interviews@mechlin.example'
+    }),
+    JSON.stringify({
+      clientSecret: encryptSecret('real-client-secret-abc')
+    }),
+    new Date().toISOString(),
+    new Date().toISOString()
+  );
+
+  const mockTeamsJoinUrl = 'https://teams.microsoft.com/l/meetup-join/orbit-db-interview-456';
+  const mockGraphTransport = createMockGraphTransport({
+    joinUrl: mockTeamsJoinUrl,
+    eventId: 'evt-teams-db-1'
+  });
+
+  const c = testConfig();
+  // Ensure no env vars for calendar are present on c
+  delete c.entraTenantId;
+  delete c.entraClientId;
+  delete c.entraClientSecret;
+  delete c.teamsOrganizerEmail;
+  c.transport = mockGraphTransport;
+
+  // Create requisition and candidate
+  const cand = f.db.prepare("INSERT INTO candidates(id, name, email, phone, skills, resume_text, source, team, created_by, created_at) VALUES('c_db_1','Taylor Swift','taylor@example.com','1234567890','[]','','Direct','Engineering',?,?) RETURNING *").get(recruiter.id, new Date().toISOString());
+  const req = f.db.prepare("INSERT INTO requisitions(id, title, team, headcount, salary_min, salary_max, currency, description, skills, status, created_by, created_at) VALUES('r_db_1','Senior Engineer','Engineering',1,10,20,'USD','','[]','open',?,?) RETURNING *").get(recruiter.id, new Date().toISOString());
+  const app = f.db.prepare("INSERT INTO applications(id, candidate_id, requisition_id, stage, created_at) VALUES('a_db_1', ?, ?, 'Interview', ?) RETURNING *").get(cand.id, req.id, new Date().toISOString());
+
+  // Check isCalendarConfigured(c, f.db)
+  assert.equal(isCalendarConfigured(c, f.db), true);
+
+  // Track email deliveries
+  const sentEmails = [];
+  c.communicationAdapter = {
+    configured: true,
+    send: async payload => {
+      sentEmails.push(payload);
+      return { id: 'msg-email-123' };
+    }
+  };
+
+  const scheduleResult = await service(f.db, recruiter, 'POST', 'interviews', {
+    application_id: app.id,
+    interviewer_id: interviewer.id,
+    scheduled_at: new Date(Date.now() + 86400000).toISOString(),
+    competencies: ['Architecture', 'Communication'],
+    notes: 'Please review architecture design beforehand.'
+  }, new URLSearchParams(), c);
+
+  assert.ok(scheduleResult);
+  assert.equal(scheduleResult.calendar_status, 'synced');
+  assert.equal(scheduleResult.meeting_url, mockTeamsJoinUrl);
+  assert.equal(scheduleResult.calendar_event_id, 'evt-teams-db-1');
+
+  // Verify email sent to candidate contains meeting_url and Teams link
+  assert.equal(sentEmails.length, 1);
+  assert.equal(sentEmails[0].recipient, 'taylor@example.com');
+  assert.equal(sentEmails[0].variables.meeting_url, mockTeamsJoinUrl);
+  assert.ok(sentEmails[0].html.includes(mockTeamsJoinUrl));
+  assert.ok(sentEmails[0].html.includes('Join Microsoft Teams Meeting'));
+
+  f.db.close();
+});
+
+test('Calendar Integration: Demo Microsoft Calendar credentials generate simulated Teams meeting URL seamlessly', async () => {
+  resetGraphTokenCache();
+  const f = fixture();
+  const recruiter = user(f.db, 'Recruiter', 'Engineering');
+  const interviewer = user(f.db, 'Interviewer', 'Engineering');
+
+  // Ensure integration table and insert demo credentials
+  ensureIntegrationTable(f.db);
+  f.db.prepare(`
+    INSERT INTO integration_configs(id, category, name, enabled, config_json, encrypted_secrets_json, status, created_at, updated_at)
+    VALUES(?, ?, ?, 1, ?, ?, 'healthy', ?, ?)
+  `).run(
+    'microsoft_calendar',
+    'Calendar & Scheduling',
+    'Microsoft Calendar',
+    JSON.stringify({
+      tenantId: '00000000-0000-0000-0000-demo-entra-tenant',
+      clientId: '11111111-1111-1111-1111-demo-client-id',
+      organizerEmail: 'interviews@mechlin.example'
+    }),
+    JSON.stringify({
+      clientSecret: encryptSecret('demo-secret-key-ms-teams-orbit')
+    }),
+    new Date().toISOString(),
+    new Date().toISOString()
+  );
+
+  const c = testConfig();
+  delete c.entraTenantId;
+  delete c.entraClientId;
+  delete c.entraClientSecret;
+  delete c.teamsOrganizerEmail;
+
+  const cand = f.db.prepare("INSERT INTO candidates(id, name, email, phone, skills, resume_text, source, team, created_by, created_at) VALUES('c_demo_1','Alex Rivers','alex@example.com','1234567890','[]','','Direct','Engineering',?,?) RETURNING *").get(recruiter.id, new Date().toISOString());
+  const req = f.db.prepare("INSERT INTO requisitions(id, title, team, headcount, salary_min, salary_max, currency, description, skills, status, created_by, created_at) VALUES('r_demo_1','Cloud Architect','Engineering',1,10,20,'USD','','[]','open',?,?) RETURNING *").get(recruiter.id, new Date().toISOString());
+  const app = f.db.prepare("INSERT INTO applications(id, candidate_id, requisition_id, stage, created_at) VALUES('a_demo_1', ?, ?, 'Interview', ?) RETURNING *").get(cand.id, req.id, new Date().toISOString());
+
+  const sentEmails = [];
+  c.communicationAdapter = {
+    configured: true,
+    send: async payload => {
+      sentEmails.push(payload);
+      return { id: 'msg-demo-123' };
+    }
+  };
+
+  const scheduleResult = await service(f.db, recruiter, 'POST', 'interviews', {
+    application_id: app.id,
+    interviewer_id: interviewer.id,
+    scheduled_at: new Date(Date.now() + 86400000).toISOString(),
+    competencies: ['Problem solving']
+  }, new URLSearchParams(), c);
+
+  assert.ok(scheduleResult);
+  assert.equal(scheduleResult.calendar_status, 'synced');
+  assert.ok(scheduleResult.meeting_url.startsWith('https://teams.microsoft.com/l/meetup-join/orbit-demo-meeting-'));
+
+  assert.equal(sentEmails.length, 1);
+  assert.equal(sentEmails[0].variables.meeting_url, scheduleResult.meeting_url);
+  assert.ok(sentEmails[0].html.includes(scheduleResult.meeting_url));
+  assert.ok(sentEmails[0].html.includes('Join Microsoft Teams Meeting'));
+
+  f.db.close();
 });

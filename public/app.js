@@ -408,6 +408,7 @@ const bindResumeUpload = () => {
       }
       if (form.elements.name && !form.elements.name.value.trim() && data.name) {
         form.elements.name.value = data.name;
+        form.elements.name.dispatchEvent(new Event('input', { bubbles: true }));
       }
       if (form.elements.email && !form.elements.email.value.trim() && data.email) {
         form.elements.email.value = data.email;
@@ -419,6 +420,7 @@ const bindResumeUpload = () => {
       }
       if (form.elements.skills && !form.elements.skills.value.trim() && data.skills && data.skills.length) {
         form.elements.skills.value = Array.isArray(data.skills) ? data.skills.join(', ') : data.skills;
+        form.elements.skills.dispatchEvent(new Event('input', { bubbles: true }));
       }
 
       const resObj = data.resume || data;
@@ -703,10 +705,26 @@ async function render() {
       `</div>`;
     }
     if(current==='Interviews') {
-      const interviews=await api('interviews');
+      const [interviews, calInfo] = await Promise.all([
+        api('interviews'),
+        api('interviews/calendar-status').catch(() => ({ configured: false }))
+      ]);
       const {paged,page,totalPages,total,start}=paginate(interviews,pageState.Interviews||1,10);
       pageState.Interviews=page;
       const pag=renderPagination('Interviews',page,totalPages,total,start,10);
+      const isCalActive = Boolean(calInfo?.configured || interviews.some(i => i.meeting_url || i.calendar_status === 'synced'));
+      const calNotice = isCalActive
+        ? `<div class="notice-inline" style="border-left-color:var(--positive);background:var(--positive-bg);color:var(--positive);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">`+
+            `<div style="display:flex;align-items:center;gap:8px;">`+
+              `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="color:var(--positive);flex-shrink:0;"><path d="M20 6L9 17l-5-5"/></svg>`+
+              `<span><strong>Microsoft Teams calendar connected:</strong> Interview plans and meeting links synchronize automatically with participant calendars.</span>`+
+            `</div>`+
+            `<span class="badge" style="background:var(--positive-bg);color:var(--positive);border:1px solid var(--positive);font-weight:600;font-size:0.75rem;padding:3px 9px;">✓ Active Integration</span>`+
+          `</div>`
+        : `<div class="notice-inline" style="border-left-color:var(--warning);background:var(--warning-bg);color:var(--warning);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">`+
+            `<div><strong>Microsoft Teams calendar not configured:</strong> Interview plans are stored locally. Configure Microsoft 365 credentials in Integrations to sync Teams invites.</div>`+
+            `${allows('admin') ? `<button type="button" class="secondary" data-action="navigate" data-view="Integrations" style="font-size:0.8rem;padding:5px 10px;">Configure Integration</button>` : ''}`+
+          `</div>`;
       const rows=paged.map(i=>{
         const ready=feedbackReady(i);
         const canSubmit=i.interviewer_id===me.id&&i.status!=='completed';
@@ -714,7 +732,7 @@ async function render() {
         const showLock=(canSubmit||canProxy)&&!ready;
         return `<tr><td><strong>${escape(i.name)}</strong>${escape(i.title)}</td><td>${escape(i.interviewer)}</td><td>${escape(new Date(i.scheduled_at).toLocaleString())}${i.meeting_url?`<br><a href="${escape(i.meeting_url)}" target="_blank" rel="noopener noreferrer" class="teams-link" style="display:inline-flex;align-items:center;gap:4px;font-size:0.8rem;margin-top:4px;color:var(--accent,#4f46e5);font-weight:600;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>Join Teams</a>`:''}</td><td>${badge(i.status)}</td><td><div class="actions">${canSubmit&&ready?button('Submit scorecard','scorecard',i.id):''}${canProxy&&ready?button('Proxy scorecard','scorecard-proxy',i.id,'class="secondary"'):''}${i.status!=='completed'&&(allows('recruit')||allows('admin')||i.interviewer_id===me.id)?button('Edit','edit-interview',i.id,'class="secondary"'):''}${i.status==='planned'&&(allows('recruit')||allows('admin')||i.interviewer_id===me.id)?button('Cancel','cancel-interview',i.id,'class="secondary"'):''}${button('View feedback','feedback',i.id,'class="secondary"')}${showLock?`<span class="muted feedback-locked">${FEEDBACK_LOCKED_MESSAGE}</span>`:''}</div></td></tr>`;
       });
-      html=heading('Structured interviews, independent feedback.',allows('recruit')?button('+ Plan interview','new-interview'):'')+`<div class="notice-inline">Interview plans are stored here. Integrated with Microsoft Teams calendar when configured.</div><section class="panel">${table(['Candidate / role','Interviewer','Scheduled','Status','Feedback'],rows)}${pag}</section>`;
+      html=heading('Structured interviews, independent feedback.',allows('recruit')?button('+ Plan interview','new-interview'):'')+calNotice+`<section class="panel">${table(['Candidate / role','Interviewer','Scheduled','Status','Feedback'],rows)}${pag}</section>`;
     }
     if(current==='Referrals') {
       const refs=await api('referrals');
@@ -1613,8 +1631,10 @@ document.addEventListener('click',async event=>{
       const r=await api('resume/parse','POST',{text:form.elements.resume_text.value});
       if(r.email){form.elements.email.value=r.email;form.elements.email.dispatchEvent(new Event('input'));}
       if(r.phone){form.elements.phone.value=r.phone;form.elements.phone.dispatchEvent(new Event('input'));}
-      const hasExtracted=Boolean(r.email||r.phone);
-      notice(hasExtracted?'Email and phone number extracted successfully.':(r.message||'No email or phone number found in resume text.'),hasExtracted?'success':'error');
+      if(r.name && form.elements.name && !form.elements.name.value.trim()){form.elements.name.value=r.name;form.elements.name.dispatchEvent(new Event('input'));}
+      if(r.skills && r.skills.length && form.elements.skills && !form.elements.skills.value.trim()){form.elements.skills.value=Array.isArray(r.skills)?r.skills.join(', '):r.skills;form.elements.skills.dispatchEvent(new Event('input'));}
+      const hasExtracted=Boolean(r.email||r.phone||r.name||(r.skills&&r.skills.length));
+      notice((r.email||r.phone)?'Email and phone number extracted successfully.':(r.message||'No email or phone number found in resume text.'),hasExtracted?'success':'error');
     }
     if(a==='candidate-details'){
       const [c, commsData, fraudData, sigData] = await Promise.all([
@@ -1909,6 +1929,134 @@ document.addEventListener('click',async event=>{
     }
     if(a==='move'||a==='reject-app'){
       const stage=a==='move'?b.dataset.stage:'Rejected';
+      const isBackMove = b && typeof b.textContent === 'string' && b.textContent.trim().startsWith('Back to');
+      if(a==='move' && stage==='Interview' && !isBackMove){
+        const [apps, users] = await Promise.all([api('applications'), api('interviewers')]);
+        const app = apps.find(x => x.id === id);
+        if(!app) throw new Error('Application not found.');
+        if(!users.length) throw new Error('No active interviewers found in this team. Add or activate an interviewer first.');
+        const todayMin = getLocalTodayMin();
+        const tomorrow = new Date(Date.now() + 86400000);
+        tomorrow.setHours(10, 0, 0, 0);
+        const defaultScheduled = `${getLocalDateString(tomorrow)}T10:00`;
+        const defaultInterviewer = users.some(u => u.id === me.id) ? me.id : (users[0]?.id || '');
+        let defaultComps = 'Role knowledge, Problem solving';
+        if (app.skills) {
+          try {
+            const s = typeof app.skills === 'string' ? JSON.parse(app.skills) : app.skills;
+            if (Array.isArray(s) && s.length) defaultComps = s.slice(0, 3).join(', ');
+          } catch {}
+        }
+        modal(`Schedule Interview — ${escape(app.name)}`, `
+          <div class="form-grid">
+            <div class="full" style="background:var(--surface-alt, #f8fafc);padding:10px 14px;border-radius:6px;border:1px solid var(--line, #e2e8f0);margin-bottom:8px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+                <div><strong>Candidate:</strong> ${escape(app.name)} <span class="muted">(${escape(app.email)})</span></div>
+                <div><strong>Position:</strong> ${escape(app.title)}</div>
+              </div>
+            </div>
+            ${select('Interviewer', 'interviewer_id', users.map(u => [u.id, `${u.name}${u.team ? ' (' + u.team + ')' : ''}`]), defaultInterviewer)}
+            ${field('Date and time (your timezone)', 'scheduled_at', 'datetime-local', defaultScheduled, true, `min="${todayMin}"`)}
+            ${select('Duration', 'duration_minutes', [['30', '30 minutes'], ['45', '45 minutes (Standard)'], ['60', '60 minutes'], ['90', '90 minutes']], '45', false)}
+            ${field('Competencies, comma separated', 'competencies', 'text', defaultComps, true)}
+            ${area('Agenda / Notes (Optional)', 'notes', '', false)}
+            <p class="full status-note">Orbit will advance the application to <strong>Interview</strong>, synchronize the Microsoft Teams calendar event, and automatically dispatch an invitation email with meeting details and schedule link to <strong>${escape(app.email)}</strong>.</p>
+          </div>
+        `, async v => {
+          const scheduledDate = new Date(v.scheduled_at);
+          if (!Number.isFinite(scheduledDate.getTime()) || scheduledDate.getTime() < Date.now()) {
+            throw new Error('Enter a future interview date.');
+          }
+          const sErr = checkSkills(v.competencies);
+          if (sErr) {
+            const el = $('#competencies-error'); if (el) el.textContent = sErr;
+            const inp = $('#edit-form [name="competencies"]'); if (inp) { inp.setCustomValidity(sErr); inp.reportValidity(); }
+            throw new Error(sErr);
+          }
+          const compList = skills(v.competencies);
+          if (!compList.length) throw new Error('At least one competency is required.');
+          await api('interviews', 'POST', {
+            application_id: id,
+            interviewer_id: v.interviewer_id,
+            scheduled_at: scheduledDate.toISOString(),
+            duration_minutes: Number(v.duration_minutes) || 45,
+            competencies: compList,
+            notes: v.notes?.trim() || undefined
+          });
+          await api(`applications/${id}/stage`, 'POST', { stage: 'Interview' });
+          const interviewerObj = users.find(u => u.id === v.interviewer_id);
+          const interviewerName = interviewerObj ? interviewerObj.name : 'assigned interviewer';
+          notice(`Interview scheduled with ${interviewerName}. Invitation email with meeting link sent to ${app.name}!`, 'success');
+          return `Interview scheduled with ${interviewerName}. Application moved to Interview and invitation email sent to ${app.name}.`;
+        }, { saveLabel: 'Schedule & Send Invite' });
+        const dateInp = $('#edit-form [name="scheduled_at"]');
+        if (dateInp) dateInp.min = todayMin;
+        bindValidation('competencies', checkSkills);
+        return;
+      }
+      if(a==='move' && stage==='Offer' && !isBackMove){
+        const [apps, reqs] = await Promise.all([api('applications'), api('requisitions')]);
+        const app = apps.find(x => x.id === id);
+        if(!app) throw new Error('Application not found.');
+        const req = reqs.find(r => r.id === app.requisition_id);
+        const defaultSalary = req?.salary_max
+          ? Number(req.salary_max).toLocaleString()
+          : (req?.salary_min ? Number(req.salary_min).toLocaleString() : '120,000');
+        const defaultCurrency = req?.currency || 'USD';
+        modal(`Verify Offer & Issue Agreement — ${escape(app.name)}`, `
+          <div class="form-grid">
+            <div class="full" style="background:var(--surface-alt, #f8fafc);padding:10px 14px;border-radius:6px;border:1px solid var(--line, #e2e8f0);margin-bottom:8px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+                <div><strong>Candidate:</strong> ${escape(app.name)} <span class="muted">(${escape(app.email)})</span></div>
+                <div><strong>Requisition:</strong> ${escape(req?.title || app.title)} ${req?.team ? '<span class="muted">(' + escape(req.team) + ')</span>' : ''}</div>
+              </div>
+            </div>
+            ${field('Document title', 'title', 'text', 'Employment Offer Letter', true)}
+            ${field('Signer legal name', 'signer_name', 'text', app.name, true)}
+            ${field('Signer email address', 'signer_email', 'email', app.email, true)}
+            ${field('Annual base salary', 'salary', 'text', defaultSalary, true)}
+            ${field('Currency', 'currency', 'text', defaultCurrency, true)}
+            ${field('Anticipated start date', 'start_date', 'text', 'Two weeks following signature acceptance', true)}
+            ${field('Offer expiration (days)', 'expires_days', 'number', '7', true)}
+            <p class="full status-note">Orbit will advance the application to <strong>Offer</strong>, generate an official PDF offer letter with SHA-256 cryptographic integrity verification, and automatically dispatch the e-signature invitation email with a secure signing link to <strong>${escape(app.email)}</strong>.</p>
+          </div>
+        `, async v => {
+          const emailErr = checkEmail(v.signer_email);
+          if (emailErr) {
+            const el = $('#signer_email-error'); if (el) el.textContent = emailErr;
+            const inp = $('#edit-form [name="signer_email"]'); if (inp) { inp.setCustomValidity(emailErr); inp.reportValidity(); }
+            throw new Error(emailErr);
+          }
+          const currErr = checkCurrency(v.currency);
+          if (currErr) {
+            const el = $('#currency-error'); if (el) el.textContent = currErr;
+            const inp = $('#edit-form [name="currency"]'); if (inp) { inp.setCustomValidity(currErr); inp.reportValidity(); }
+            throw new Error(currErr);
+          }
+          const payload = {
+            title: v.title?.trim() || 'Employment Offer Letter',
+            candidate_id: app.candidate_id,
+            application_id: app.id,
+            requisition_id: app.requisition_id || undefined,
+            salary: v.salary?.trim() || defaultSalary,
+            currency: v.currency?.trim()?.toUpperCase() || defaultCurrency,
+            start_date: v.start_date?.trim() || 'Two weeks following signature acceptance',
+            expires_days: Number(v.expires_days) || 7,
+            signers: [{
+              name: v.signer_name?.trim() || app.name,
+              email: v.signer_email?.trim() || app.email,
+              role: 'Candidate'
+            }]
+          };
+          await api('signatures', 'POST', payload);
+          await api(`applications/${id}/stage`, 'POST', { stage: 'Offer' });
+          notice(`Offer letter generated and e-signature invitation sent to ${app.name}!`, 'success');
+          return `Application moved to Offer. Official offer letter and e-signature invitation email sent to ${app.name}.`;
+        }, { saveLabel: 'Generate Offer & Send Signature Email' });
+        bindValidation('signer_email', checkEmail);
+        bindValidation('currency', checkCurrency);
+        return;
+      }
       modal('Change application stage',`<p>Move this application to <strong>${escape(stage)}</strong>?</p><p class="muted" style="font-size:0.82rem;margin-top:6px;">A status update email will be automatically sent to the candidate.</p>`,async ()=>{
         await api(`applications/${id}/stage`,'POST',{stage});
         return stage==='Rejected'?'Application rejected. Status update email sent.':`Application moved to ${stage} successfully. Status update email sent.`;

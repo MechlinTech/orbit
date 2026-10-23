@@ -380,8 +380,51 @@ try {
   await waitFor("document.querySelectorAll('#candidate-table tbody tr').length > 0");
   check('Clear Search restores the candidate directory', true);
 
-  // Empty directory without an active search.
-  f.db.exec('DELETE FROM stage_events; DELETE FROM scorecards; DELETE FROM interviews; DELETE FROM referrals; DELETE FROM applications; DELETE FROM candidates;');
+  // Automated pipeline progression: Move to Interview schedules interview; Move to Offer creates offer & e-signature request.
+  await click(`document.querySelector('[data-nav="Pipeline"]')`);
+  await waitFor("document.querySelector('.board') !== null");
+  const setupApp = await evaluate(`(async () => {
+    const c = await api('candidates', 'POST', { name: 'Automated Pipeline Lead', email: 'pipeline.lead@example.com', team: 'Dev', skills: ['Architecture'] });
+    const r = (await api('requisitions')).find(x => x.status === 'open' && x.team === 'Dev');
+    const a = await api('applications', 'POST', { candidate_id: c.id, requisition_id: r.id });
+    await api('applications/' + a.id + '/stage', 'POST', { stage: 'Screening' });
+    await render();
+    return { candidateId: c.id, appId: a.id };
+  })()`);
+  await waitFor(`Boolean(document.querySelector('.column[data-stage="Screening"] [data-action="move"][data-id="${setupApp.appId}"][data-stage="Interview"]'))`);
+
+  // 1. Click Move to Interview -> interview scheduling modal should open
+  await click(`document.querySelector('.column[data-stage="Screening"] [data-action="move"][data-id="${setupApp.appId}"][data-stage="Interview"]')`);
+  await waitFor("document.querySelector('dialog').open && document.querySelector('#modal-body h2')?.textContent.includes('Schedule Interview')");
+  check('Move to Interview opens interview scheduling modal with candidate and position info',
+    await evaluate("document.querySelector('#modal-body')?.innerText.includes('Automated Pipeline Lead') && Boolean(document.querySelector('#edit-form select[name=\"interviewer_id\"]')) && Boolean(document.querySelector('#edit-form input[name=\"scheduled_at\"]'))"));
+
+  await click("document.querySelector('#edit-form button[type=submit]')");
+  await waitFor(`!document.querySelector('dialog').open && Boolean(document.querySelector('.column[data-stage="Interview"] [data-action="move"][data-id="${setupApp.appId}"][data-stage="Offer"]'))`);
+  check('Confirming interview schedules interview, advances card to Interview stage, and dispatches invite',
+    await evaluate(`(async () => {
+      const ints = await api('interviews');
+      return ints.some(i => i.application_id === ${JSON.stringify(setupApp.appId)});
+    })()`));
+
+  // 2. Click Move to Offer -> offer letter and requirement verification modal should open
+  await click(`document.querySelector('.column[data-stage="Interview"] [data-action="move"][data-id="${setupApp.appId}"][data-stage="Offer"]')`);
+  await waitFor("document.querySelector('dialog').open && document.querySelector('#modal-body h2')?.textContent.includes('Verify Offer & Issue Agreement')");
+  check('Move to Offer opens offer verification modal with prefilled requirements and e-signature info',
+    await evaluate("document.querySelector('#edit-form input[name=\"signer_name\"]')?.value === 'Automated Pipeline Lead' && document.querySelector('#edit-form input[name=\"signer_email\"]')?.value === 'pipeline.lead@example.com' && Boolean(document.querySelector('#edit-form input[name=\"salary\"]'))"));
+
+  await click("document.querySelector('#edit-form button[type=submit]')");
+  await waitFor(`!document.querySelector('dialog').open && Boolean(document.querySelector('.column[data-stage="Offer"] [data-action="move"][data-id="${setupApp.appId}"][data-stage="Hired"]'))`);
+  check('Confirming offer creates signature request, advances card to Offer stage, and dispatches offer email',
+    await evaluate(`(async () => {
+      const sigs = await api('candidates/' + ${JSON.stringify(setupApp.candidateId)} + '/signatures');
+      return Array.isArray(sigs) && sigs.some(s => s.application_id === ${JSON.stringify(setupApp.appId)} || s.candidate_id === ${JSON.stringify(setupApp.candidateId)});
+    })()`));
+
+  await startView('Candidates');
+  await waitFor("document.querySelector('#candidate-table') !== null");
+
+  f.db.exec('DELETE FROM candidate_communications; DELETE FROM signature_signers; DELETE FROM signature_requests; DELETE FROM signature_documents; DELETE FROM candidate_resumes; DELETE FROM stage_events; DELETE FROM scorecards; DELETE FROM interviews; DELETE FROM referrals; DELETE FROM applications; DELETE FROM candidates;');
   await evaluate('render()');
   await waitFor("document.querySelector('#candidate-table')?.innerText.includes('No candidates added yet')");
   check('empty directory with no active search shows No candidates added yet',
