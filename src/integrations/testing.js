@@ -492,7 +492,13 @@ async function testHrms({ config, secrets, transport }) {
   }
 
   const cleanBase = baseUrl.replace(/\/+$/, '');
-  const testUrl = `${cleanBase}/health`;
+  const resPath = String(config.resourcePath || '').replace(/\/+$/, '');
+  const isSupabase = cleanBase.includes('supabase.co') || resPath.includes('rest/v1');
+
+  // Supabase Data API (PostgREST) accepts /rest/v1/ or the configured resource path directly
+  const testUrl = isSupabase
+    ? `${cleanBase}${resPath ? (resPath.startsWith('/') ? resPath : `/${resPath}`) : '/rest/v1'}/`
+    : `${cleanBase}/health`;
 
   const headers = {
     'Accept': 'application/json'
@@ -506,6 +512,10 @@ async function testHrms({ config, secrets, transport }) {
     headers['Authorization'] = `Basic ${Buffer.from(apiKey).toString('base64')}`;
   }
 
+  if (isSupabase) {
+    headers['apikey'] = apiKey;
+  }
+
   try {
     const res = await transport(testUrl, {
       method: 'GET',
@@ -517,11 +527,13 @@ async function testHrms({ config, secrets, transport }) {
       return {
         ok: false,
         status: 'failed',
-        message: `HRMS endpoint reached at ${cleanBase}, but authentication credentials were rejected (HTTP ${res.status}).`
+        message: isSupabase
+          ? `Supabase Data API reached at ${cleanBase}, but credentials were rejected (HTTP ${res.status}). Ensure you use the Supabase service_role secret key.`
+          : `HRMS endpoint reached at ${cleanBase}, but authentication credentials were rejected (HTTP ${res.status}).`
       };
     }
 
-    if (res.status === 404) {
+    if (res.status === 404 && !isSupabase) {
       // Endpoint /health not found, try base URL with HEAD
       const rootRes = await transport(cleanBase, {
         method: 'HEAD',
@@ -550,8 +562,13 @@ async function testHrms({ config, secrets, transport }) {
     return {
       ok: true,
       status: 'connected',
-      message: `HRMS API endpoint verified at ${cleanBase}. Authentication accepted without dispatching employee records.`,
+      message: isSupabase
+        ? `Successfully authenticated with Supabase Data API (PostgREST). Database schema is accessible and ready for employee sync.`
+        : `HRMS API endpoint verified at ${cleanBase}. Authentication accepted without dispatching employee records.`,
       details: {
+        provider: isSupabase ? 'supabase' : 'generic_hrms',
+        endpoint: testUrl,
+        statusCode: res.status,
         baseUrl: cleanBase,
         authType,
         resourcePath: config.resourcePath || '/hires',

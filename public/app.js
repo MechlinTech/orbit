@@ -58,6 +58,46 @@ const syncNavState = () => {
     if (location.hash !== target) history.replaceState(null, '', target);
   } catch {}
 };
+const saveNavScroll = (navEl) => {
+  if (!navEl) return;
+  try {
+    sessionStorage.setItem('orbit_nav_scroll_top', String(navEl.scrollTop));
+    sessionStorage.setItem('orbit_nav_scroll_left', String(navEl.scrollLeft));
+    localStorage.setItem('orbit_nav_scroll_top', String(navEl.scrollTop));
+    localStorage.setItem('orbit_nav_scroll_left', String(navEl.scrollLeft));
+  } catch {}
+};
+const scrollNavIntoView = (navEl, btn) => {
+  if (!navEl || !btn) return;
+  const navRect = navEl.getBoundingClientRect();
+  const btnRect = btn.getBoundingClientRect();
+  if (!navRect.height || !btnRect.height) return;
+  if (btnRect.top < navRect.top) {
+    navEl.scrollTop -= (navRect.top - btnRect.top + 8);
+  } else if (btnRect.bottom > navRect.bottom) {
+    navEl.scrollTop += (btnRect.bottom - navRect.bottom + 8);
+  }
+  if (btnRect.left < navRect.left) {
+    navEl.scrollLeft -= (navRect.left - btnRect.left + 8);
+  } else if (btnRect.right > navRect.right) {
+    navEl.scrollLeft += (btnRect.right - navRect.right + 8);
+  }
+};
+const restoreNavScroll = (navEl) => {
+  if (!navEl) return;
+  let savedTop = null, savedLeft = null;
+  try {
+    savedTop = sessionStorage.getItem('orbit_nav_scroll_top') ?? localStorage.getItem('orbit_nav_scroll_top');
+    savedLeft = sessionStorage.getItem('orbit_nav_scroll_left') ?? localStorage.getItem('orbit_nav_scroll_left');
+  } catch {}
+  if (savedTop !== null) navEl.scrollTop = Number(savedTop) || 0;
+  if (savedLeft !== null) navEl.scrollLeft = Number(savedLeft) || 0;
+  const activeBtn = navEl.querySelector('button.active');
+  if (activeBtn) {
+    scrollNavIntoView(navEl, activeBtn);
+    saveNavScroll(navEl);
+  }
+};
 const loadSavedPages = () => {
   try {
     const saved = sessionStorage.getItem('orbit_pages') || localStorage.getItem('orbit_pages');
@@ -673,7 +713,7 @@ async function openDemoModal(isSwitch=false){
       candidateQuery='';
       reqPage=1;
       Object.keys(pageState).forEach(k=>pageState[k]=1);
-      try{sessionStorage.removeItem('orbit_current');sessionStorage.removeItem('orbit_pages');localStorage.removeItem('orbit_current');localStorage.removeItem('orbit_pages');}catch{}
+      try{sessionStorage.removeItem('orbit_current');sessionStorage.removeItem('orbit_pages');sessionStorage.removeItem('orbit_nav_scroll_top');sessionStorage.removeItem('orbit_nav_scroll_left');localStorage.removeItem('orbit_current');localStorage.removeItem('orbit_pages');localStorage.removeItem('orbit_nav_scroll_top');localStorage.removeItem('orbit_nav_scroll_left');}catch{}
       const nav=getNavList();
       current=nav[0]||'Overview';
       return `Switched persona to ${me.role} · ${me.team||'Organization'}.`;
@@ -731,11 +771,75 @@ function login() {
 }
 function shell() {
   const nav=getNavList();
-  if(!nav.includes(current))current=nav[0];
+  if(!nav.includes(current))current=nav[0]||'Overview';
   const isDemoEnabled=document.documentElement.dataset.demoLogin==='true';
   const showQASwitch=Boolean(me?.isDemoUser||isDemoEnabled);
-  $('#app').innerHTML=`<div class="layout"><aside class="sidebar"><div class="sidebar-brand">${brand()}</div><nav aria-label="Main navigation"><p class="nav-label">WORKSPACE</p>${nav.map(n=>`${n==='Administration'?'<p class="nav-label admin-label">MANAGE</p>':''}<button data-nav="${n}" class="${current===n?'active':''}" ${current===n?'aria-current="page"':''}>${icon(n)}<span>${n}</span></button>`).join('')}</nav><div class="profile"><span class="avatar">${initials(me.name)}</span><div><strong>${escape(me.name)}</strong><div class="muted">${escape(me.role)}${me.team?` · ${escape(me.team)}`:''}</div>${me.isDemoUser?'<span class="qa-badge">QA Demo User</span>':''}</div></div><div class="sidebar-caption">Mechlin Orbit · Internal workspace</div></aside><div class="workspace"><header class="topbar"><div class="breadcrumb">Orbit <span>/</span> <strong>${escape(current)}</strong></div><div class="topbar-right">${showQASwitch?`<button type="button" class="secondary qa-switch-button" data-action="switch-demo-role" title="Switch QA Demo Persona">${icon('Administration')}<span>Switch QA Role</span></button>`:''}<span class="workspace-status">${icon('Administration')} Private workspace</span><button class="secondary" data-action="logout">Sign out</button><span class="avatar small" aria-label="${escape(me.name)}">${initials(me.name)}</span></div></header><main class="content" id="main" tabindex="-1"><p class="muted">Loading your workspace…</p></main><footer class="workspace-footer">Thoughtful hiring, together. <span>Orbit by Mechlin</span></footer></div></div>`;
-  document.querySelectorAll('[data-nav]').forEach(b=>b.onclick=()=>{if(current!==b.dataset.nav){reqPage=1;pageState[b.dataset.nav]=1;if(b.dataset.nav==='Candidates')candidateQuery='';}current=b.dataset.nav;render();});
+
+  const existingLayout = document.querySelector('#app .layout');
+  const existingNav = document.querySelector('.sidebar nav');
+  const existingSidebar = document.querySelector('.sidebar');
+  const existingButtons = existingNav ? Array.from(existingNav.querySelectorAll('[data-nav]')) : [];
+  const existingKeys = existingButtons.map(b => b.dataset.nav).join(',');
+  const targetKeys = nav.join(',');
+  const currentUserId = String(me?.id || '');
+  const prevUserId = existingSidebar?.dataset.userId || '';
+
+  if (existingLayout && existingNav && existingKeys === targetKeys && prevUserId === currentUserId) {
+    existingButtons.forEach(b => {
+      const isActive = b.dataset.nav === current;
+      b.classList.toggle('active', isActive);
+      if (isActive) {
+        b.setAttribute('aria-current', 'page');
+      } else {
+        b.removeAttribute('aria-current');
+      }
+    });
+    const bc = document.querySelector('.breadcrumb strong');
+    if (bc) bc.textContent = current;
+    const activeBtn = existingNav.querySelector('button.active');
+    if (activeBtn) {
+      scrollNavIntoView(existingNav, activeBtn);
+      saveNavScroll(existingNav);
+    }
+    return;
+  }
+
+  let prevScrollTop = existingNav ? existingNav.scrollTop : null;
+  let prevScrollLeft = existingNav ? existingNav.scrollLeft : null;
+  if (prevScrollTop === null) {
+    try {
+      const st = sessionStorage.getItem('orbit_nav_scroll_top') ?? localStorage.getItem('orbit_nav_scroll_top');
+      if (st !== null) prevScrollTop = Number(st) || 0;
+      const sl = sessionStorage.getItem('orbit_nav_scroll_left') ?? localStorage.getItem('orbit_nav_scroll_left');
+      if (sl !== null) prevScrollLeft = Number(sl) || 0;
+    } catch {}
+  }
+
+  $('#app').innerHTML=`<div class="layout"><aside class="sidebar" data-user-id="${escape(currentUserId)}"><div class="sidebar-brand">${brand()}</div><nav aria-label="Main navigation"><p class="nav-label">WORKSPACE</p>${nav.map(n=>`${n==='Administration'?'<p class="nav-label admin-label">MANAGE</p>':''}<button data-nav="${n}" class="${current===n?'active':''}" ${current===n?'aria-current="page"':''}>${icon(n)}<span>${n}</span></button>`).join('')}</nav><div class="profile"><span class="avatar">${initials(me.name)}</span><div><strong>${escape(me.name)}</strong><div class="muted">${escape(me.role)}${me.team?` · ${escape(me.team)}`:''}</div>${me.isDemoUser?'<span class="qa-badge">QA Demo User</span>':''}</div></div><div class="sidebar-caption">Mechlin Orbit · Internal workspace</div></aside><div class="workspace"><header class="topbar"><div class="breadcrumb">Orbit <span>/</span> <strong>${escape(current)}</strong></div><div class="topbar-right">${showQASwitch?`<button type="button" class="secondary qa-switch-button" data-action="switch-demo-role" title="Switch QA Demo Persona">${icon('Administration')}<span>Switch QA Role</span></button>`:''}<span class="workspace-status">${icon('Administration')} Private workspace</span><button class="secondary" data-action="logout">Sign out</button><span class="avatar small" aria-label="${escape(me.name)}">${initials(me.name)}</span></div></header><main class="content" id="main" tabindex="-1"><p class="muted">Loading your workspace…</p></main><footer class="workspace-footer">Thoughtful hiring, together. <span>Orbit by Mechlin</span></footer></div></div>`;
+
+  const newNav = document.querySelector('.sidebar nav');
+  if (newNav) {
+    if (prevScrollTop !== null) newNav.scrollTop = prevScrollTop;
+    if (prevScrollLeft !== null) newNav.scrollLeft = prevScrollLeft;
+    newNav.addEventListener('scroll', () => saveNavScroll(newNav), { passive: true });
+    requestAnimationFrame(() => {
+      const activeBtn = newNav.querySelector('button.active');
+      if (activeBtn) scrollNavIntoView(newNav, activeBtn);
+      saveNavScroll(newNav);
+    });
+  }
+
+  document.querySelectorAll('[data-nav]').forEach(b=>b.onclick=()=>{
+    if(current!==b.dataset.nav){
+      reqPage=1;
+      pageState[b.dataset.nav]=1;
+      if(b.dataset.nav==='Candidates')candidateQuery='';
+    }
+    current=b.dataset.nav;
+    syncNavState();
+    saveNavScroll(document.querySelector('.sidebar nav'));
+    render();
+  });
 }
 function syncPipelineScroll(initialLeft = 0) {
   const board = $('#pipeline-board') || document.querySelector('.board');
@@ -978,24 +1082,24 @@ async function render() {
         const inHouseCount = integrations.filter(i => !i.isExternal).length;
 
         const metrics = [
-          ['Supported Integrations', integrations.length, 'Overview', 'Total manageable system adapters'],
-          ['Active & Ready', activeCount, 'Integrations', 'Operational provider interfaces'],
-          ['External Cloud APIs', externalCount, 'Pipeline', 'Microsoft, Resend, AI & HRMS'],
-          ['In-House Engines', inHouseCount, 'Administration', 'Signatures, Fraud, Agency & Scanner']
+          ['Supported Integrations', integrations.length, 'Total manageable system adapters'],
+          ['Active & Ready', activeCount, 'Operational provider interfaces'],
+          ['External Cloud APIs', externalCount, 'Microsoft, Resend, AI & HRMS'],
+          ['In-House Engines', inHouseCount, 'Signatures, Fraud, Agency & Scanner']
         ];
 
         html = heading('Manage external API credentials, connection health, and enterprise adapters.') +
-          `<div class="metrics">${metrics.map(([label, count, i, note], n) => `<div class="metric metric-${n}"><div class="metric-top"><span>${label}</span><span class="metric-icon">${icon(i)}</span></div><strong>${count}</strong><small>${note}</small></div>`).join('')}</div>` +
+          `<div class="metrics int-metrics">${metrics.map(([label, count, note], n) => `<div class="metric metric-${n}"><div class="metric-top"><span>${label}</span></div><strong>${count}</strong><small>${note}</small></div>`).join('')}</div>` +
           `<section class="panel integrations-container">` +
             `<div class="panel-head" style="margin-bottom:12px;">` +
               `<div><h2>System Integrations Registry</h2><p class="muted">Manage credentials securely with AES-256-GCM encryption, run non-destructive tests, and configure fallbacks.</p></div>` +
               `<div class="actions">` +
-                `<button type="button" class="secondary" data-action="refresh-integrations">${icon('Administration')}<span>Refresh Status</span></button>` +
+                `<button type="button" class="secondary" data-action="refresh-integrations">Refresh Status</button>` +
               `</div>` +
             `</div>` +
             `<div class="int-header-toolbar">` +
               `<div class="int-search-wrap">` +
-                `<svg class="int-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>` +
+                `<svg class="int-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>` +
                 `<input type="search" id="int-search-input" placeholder="Search integrations by name or capability..." aria-label="Search integrations">` +
               `</div>` +
               `<div class="int-filter-tabs" role="tablist">` +
@@ -1007,19 +1111,19 @@ async function render() {
             `</div>` +
             `<div class="integrations-grid" id="integrations-grid">` +
               integrations.map(item => {
-                let statusClass = 'ready';
-                let statusLabel = 'Ready to Setup';
+                let badgeClass = 'pending';
+                let statusLabel = 'Setup Required';
                 if (item.status === 'connected') {
-                  statusClass = 'connected';
+                  badgeClass = 'completed';
                   statusLabel = 'Connected';
                 } else if (item.status === 'configured') {
-                  statusClass = 'configured';
+                  badgeClass = 'active';
                   statusLabel = 'Configured';
                 } else if (item.status === 'disabled') {
-                  statusClass = 'disabled';
+                  badgeClass = 'disabled';
                   statusLabel = 'Deactivated';
                 } else if (item.status === 'failed') {
-                  statusClass = 'failed';
+                  badgeClass = 'rejected';
                   statusLabel = 'Needs Attention';
                 }
 
@@ -1029,15 +1133,14 @@ async function render() {
 
                 const testInfo = item.lastTestAt
                   ? (item.lastTestStatus === 'success'
-                      ? `<span class="int-diag-chip diag-ok" title="Last verified: ${escape(formatDateTimeIST(item.lastTestAt))}">✓ Verified active</span>`
-                      : `<span class="int-diag-chip diag-warn" title="${escape(item.lastError || 'Test failed')}">⚠ Connection check needed</span>`)
+                      ? `<span class="int-diag-chip diag-ok" title="Last verified: ${escape(formatDateTimeIST(item.lastTestAt))}">Verified active</span>`
+                      : `<span class="int-diag-chip diag-warn" title="${escape(item.lastError || 'Test failed')}">Connection check needed</span>`)
                   : `<span class="int-diag-chip diag-ready">Ready for test</span>`;
 
                 const featureTags = getIntegrationFeatureTags(item);
 
                 return `<div class="integration-card" data-integration-id="${escape(item.id)}" data-category="${escape(item.category)}" data-external="${item.isExternal ? '1' : '0'}" data-status="${escape(item.status)}">` +
                   `<div class="int-card-head">` +
-                    `<div class="int-icon-wrap">${getIntegrationIcon(item.id)}</div>` +
                     `<div class="int-head-meta">` +
                       `<div class="int-meta-sub">` +
                         `<span class="int-category-text">${escape(item.category)}</span>` +
@@ -1046,19 +1149,11 @@ async function render() {
                       `</div>` +
                       `<h3 class="int-name">${escape(item.name)}</h3>` +
                     `</div>` +
-                    `<span class="int-status-pill int-status-${statusClass}"><span class="int-status-dot"></span>${statusLabel}</span>` +
+                    `<span class="badge ${badgeClass}">${statusLabel}</span>` +
                   `</div>` +
                   `<p class="int-desc">${escape(item.description)}</p>` +
                   `<div class="int-feature-tags">${featureTags.map(t => `<span class="int-feature-tag">${escape(t)}</span>`).join('')}</div>` +
-                  `<div class="int-health-row">${testInfo}<span class="int-enc-badge" title="AES-256-GCM encrypted">🔒 AES-256 Encrypted</span></div>` +
-                  `<details class="int-details-drawer">` +
-                    `<summary class="int-details-summary">Capabilities & Fallback ▾</summary>` +
-                    `<div class="int-drawer-content">` +
-                      `<strong>Capabilities:</strong>` +
-                      `<ul>${item.capabilities.map(cap => `<li>${escape(cap)}</li>`).join('')}</ul>` +
-                      `<div class="int-fallback-box"><small><strong>Fallback:</strong> ${escape(item.fallbackPolicy)}</small></div>` +
-                    `</div>` +
-                  `</details>` +
+                  `<div class="int-health-row">${testInfo}<span class="int-enc-badge" title="AES-256-GCM encrypted">AES-256 Encrypted</span></div>` +
                   `<div class="int-card-actions">` +
                     `<button type="button" class="button" data-action="configure-integration" data-id="${escape(item.id)}">Configure</button>` +
                     `<button type="button" class="button secondary" data-action="test-integration" data-id="${escape(item.id)}" title="Run safe, non-destructive connection test">Test Connection</button>` +
@@ -1143,6 +1238,12 @@ async function render() {
       $('#main').innerHTML=html;
       document.title=`${current} · Orbit by Mechlin`;
       syncNavState();
+      const navEl = document.querySelector('.sidebar nav');
+      if (navEl) {
+        const activeBtn = navEl.querySelector('button.active');
+        if (activeBtn) scrollNavIntoView(navEl, activeBtn);
+        saveNavScroll(navEl);
+      }
       if(current === 'Pipeline') syncPipelineScroll(prevBoardLeft);
       if(current === 'Integrations') bindIntegrationsFilter();
     }
@@ -1186,28 +1287,6 @@ function candidateStatusCell(c){
 }
 function candidateTable(cs){return table(['Candidate','Skills','Source','Status','Actions'],cs.map(c=>`<tr><td><div class="person-cell"><span class="avatar">${initials(c.name)}</span><div><strong title="${escape(c.name)}">${escape(c.name)}</strong><small title="${escape(c.email)}">${escape(c.email)}</small></div></div></td><td><div class="skill-list">${c.skills.map(s=>`<span class="skill-chip" title="${escape(s)}">${escape(s)}</span>`).join('')}</div></td><td><span title="${escape(c.source)}">${escape(c.source)}</span></td><td>${candidateStatusCell(c)}</td><td><div class="actions">${button('View profile','candidate-details',c.id,'class="secondary"')}${allows('recruit')?button('Edit','edit-candidate',c.id,'class="secondary"'):''}</div></td></tr>`),'candidates-table');}
 
-function getIntegrationIcon(id) {
-  switch (id) {
-    case 'microsoft_calendar':
-      return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line><polygon points="11 13 16 16 11 19 11 13" fill="currentColor" stroke="none"></polygon></svg>`;
-    case 'email_communication':
-      return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>`;
-    case 'multi_ai':
-      return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"></path></svg>`;
-    case 'resume_scanner':
-      return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><path d="M9 15l2 2 4-4"></path></svg>`;
-    case 'signature':
-      return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"></path><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"></path><path d="M2 2l7.586 7.586"></path><circle cx="11" cy="11" r="2"></circle></svg>`;
-    case 'fraud_review':
-      return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path><circle cx="12" cy="11" r="3"></circle></svg>`;
-    case 'agency_portal':
-      return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path></svg>`;
-    case 'hrms':
-      return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>`;
-    default:
-      return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>`;
-  }
-}
 
 function getIntegrationFeatureTags(item) {
   const map = {
@@ -1302,7 +1381,7 @@ async function openIntegrationConfigModal(integrationId) {
               </div>
             </label>
             <div class="int-secret-meta" style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;font-size:0.75rem;">
-              <span class="muted">${f.hasSavedSecret ? '<span class="int-saved-badge">✓ Stored securely with AES-256-GCM encryption</span>' : '<span>Stored securely with AES-256-GCM authenticated encryption</span>'}</span>
+              <span class="muted">${f.hasSavedSecret ? '<span class="int-saved-badge">Stored securely with AES-256-GCM encryption</span>' : '<span>Stored securely with AES-256-GCM authenticated encryption</span>'}</span>
               ${f.hasSavedSecret ? `<label style="display:inline-flex;align-items:center;gap:5px;cursor:pointer;color:var(--negative);font-size:0.75rem;"><input type="checkbox" name="remove_sec_${f.key}"> Remove credential</label>` : ''}
             </div>
           </div>
@@ -1311,19 +1390,35 @@ async function openIntegrationConfigModal(integrationId) {
       return field(f.label, `cfg_${f.key}`, f.type || 'text', f.value ?? '', f.required);
     };
 
+    let modalBadgeClass = 'pending';
+    let modalStatusLabel = 'Ready to Setup';
+    if (details.status === 'connected') {
+      modalBadgeClass = 'completed';
+      modalStatusLabel = 'Connected';
+    } else if (details.status === 'configured') {
+      modalBadgeClass = 'active';
+      modalStatusLabel = 'Configured';
+    } else if (details.status === 'disabled') {
+      modalBadgeClass = 'disabled';
+      modalStatusLabel = 'Deactivated';
+    } else if (details.status === 'failed') {
+      modalBadgeClass = 'rejected';
+      modalStatusLabel = 'Needs Attention';
+    }
+
     const formHtml = `
       <div class="int-modal-body">
         <div class="int-modal-hero">
-          <div class="int-hero-left">
-            <div class="int-hero-icon">${getIntegrationIcon(details.id)}</div>
-            <div>
-              <h3 class="int-hero-title">${escape(details.name)}</h3>
-              <p class="int-hero-desc">${escape(details.description)}</p>
+          <div>
+            <div class="int-meta-sub" style="margin-bottom:4px;">
+              <span>${escape(details.category || '')}</span>
+              <span class="int-dot-sep">·</span>
+              <span class="int-type-tag ${details.isExternal ? 'int-type-cloud' : 'int-type-inhouse'}">${details.isExternal ? 'Cloud API' : 'In-House'}</span>
             </div>
+            <h3 class="int-hero-title">${escape(details.name)}</h3>
+            <p class="int-hero-desc">${escape(details.description)}</p>
           </div>
-          <span class="int-status-pill int-status-${details.status === 'connected' ? 'connected' : (details.status === 'configured' ? 'configured' : 'ready')}">
-            <span class="int-status-dot"></span>${escape(details.status || 'Ready')}
-          </span>
+          <span class="badge ${modalBadgeClass}">${modalStatusLabel}</span>
         </div>
 
         <div class="int-toggle-banner">
@@ -1351,7 +1446,7 @@ async function openIntegrationConfigModal(integrationId) {
         ` : ''}
 
         <div class="int-modal-test-bar">
-          <button type="button" class="button secondary" id="modal-inline-test-btn" data-id="${escape(details.id)}">⚡ Test Connection</button>
+          <button type="button" class="button secondary" id="modal-inline-test-btn" data-id="${escape(details.id)}">Test Connection</button>
           <div id="modal-test-result" class="int-modal-test-msg muted">Verify connectivity and credentials before saving</div>
         </div>
       </div>
@@ -1439,14 +1534,14 @@ async function openIntegrationConfigModal(integrationId) {
           });
           if (res.ok) {
             testResult.className = 'int-modal-test-msg ok';
-            testResult.textContent = `✓ ${res.message || 'Connection verified successfully!'}`;
+            testResult.textContent = res.message || 'Connection verified successfully.';
           } else {
             testResult.className = 'int-modal-test-msg err';
-            testResult.textContent = `✗ ${res.message || 'Connection failed.'}`;
+            testResult.textContent = res.message || 'Connection failed.';
           }
         } catch (err) {
           testResult.className = 'int-modal-test-msg err';
-          testResult.textContent = `✗ ${err.message}`;
+          testResult.textContent = err.message || 'Connection test failed.';
         } finally {
           testBtn.disabled = false;
           testBtn.innerHTML = origText;
@@ -1465,7 +1560,7 @@ async function runIntegrationConnectionTest(integrationId) {
     if (res.ok) {
       modal('Connection Test Succeeded', `
         <div class="notice-inline" style="border-left-color:var(--positive);background:var(--positive-bg);color:var(--positive);">
-          <strong>✓ Connection Verified</strong>
+          <strong>Connection Verified</strong>
           <p style="margin:6px 0 0;color:var(--ink);">${escape(res.message)}</p>
         </div>
         ${res.details ? `<div style="margin-top:14px;"><strong style="font-size:0.85rem;">Diagnostic Response:</strong><pre class="mono" style="background:var(--surface-alt);border:1px solid var(--line);padding:12px;border-radius:8px;font-size:0.82rem;overflow-x:auto;margin-top:6px;">${escape(JSON.stringify(res.details, null, 2))}</pre></div>` : ''}
@@ -1474,7 +1569,7 @@ async function runIntegrationConnectionTest(integrationId) {
     } else {
       modal('Connection Test Failed', `
         <div class="notice-inline danger-notice">
-          <strong>✗ Connection Failed</strong>
+          <strong>Connection Failed</strong>
           <p style="margin:6px 0 0;">${escape(res.message)}</p>
         </div>
         <p class="muted" style="font-size:0.85rem;margin-top:12px;">Please check the integration configuration, verify that your credentials or endpoints are valid, and confirm that required external network access is available.</p>
@@ -1485,7 +1580,7 @@ async function runIntegrationConnectionTest(integrationId) {
   } catch (err) {
     modal('Test Execution Error', `
       <div class="notice-inline danger-notice">
-        <strong>✗ Test Request Failed</strong>
+        <strong>Test Request Failed</strong>
         <p style="margin:6px 0 0;">${escape(err.message)}</p>
       </div>
     `);
@@ -1520,7 +1615,7 @@ document.addEventListener('click',async event=>{
     if(a==='demo-login-modal'){await openDemoModal(false);return;}
     if(a==='switch-demo-role'){await openDemoModal(true);return;}
     if(a==='req-page'||a==='page'){const view=b.dataset.view||'Requisitions';const p=Number(b.dataset.page);const total=Number(b.dataset.totalPages||Infinity);if(p>=1&&p<=total&&p!==(pageState[view]||1)){pageState[view]=p;reqPage=pageState.Requisitions;await render();}return;}
-    if(a==='navigate'){if(current!==b.dataset.view){reqPage=1;pageState[b.dataset.view]=1;if(b.dataset.view==='Candidates')candidateQuery='';}current=b.dataset.view;await render();return;}
+    if(a==='navigate'){if(current!==b.dataset.view){reqPage=1;pageState[b.dataset.view]=1;if(b.dataset.view==='Candidates')candidateQuery='';}current=b.dataset.view;syncNavState();saveNavScroll(document.querySelector('.sidebar nav'));await render();return;}
     if(a==='clear-candidate-search'){candidateQuery='';pageState.Candidates=1;await render();return;}
     if(a==='reset-theme'){applyTheme(appearance.theme);document.querySelector(`#appearance-form input[value="${appearance.theme}"]`).checked=true;$('#save-theme').disabled=true;$('#appearance-status').textContent='Preview reset to the saved workspace theme.';return;}
     if(a==='logout'){
@@ -1529,8 +1624,12 @@ document.addEventListener('click',async event=>{
       try{
         sessionStorage.removeItem('orbit_current');
         sessionStorage.removeItem('orbit_pages');
+        sessionStorage.removeItem('orbit_nav_scroll_top');
+        sessionStorage.removeItem('orbit_nav_scroll_left');
         localStorage.removeItem('orbit_current');
         localStorage.removeItem('orbit_pages');
+        localStorage.removeItem('orbit_nav_scroll_top');
+        localStorage.removeItem('orbit_nav_scroll_left');
         history.replaceState(null,'',location.pathname);
       }catch{}
       current='Overview';
