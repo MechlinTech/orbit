@@ -56,6 +56,10 @@ input[type="checkbox"],input[type="radio"]{width:18px!important;min-height:18px!
 #sig-canvas{display:block;touch-action:none;cursor:crosshair;max-width:100%}
 .signing-portal{max-width:760px;margin:32px auto;padding:28px;background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,0.06)}
 .signing-header{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line);padding-bottom:16px;margin-bottom:20px}
+.signing-header .product-brand{color:var(--ink);margin-top:0}
+.signing-header .product-brand small{color:var(--muted)}
+.signing-header .orbit-symbol{border-color:var(--accent)}
+.signing-header .orbit-symbol:after{border-color:var(--surface)}
 .signing-doc-info{background:var(--surface-alt);border:1px solid var(--line);border-radius:8px;padding:14px 16px;margin-bottom:20px;font-size:0.86rem}
 .badge.completed{background:var(--positive-bg);color:var(--positive)}
 .badge.partially_signed{background:var(--tint);color:var(--accent)}
