@@ -72,7 +72,7 @@ export async function syncScheduleMeeting({
   interviewId,
   scheduledAt,
   durationMinutes = 45,
-  timezone = 'UTC',
+  timezone = 'Asia/Kolkata',
   title = '',
   notes = '',
   candidate,
@@ -160,7 +160,7 @@ export async function syncScheduleMeeting({
       bodyHtml,
       startsAt: scheduledAt,
       endsAt,
-      timeZone: timezone || 'UTC',
+      timeZone: timezone || 'Asia/Kolkata',
       attendees: [
         { email: candidate.email, name: candidate.name, type: 'required' },
         { email: interviewer.email, name: interviewer.name, type: 'required' }
@@ -217,7 +217,7 @@ export async function syncRescheduleMeeting({
   interviewId,
   scheduledAt,
   durationMinutes = 45,
-  timezone = 'UTC',
+  timezone = 'Asia/Kolkata',
   title = '',
   notes = '',
   candidate,
@@ -310,7 +310,7 @@ export async function syncRescheduleMeeting({
       bodyHtml,
       startsAt: scheduledAt,
       endsAt,
-      timeZone: timezone || 'UTC',
+      timeZone: timezone || 'Asia/Kolkata',
       attendees: [
         { email: candidate.email, name: candidate.name, type: 'required' },
         { email: interviewer.email, name: interviewer.name, type: 'required' }
