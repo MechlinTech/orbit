@@ -748,7 +748,7 @@ async function render() {
         const pag=renderPagination('Candidates',page,totalPages,total,start,10);
         return `${candidateTable(paged)}${pag}`;
       };
-      html=heading('Search skills, experience and candidate records.',allows('recruit')?button('+ Add candidate','new-candidate'):'')+`<section class="panel"><div class="panel-head"><h2>Candidate directory</h2><label class="search">Search<input id="candidate-search" type="search" placeholder="Search name, email or skill" value="${escape(candidateQuery)}"></label></div><div id="candidate-table">${renderCandidateTable()}</div></section>`;
+      html=heading('Search skills, experience and candidate records.',allows('recruit')?button('+ Add candidate','new-candidate'):'')+`<section class="panel candidates-panel"><div class="panel-head"><h2>Candidate directory</h2><label class="search">Search<input id="candidate-search" type="search" placeholder="Search name, email or skill" value="${escape(candidateQuery)}"></label></div><div id="candidate-table">${renderCandidateTable()}</div></section>`;
       queueMicrotask(()=>{
         const el=$('#candidate-search');
         if(el)el.oninput=()=>{
@@ -1666,8 +1666,12 @@ document.addEventListener('click',async event=>{
       bindResumeUpload();
     }
     if(a==='edit-candidate'){
-      const c=(await api('candidates')).find(c=>c.id===id)||await api(`candidates/${id}`);
+      let c=(await api('candidates')).find(c=>c.id===id);
+      if(!c||!Array.isArray(c.applications)){
+        c=await api(`candidates/${id}`);
+      }
       if(!c)throw new Error('Candidate not found.');
+      const inPipeline = Boolean((c.applications && c.applications.length > 0) || c.can_delete === false);
       const currentResumeNote = c.resume ? `Current attached resume: <strong>${escape(c.resume.filename)}</strong> (${escape(c.resume.file_format.toUpperCase())}, ${Math.round(c.resume.file_size/1024)} KB)` : 'Upload a PDF or DOCX file to automatically extract text for review.';
       const uploadWidget = `<div class="resume-upload-box full" style="border:1px dashed var(--line);border-radius:8px;padding:12px 14px;background:var(--surface-alt);margin-bottom:8px;"><label style="display:flex;flex-direction:column;gap:6px;cursor:pointer;"><span class="label-heading">Upload / replace resume (PDF or DOCX) <span class="field-optional">Optional</span></span><input type="file" id="resume-file-input" accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" style="font-size:0.85rem;"><input type="hidden" name="resume_id" id="resume-id-input" value="${c.resume?.id || ''}"></label><div id="resume-upload-status" class="muted" style="margin-top:6px;font-size:0.83rem;" aria-live="polite">${currentResumeNote}</div></div>`;
       modal('Edit candidate',`<div class="form-grid">${uploadWidget}${field('Full name','name','text',c.name)}${field('Email','email','email',c.email)}${field('Phone','phone','tel',c.phone||'',false)}${teamSelect('Team','team',c.team||me.team||'Dev',false)}${field('Skills, comma separated','skills','text',(c.skills||[]).join(', '),false)}${field('Source','source','text',c.source||'Direct')}${area('Experience / Resume text','resume_text',c.resume_text||c.experience||'')}</div>${button('Extract email and phone','parse-resume','','class="secondary"')}`,async v=>{
@@ -1690,7 +1694,7 @@ document.addEventListener('click',async event=>{
         }
         await api(`candidates/${id}`,'PUT',{...v,skills:skills(v.skills),experience:v.resume_text,resume_id:v.resume_id||undefined});
         return 'Candidate updated successfully.';
-      },{ actions: formActions({ deleteAction:'delete-candidate', deleteId:id }) });
+      },{ actions: formActions({ deleteAction: inPipeline ? '' : 'delete-candidate', deleteId: id }) });
       bindValidation('email',checkEmail);
       bindValidation('phone',checkPhone);
       bindValidation('skills',checkSkills);
@@ -1699,6 +1703,10 @@ document.addEventListener('click',async event=>{
     if(a==='delete-candidate'){
       const c=(await api('candidates')).find(item=>item.id===id)||await api(`candidates/${id}`);
       if(!c)throw new Error('Candidate not found.');
+      const inPipeline = Boolean((c.applications && c.applications.length > 0) || c.can_delete === false);
+      if(inPipeline){
+        throw new Error('Candidates in the pipeline cannot be deleted. Retain the candidate to preserve application history.');
+      }
       deleteDialog('candidate',`${c.name} (${c.email})`,'This removes the candidate from active lists. Applications and interviews are dependencies and will block deletion rather than be removed silently.',`candidates/${id}`,'Candidate deleted successfully.');
     }
     if(a==='parse-resume'){
@@ -2033,9 +2041,10 @@ document.addEventListener('click',async event=>{
             ${select('Interviewer', 'interviewer_id', users.map(u => [u.id, `${u.name}${u.team ? ' (' + u.team + ')' : ''}`]), defaultInterviewer)}
             ${field('Date and time (your timezone)', 'scheduled_at', 'datetime-local', defaultScheduled, true, `min="${todayMin}"`)}
             ${select('Duration', 'duration_minutes', [['30', '30 minutes'], ['45', '45 minutes (Standard)'], ['60', '60 minutes'], ['90', '90 minutes']], '45', false)}
+            ${field('Meeting link / Video URL (Optional)', 'meeting_url', 'url', '', false, 'placeholder="Auto-generated via Teams when connected, or paste Google Meet / Zoom link"')}
             ${field('Competencies, comma separated', 'competencies', 'text', defaultComps, true)}
             ${area('Agenda / Notes (Optional)', 'notes', '', false)}
-            <p class="full status-note">Orbit will advance the application to <strong>Interview</strong>, synchronize the Microsoft Teams calendar event, and automatically dispatch an invitation email with meeting details and schedule link to <strong>${escape(app.email)}</strong>.</p>
+            <p class="full status-note">Orbit will advance the application to <strong>Interview</strong>, synchronize the Microsoft Teams calendar event (or use your provided meeting link), and automatically dispatch an invitation email with meeting details and schedule link to <strong>${escape(app.email)}</strong>.</p>
           </div>
         `, async v => {
           const scheduledDate = new Date(v.scheduled_at);
@@ -2055,10 +2064,11 @@ document.addEventListener('click',async event=>{
             interviewer_id: v.interviewer_id,
             scheduled_at: scheduledDate.toISOString(),
             duration_minutes: Number(v.duration_minutes) || 45,
+            meeting_url: v.meeting_url?.trim() || undefined,
             competencies: compList,
             notes: v.notes?.trim() || undefined
           });
-          await api(`applications/${id}/stage`, 'POST', { stage: 'Interview' });
+          await api(`applications/${id}/stage`, 'POST', { stage: 'Interview', send_notification: false });
           const interviewerObj = users.find(u => u.id === v.interviewer_id);
           const interviewerName = interviewerObj ? interviewerObj.name : 'assigned interviewer';
           notice(`Interview scheduled with ${interviewerName}. Invitation email with meeting link sent to ${app.name}!`, 'success');
@@ -2124,7 +2134,7 @@ document.addEventListener('click',async event=>{
             }]
           };
           await api('signatures', 'POST', payload);
-          await api(`applications/${id}/stage`, 'POST', { stage: 'Offer' });
+          await api(`applications/${id}/stage`, 'POST', { stage: 'Offer', send_notification: false });
           notice(`Offer letter generated and e-signature invitation sent to ${app.name}!`, 'success');
           return `Application moved to Offer. Official offer letter and e-signature invitation email sent to ${app.name}.`;
         }, { saveLabel: 'Generate Offer & Send Signature Email' });
@@ -2206,7 +2216,7 @@ document.addEventListener('click',async event=>{
         return 'Review decision recorded successfully.';
       });
     }
-    if(a==='new-interview'){const [apps,users]=await Promise.all([api('applications'),api('interviewers')]);const active=apps.filter(a=>!['Hired','Rejected'].includes(a.stage));if(!active.length||!users.length)throw new Error('An active application and interviewer are required.');const todayMin=getLocalTodayMin();modal('Plan interview',select('Application','application_id',active.map(a=>[a.id,`${a.name} · ${a.title}`]))+select('Interviewer','interviewer_id',users.map(u=>[u.id,u.name]))+field('Date and time (your timezone)','scheduled_at','datetime-local','',true,`min="${todayMin}"`)+select('Duration','duration_minutes',[['30','30 minutes'],['45','45 minutes (Standard)'],['60','60 minutes'],['90','90 minutes']],'45',false)+field('Competencies, comma separated','competencies','text','Role knowledge, Problem solving')+area('Agenda / Notes (Optional)','notes','',false)+'<p class="status-note">This schedules the interview and creates a Microsoft Teams meeting and candidate invite when configured.</p>',async v=>{const scheduledDate=new Date(v.scheduled_at);if(!Number.isFinite(scheduledDate.getTime())||scheduledDate.getTime()<Date.now()){throw new Error('Enter a future interview date.');}await api('interviews','POST',{...v,scheduled_at:scheduledDate.toISOString(),competencies:skills(v.competencies),duration_minutes:Number(v.duration_minutes)||45,notes:v.notes?.trim()||undefined});return 'Interview scheduled successfully.';});const dateInp=$('#edit-form [name="scheduled_at"]');if(dateInp)dateInp.min=todayMin;}
+    if(a==='new-interview'){const [apps,users]=await Promise.all([api('applications'),api('interviewers')]);const active=apps.filter(a=>!['Hired','Rejected'].includes(a.stage));if(!active.length||!users.length)throw new Error('An active application and interviewer are required.');const todayMin=getLocalTodayMin();modal('Plan interview',select('Application','application_id',active.map(a=>[a.id,`${a.name} · ${a.title}`]))+select('Interviewer','interviewer_id',users.map(u=>[u.id,u.name]))+field('Date and time (your timezone)','scheduled_at','datetime-local','',true,`min="${todayMin}"`)+select('Duration','duration_minutes',[['30','30 minutes'],['45','45 minutes (Standard)'],['60','60 minutes'],['90','90 minutes']],'45',false)+field('Meeting link / Video URL (Optional)','meeting_url','url','',false,'placeholder="Auto-generated via Teams when connected, or paste Google Meet / Zoom link"')+field('Competencies, comma separated','competencies','text','Role knowledge, Problem solving')+area('Agenda / Notes (Optional)','notes','',false)+'<p class="status-note">This schedules the interview and creates a Microsoft Teams meeting and candidate invite when configured.</p>',async v=>{const scheduledDate=new Date(v.scheduled_at);if(!Number.isFinite(scheduledDate.getTime())||scheduledDate.getTime()<Date.now()){throw new Error('Enter a future interview date.');}await api('interviews','POST',{...v,scheduled_at:scheduledDate.toISOString(),competencies:skills(v.competencies),duration_minutes:Number(v.duration_minutes)||45,meeting_url:v.meeting_url?.trim()||undefined,notes:v.notes?.trim()||undefined});return 'Interview scheduled successfully.';});const dateInp=$('#edit-form [name="scheduled_at"]');if(dateInp)dateInp.min=todayMin;}
     if(a==='edit-interview'||a==='reschedule-interview'){
       const interviews=await api('interviews');
       const i=interviews.find(item=>item.id===id)||await api(`interviews/${id}`);
@@ -2220,7 +2230,7 @@ document.addEventListener('click',async event=>{
         interviewerOptions.unshift([i.interviewer_id, `${i.interviewer || 'Assigned interviewer'} (Current)`]);
       }
       const todayMin=getLocalTodayMin();
-      modal('Edit interview',`<div class="form-grid"><p class="full"><strong>Candidate:</strong> ${escape(i.name)} · ${escape(i.title)}</p>${interviewerOptions.length?select('Interviewer','interviewer_id',interviewerOptions,i.interviewer_id):`<p class="full"><strong>Interviewer:</strong> ${escape(i.interviewer)}</p>`}${field('Date and time (your timezone)','scheduled_at','datetime-local',toLocal(i.scheduled_at),true,`min="${todayMin}"`)}${select('Duration','duration_minutes',[['30','30 minutes'],['45','45 minutes (Standard)'],['60','60 minutes'],['90','90 minutes']],String(i.duration_minutes||45),false)}${canManage?field('Competencies, comma separated','competencies','text',comps.join(', '),true):''}${area('Agenda / Update notes (Optional)','notes',i.notes||'',false)}<p class="full status-note">This updates the scheduled interview date and time and synchronizes with Microsoft Teams when configured.</p></div>`,async v=>{
+      modal('Edit interview',`<div class="form-grid"><p class="full"><strong>Candidate:</strong> ${escape(i.name)} · ${escape(i.title)}</p>${interviewerOptions.length?select('Interviewer','interviewer_id',interviewerOptions,i.interviewer_id):`<p class="full"><strong>Interviewer:</strong> ${escape(i.interviewer)}</p>`}${field('Date and time (your timezone)','scheduled_at','datetime-local',toLocal(i.scheduled_at),true,`min="${todayMin}"`)}${select('Duration','duration_minutes',[['30','30 minutes'],['45','45 minutes (Standard)'],['60','60 minutes'],['90','90 minutes']],String(i.duration_minutes||45),false)}${field('Meeting link / Video URL (Optional)','meeting_url','url',i.meeting_url||'',false,'placeholder="Auto-generated via Teams when connected, or paste Google Meet / Zoom link"')}${canManage?field('Competencies, comma separated','competencies','text',comps.join(', '),true):''}${area('Agenda / Update notes (Optional)','notes',i.notes||'',false)}<p class="full status-note">This updates the scheduled interview date and time and synchronizes with Microsoft Teams when configured.</p></div>`,async v=>{
         const scheduledDate=new Date(v.scheduled_at);
         if(!Number.isFinite(scheduledDate.getTime())||scheduledDate.getTime()<Date.now()){
           throw new Error('Enter a future interview date.');
@@ -2233,6 +2243,7 @@ document.addEventListener('click',async event=>{
         const payload={
           scheduled_at:scheduledDate.toISOString(),
           duration_minutes:Number(v.duration_minutes)||45,
+          meeting_url:v.meeting_url?.trim()||undefined,
           notes:v.notes?.trim()||undefined,
           ...(v.interviewer_id?{interviewer_id:v.interviewer_id}:{}),
           ...(updatedComps?{competencies:updatedComps}:{})
