@@ -1,8 +1,10 @@
 import { audit, id, now, transaction } from './db.js';
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { HttpError, roles, teams, requirePermission as permit, requireTeam, inTeam, can, text, email, phone as validatePhone, currency as validateCurrency, list, validateSkills, integer, isAgencyRole } from './policy.js';
 import { getAppearance, setAppearance } from './appearance.js';
 import { isDemoUser } from './demo.js';
-import { ResumeAdapter, CommunicationAdapter, CalendarAdapter, MatchingAdapter, FraudAdapter } from './adapters.js';
+import { ResumeAdapter, CommunicationAdapter, CalendarAdapter, MatchingAdapter, FraudAdapter, HrmsAdapter } from './adapters.js';
 import { isEmailConfigured, listCandidateCommunications, setCandidateConsent, getCandidateConsent, sendCandidateCommunication } from './communication/service.js';
 import { getAvailableTemplates } from './communication/templates.js';
 import { isCalendarConfigured, syncScheduleMeeting, syncRescheduleMeeting, syncCancelMeeting } from './calendar/service.js';
@@ -434,6 +436,25 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
   }
   if (parts[0] === 'candidates') {
     permit(user,'recruit','review');
+    if (key && action === 'resume' && method === 'GET') {
+      const cand = get(db, 'candidates', key);
+      requireTeam(user, cand.team);
+      const resRow = db.prepare('SELECT * FROM candidate_resumes WHERE candidate_id = ? ORDER BY created_at DESC LIMIT 1').get(key);
+      if (!resRow) {
+        throw new HttpError(404, 'No resume document found for this candidate.');
+      }
+      const storagePath = resolve('data/resumes/approved', `${resRow.storage_id}.bin`);
+      if (!existsSync(storagePath)) {
+        throw new HttpError(404, 'Resume file is not present on disk.');
+      }
+      const buffer = readFileSync(storagePath);
+      return {
+        isRaw: true,
+        buffer,
+        contentType: resRow.mime_type || (resRow.file_format === 'pdf' ? 'application/pdf' : 'application/octet-stream'),
+        filename: resRow.filename || `${cand.name.replace(/\s+/g, '_')}_Resume.${resRow.file_format || 'pdf'}`
+      };
+    }
     if (key && action === 'communications') {
       if (method === 'GET') {
         return listCandidateCommunications(db, user, key);
@@ -836,6 +857,74 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
         return getOrRunFraudReview(db, app.candidate_id, { application_id: app.id, refresh: true });
       }
     }
+    if (key && (action === 'hrms-handoff' || action === 'handoff') && method === 'POST') {
+      permit(user, 'recruit', 'admin');
+      const { app, req } = appContext(db, user, key);
+      const hrmsEffective = getEffectiveIntegrationConfig(db, 'hrms');
+      if (!hrmsEffective.enabled || !hrmsEffective.isConfigured) {
+        throw new HttpError(400, 'HRMS integration is not enabled or configured. Please configure HRMS in Admin Settings.');
+      }
+      return (async () => {
+        const hrmsAdapter = c?.hrmsAdapter || new HrmsAdapter({ db, transport: c?.transport });
+        const cand = db.prepare('SELECT * FROM candidates WHERE id = ?').get(app.candidate_id);
+        const completedOffer = db.prepare(`
+          SELECT r.id AS request_id, d.storage_path, r.signed_document_id
+          FROM signature_requests r
+          LEFT JOIN signature_documents d ON d.id = r.signed_document_id
+          WHERE (r.application_id = ? OR (r.candidate_id = ? AND r.candidate_id IS NOT NULL))
+            AND r.status = 'completed'
+          ORDER BY r.updated_at DESC LIMIT 1
+        `).get(key, app.candidate_id);
+
+        const resumeMeta = db.prepare(`
+          SELECT id, storage_id, filename, file_format, file_size, mime_type
+          FROM candidate_resumes
+          WHERE candidate_id = ?
+          ORDER BY created_at DESC LIMIT 1
+        `).get(app.candidate_id);
+
+        const appOrigin = c?.origin || process.env.APP_ORIGIN || 'http://localhost:3000';
+        const signedDocUrl = (completedOffer?.storage_path && completedOffer?.request_id)
+          ? `${appOrigin}/api/signatures/${completedOffer.request_id}/document?version=signed`
+          : null;
+
+        const resumeStoragePath = resumeMeta?.storage_id
+          ? resolve('data/resumes/approved', `${resumeMeta.storage_id}.bin`)
+          : null;
+
+        const resumeInfo = resumeMeta ? {
+          id: resumeMeta.id,
+          filename: resumeMeta.filename,
+          mime_type: resumeMeta.mime_type || (resumeMeta.file_format === 'pdf' ? 'application/pdf' : 'application/octet-stream'),
+          file_size: resumeMeta.file_size,
+          storage_path: (resumeStoragePath && existsSync(resumeStoragePath)) ? resumeStoragePath : null,
+          download_url: `${appOrigin}/api/candidates/${cand.id}/resume`
+        } : null;
+
+        const handoffResult = await hrmsAdapter.handoff({
+          hireId: key,
+          approvedFields: {
+            candidate: cand,
+            requisition: req,
+            offer: {
+              annual_salary: req?.salary_min,
+              signed_document_url: signedDocUrl
+            },
+            resume: resumeInfo
+          },
+          idempotencyKey: `hrms_manual_${key}_${Date.now()}`
+        });
+
+        audit(db, user.id, 'application.hrms_handoff_success', key, {
+          employeeId: handoffResult.employeeId || handoffResult.providerReference,
+          provider: handoffResult.provider || 'hrms',
+          documentAttached: Boolean(handoffResult.document),
+          resumeAttached: Boolean(handoffResult.resume)
+        });
+
+        return handoffResult;
+      })();
+    }
     if (method === 'POST' && action === 'stage') {
       permit(user,'recruit'); const {app,req} = appContext(db,user,key), stages = pipeline(db);
       if (!stages.includes(body.stage)) throw new HttpError(400,'Unknown pipeline stage.');
@@ -885,46 +974,123 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       });
 
       const emailConfigured = (isEmailConfigured(db) || Boolean(c?.communicationAdapter)) && body.send_notification !== false;
-      if (emailConfigured && app.stage !== body.stage) {
+      const hrmsEffective = getEffectiveIntegrationConfig(db, 'hrms');
+      const hrmsSyncEnabled = Boolean(
+        hrmsEffective.enabled &&
+        hrmsEffective.isConfigured &&
+        hrmsEffective.config?.syncEnabled
+      );
+
+      if ((emailConfigured && app.stage !== body.stage) || (body.stage === 'Hired' && hrmsSyncEnabled)) {
         return (async () => {
-          try {
-            const cand = db.prepare('SELECT id, name, email, team FROM candidates WHERE id = ?').get(app.candidate_id);
-            if (cand && cand.email) {
-              const commAdapter = c?.communicationAdapter || new CommunicationAdapter({ db, fromEnv: true, transport: c?.transport });
-              const templateId = body.stage === 'Rejected' ? 'application_rejection' : 'stage_update';
-              const emailVars = {
-                candidate_name: cand.name,
-                candidate_email: cand.email,
-                requisition_title: req?.title || '',
-                team: req?.team || cand.team || '',
+          // 1. Candidate email notification
+          if (emailConfigured && app.stage !== body.stage) {
+            try {
+              const cand = db.prepare('SELECT id, name, email, team FROM candidates WHERE id = ?').get(app.candidate_id);
+              if (cand && cand.email) {
+                const commAdapter = c?.communicationAdapter || new CommunicationAdapter({ db, fromEnv: true, transport: c?.transport });
+                const templateId = body.stage === 'Rejected' ? 'application_rejection' : 'stage_update';
+                const emailVars = {
+                  candidate_name: cand.name,
+                  candidate_email: cand.email,
+                  requisition_title: req?.title || '',
+                  team: req?.team || cand.team || '',
+                  stage: body.stage,
+                  new_stage: body.stage,
+                  previous_stage: app.stage,
+                  from_stage: app.stage,
+                  notes: body.notes || body.comment || ''
+                };
+                const idempotencyKey = `stage_update_${key}_${body.stage}_${app.stage}`;
+                await sendCandidateCommunication(db, user, {
+                  candidate_id: cand.id,
+                  requisition_id: req?.id || undefined,
+                  template_id: templateId,
+                  recipient_email: cand.email,
+                  variables: emailVars,
+                  idempotency_key: idempotencyKey
+                }, commAdapter);
+                audit(db, user.id, 'application.stage_email_sent', key, {
+                  stage: body.stage,
+                  previous_stage: app.stage,
+                  candidate_id: cand.id,
+                  recipient: cand.email
+                });
+              }
+            } catch (emailErr) {
+              audit(db, user.id, 'application.stage_email_failed', key, {
                 stage: body.stage,
-                new_stage: body.stage,
-                previous_stage: app.stage,
-                from_stage: app.stage,
-                notes: body.notes || body.comment || ''
-              };
-              const idempotencyKey = `stage_update_${key}_${body.stage}_${app.stage}`;
-              await sendCandidateCommunication(db, user, {
-                candidate_id: cand.id,
-                requisition_id: req?.id || undefined,
-                template_id: templateId,
-                recipient_email: cand.email,
-                variables: emailVars,
-                idempotency_key: idempotencyKey
-              }, commAdapter);
-              audit(db, user.id, 'application.stage_email_sent', key, {
-                stage: body.stage,
-                previous_stage: app.stage,
-                candidate_id: cand.id,
-                recipient: cand.email
+                error: emailErr.message
               });
             }
-          } catch (emailErr) {
-            audit(db, user.id, 'application.stage_email_failed', key, {
-              stage: body.stage,
-              error: emailErr.message
-            });
           }
+
+          // 2. Automated HRMS employee onboarding handoff
+          if (body.stage === 'Hired' && hrmsSyncEnabled) {
+            try {
+              const hrmsAdapter = c?.hrmsAdapter || new HrmsAdapter({ db, transport: c?.transport });
+              const cand = db.prepare('SELECT * FROM candidates WHERE id = ?').get(app.candidate_id);
+              const completedOffer = db.prepare(`
+                SELECT r.id AS request_id, d.storage_path, r.signed_document_id
+                FROM signature_requests r
+                LEFT JOIN signature_documents d ON d.id = r.signed_document_id
+                WHERE (r.application_id = ? OR (r.candidate_id = ? AND r.candidate_id IS NOT NULL))
+                  AND r.status = 'completed'
+                ORDER BY r.updated_at DESC LIMIT 1
+              `).get(key, app.candidate_id);
+
+              const resumeMeta = db.prepare(`
+                SELECT id, storage_id, filename, file_format, file_size, mime_type
+                FROM candidate_resumes
+                WHERE candidate_id = ?
+                ORDER BY created_at DESC LIMIT 1
+              `).get(app.candidate_id);
+
+              const appOrigin = c?.origin || process.env.APP_ORIGIN || 'http://localhost:3000';
+              const signedDocUrl = (completedOffer?.storage_path && completedOffer?.request_id)
+                ? `${appOrigin}/api/signatures/${completedOffer.request_id}/document?version=signed`
+                : null;
+
+              const resumeStoragePath = resumeMeta?.storage_id
+                ? resolve('data/resumes/approved', `${resumeMeta.storage_id}.bin`)
+                : null;
+
+              const resumeInfo = resumeMeta ? {
+                id: resumeMeta.id,
+                filename: resumeMeta.filename,
+                mime_type: resumeMeta.mime_type || (resumeMeta.file_format === 'pdf' ? 'application/pdf' : 'application/octet-stream'),
+                file_size: resumeMeta.file_size,
+                storage_path: (resumeStoragePath && existsSync(resumeStoragePath)) ? resumeStoragePath : null,
+                download_url: `${appOrigin}/api/candidates/${cand.id}/resume`
+              } : null;
+
+              const handoffResult = await hrmsAdapter.handoff({
+                hireId: key,
+                approvedFields: {
+                  candidate: cand,
+                  requisition: req,
+                  offer: {
+                    annual_salary: req?.salary_min,
+                    signed_document_url: signedDocUrl
+                  },
+                  resume: resumeInfo
+                },
+                idempotencyKey: `hrms_handoff_${key}`
+              });
+
+              audit(db, user.id, 'application.hrms_handoff_success', key, {
+                employeeId: handoffResult.employeeId || handoffResult.providerReference,
+                provider: handoffResult.provider || 'hrms',
+                documentAttached: Boolean(handoffResult.document),
+                resumeAttached: Boolean(handoffResult.resume)
+              });
+            } catch (hrmsErr) {
+              audit(db, user.id, 'application.hrms_handoff_failed', key, {
+                error: hrmsErr.message
+              });
+            }
+          }
+
           return updatedApp;
         })();
       }
