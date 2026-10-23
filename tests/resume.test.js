@@ -10,6 +10,7 @@ import { ResumeAdapter } from '../src/adapters.js';
 import { ResumeStorageManager } from '../src/resume/storage.js';
 import { SCAN_STATUS, AntivirusScanner } from '../src/resume/scanner.js';
 import { validateUpload, parsePdf, parseDocx } from '../src/resume/parser.js';
+import { extractName, extractSkills, extractResumeDetails } from '../src/resume/extractor.js';
 import { fixture, testConfig, user } from './helpers.js';
 
 function createZip(files) {
@@ -396,3 +397,55 @@ test('Failed uploads preserve existing candidate data and prevent duplicates', a
 
   f.db.close();
 });
+
+test('resume details extractor parses candidate name and skills accurately', async () => {
+  // 1. Name extraction cases
+  assert.equal(extractName('Alex Rivera Senior Engineer\nEmail: alex@example.com'), 'Alex Rivera');
+  assert.equal(extractName('Casey Jordan Principal Architect\nPhone: +1 555-234-5678'), 'Casey Jordan');
+  assert.equal(extractName('Name: Jane Smith\nRole: Lead Developer'), 'Jane Smith');
+  assert.equal(extractName('Candidate Name: Taylor Morgan\nDirect hire'), 'Taylor Morgan');
+  assert.equal(extractName('Curriculum Vitae\nJordan Williams\nSoftware Engineer'), 'Jordan Williams');
+  assert.equal(extractName('Experienced engineer. Contact: extracted.lead@example.com'), '');
+  assert.equal(extractName('No contact details in this resume text.'), '');
+
+  // 2. Skill extraction cases
+  const skillsText = `
+    Alex Rivera Senior Engineer
+    Email: alex@example.com
+    10 years experience with SQL, JavaScript and TypeScript.
+    Technical Skills: React, Node.js, Docker, Kubernetes, AWS
+  `;
+  const extracted = extractSkills(skillsText);
+  assert.ok(extracted.includes('SQL'));
+  assert.ok(extracted.includes('JavaScript'));
+  assert.ok(extracted.includes('TypeScript'));
+  assert.ok(extracted.includes('React'));
+  assert.ok(extracted.includes('Node.js'));
+  assert.ok(extracted.includes('Docker'));
+  assert.ok(extracted.includes('Kubernetes'));
+  assert.ok(extracted.includes('AWS'));
+
+  // 3. Combined extractResumeDetails helper
+  const details = extractResumeDetails(skillsText);
+  assert.equal(details.name, 'Alex Rivera');
+  assert.equal(details.email, 'alex@example.com');
+  assert.ok(details.skills.includes('JavaScript'));
+  assert.ok(details.skills.includes('SQL'));
+
+  // 4. API endpoint resume/parse returns extracted name and skills
+  const f = fixture();
+  const c = testConfig();
+  const apiParsed = service(f.db, f.recruiter, 'POST', 'resume/parse', {
+    text: 'Taylor Morgan | Cloud Architect\nContact: taylor@example.com +1 555-019-2834\nSkills: Python, Docker, Kubernetes, AWS'
+  }, new URLSearchParams(), c);
+
+  assert.equal(apiParsed.name, 'Taylor Morgan');
+  assert.equal(apiParsed.email, 'taylor@example.com');
+  assert.equal(apiParsed.phone, '+1 555-019-2834');
+  assert.ok(apiParsed.skills.includes('Python'));
+  assert.ok(apiParsed.skills.includes('Kubernetes'));
+  assert.equal(apiParsed.message, 'Email and phone number extracted successfully.');
+
+  f.db.close();
+});
+
