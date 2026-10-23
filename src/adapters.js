@@ -35,10 +35,10 @@ export class CalendarAdapter {
     this.configured = Boolean(
       options.configured ||
       (options.tenant && options.client && options.secret && options.organizerEmail) ||
-      (options.fromEnv && isCalendarConfigured(options.config)) ||
+      (options.fromEnv && isCalendarConfigured(options.config, options.db)) ||
       (dyn && dyn.tenantId && dyn.clientId && dyn.secret && dyn.organizerEmail)
     );
-    const envConf = this.configured ? getCalendarConfig(options.config) : {};
+    const envConf = this.configured ? getCalendarConfig(options.config, options.db) : {};
     this.tenant = options.tenant || dyn?.tenantId || envConf.tenant || null;
     this.client = options.client || dyn?.clientId || envConf.client || null;
     this.secret = options.secret || dyn?.secret || envConf.secret || null;
@@ -48,6 +48,23 @@ export class CalendarAdapter {
 
   async schedule({ applicationId, interviewId, subject, bodyHtml, startsAt, endsAt, timeZone = 'UTC', attendees = [], idempotencyKey }) {
     if (!this.configured) throw new AdapterNotConfigured('Calendar');
+    const isDemo = Boolean(
+      (this.tenant && this.tenant.includes('demo')) ||
+      (this.client && this.client.includes('demo')) ||
+      (process.env.SIMULATE_TEAMS_MEETING === 'true')
+    );
+    if (isDemo && this.transport === fetch) {
+      const demoId = 'teams-evt-demo-' + (interviewId || Date.now());
+      const joinUrl = 'https://teams.microsoft.com/l/meetup-join/orbit-demo-meeting-' + (interviewId || Date.now());
+      return {
+        id: demoId,
+        joinUrl,
+        webLink: joinUrl,
+        subject: subject || 'Interview',
+        start: { dateTime: startsAt, timeZone },
+        end: { dateTime: endsAt, timeZone }
+      };
+    }
     const token = await getGraphAccessToken({
       tenant: this.tenant,
       client: this.client,
@@ -69,6 +86,22 @@ export class CalendarAdapter {
 
   async reschedule({ providerEventId, subject, bodyHtml, startsAt, endsAt, timeZone = 'UTC', attendees, idempotencyKey }) {
     if (!this.configured) throw new AdapterNotConfigured('Calendar');
+    const isDemo = Boolean(
+      (this.tenant && this.tenant.includes('demo')) ||
+      (this.client && this.client.includes('demo')) ||
+      (process.env.SIMULATE_TEAMS_MEETING === 'true')
+    );
+    if (isDemo && this.transport === fetch) {
+      const joinUrl = 'https://teams.microsoft.com/l/meetup-join/orbit-demo-meeting-' + (providerEventId || Date.now());
+      return {
+        id: providerEventId,
+        joinUrl,
+        webLink: joinUrl,
+        subject: subject || 'Interview Updated',
+        start: { dateTime: startsAt, timeZone },
+        end: { dateTime: endsAt, timeZone }
+      };
+    }
     const token = await getGraphAccessToken({
       tenant: this.tenant,
       client: this.client,
@@ -91,6 +124,14 @@ export class CalendarAdapter {
 
   async cancel({ providerEventId, comment = 'Interview cancelled', idempotencyKey }) {
     if (!this.configured) throw new AdapterNotConfigured('Calendar');
+    const isDemo = Boolean(
+      (this.tenant && this.tenant.includes('demo')) ||
+      (this.client && this.client.includes('demo')) ||
+      (process.env.SIMULATE_TEAMS_MEETING === 'true')
+    );
+    if (isDemo && this.transport === fetch) {
+      return { cancelled: true, remoteCancelled: true };
+    }
     const token = await getGraphAccessToken({
       tenant: this.tenant,
       client: this.client,

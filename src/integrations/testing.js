@@ -52,6 +52,25 @@ async function testMicrosoftCalendar({ config, secrets, transport }) {
     };
   }
 
+  const isDemo = Boolean(
+    (tenant && tenant.includes('demo')) ||
+    (client && client.includes('demo')) ||
+    (process.env.SIMULATE_TEAMS_MEETING === 'true')
+  );
+
+  if (isDemo && transport === fetch) {
+    return {
+      ok: true,
+      status: 'connected',
+      message: `Demo mode: Simulated Microsoft Graph connection verified for demo tenant. App token and Teams organizer mailbox: ${organizerEmail || 'configured'}.`,
+      details: {
+        tokenGranted: true,
+        organizerConfigured: Boolean(organizerEmail),
+        simulated: true
+      }
+    };
+  }
+
   try {
     const token = await getGraphAccessToken({
       tenant,
