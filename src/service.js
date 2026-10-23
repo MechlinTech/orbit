@@ -511,7 +511,10 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
           created_at: a.created_at
         }));
         const resumeMeta = db.prepare('SELECT id, filename, file_format, file_size, scan_status, extraction_status, created_at FROM candidate_resumes WHERE candidate_id=? ORDER BY created_at DESC LIMIT 1').get(key);
-        return { ...c, skills: JSON.parse(c.skills), experience: c.resume_text, applications: apps, resume: resumeMeta || null };
+        const totalApps = db.prepare('SELECT count(*) n FROM applications WHERE candidate_id=?').get(key).n;
+        const totalInterviews = db.prepare('SELECT count(*) n FROM interviews i JOIN applications a ON a.id=i.application_id WHERE a.candidate_id=?').get(key).n;
+        const canDelete = totalApps === 0 && totalInterviews === 0;
+        return { ...c, skills: JSON.parse(c.skills), experience: c.resume_text, applications: apps, resume: resumeMeta || null, can_delete: canDelete };
       }
       const search = (query.get('q') || '').toLowerCase();
       const cands = db.prepare('SELECT * FROM candidates WHERE deleted_at IS NULL ORDER BY created_at DESC').all().filter(c => inTeam(user,c.team));
@@ -537,12 +540,16 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
           const appText = (appsByCandidate.get(c.id) || []).map(a => `${a.title} ${a.stage}`).join(' ');
           return `${c.name} ${c.email} ${c.skills} ${c.resume_text} ${appText}`.toLowerCase().includes(search);
         })
-        .map(c => ({
-          ...c,
-          skills: JSON.parse(c.skills),
-          experience: c.resume_text,
-          applications: appsByCandidate.get(c.id) || []
-        }));
+        .map(c => {
+          const cApps = appsByCandidate.get(c.id) || [];
+          return {
+            ...c,
+            skills: JSON.parse(c.skills),
+            experience: c.resume_text,
+            applications: cApps,
+            can_delete: cApps.length === 0
+          };
+        });
     }
     if (method === 'POST' && !key) {
       permit(user,'recruit'); const team = text(body.team,'Team',100); requireTeam(user,team);
@@ -949,25 +956,29 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       const duration = body.duration_minutes !== undefined ? integer(body.duration_minutes, 'Duration', 15, 480) : 45;
       const timezone = body.timezone ? text(body.timezone, 'Timezone', 100, false) : 'UTC';
       const notes = body.notes ? text(body.notes, 'Notes', 5000, false) : '';
+      const customMeetingUrl = body.meeting_url ? text(body.meeting_url, 'Meeting URL', 1000, false) : null;
       const cand = get(db, 'candidates', app.candidate_id);
       const title = body.title ? text(body.title, 'Title', 200, false) : `Interview: ${cand.name} — ${req.title}`;
       const iid = id();
       transaction(db, () => {
-        db.prepare('INSERT INTO interviews(id,application_id,interviewer_id,scheduled_at,competencies,title,duration_minutes,timezone,notes,status,calendar_status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run(
-          iid, app.id, interviewer.id, scheduled.toISOString(), JSON.stringify(competencies), title, duration, timezone, notes, 'planned', 'not_synced', now()
+        db.prepare('INSERT INTO interviews(id,application_id,interviewer_id,scheduled_at,competencies,title,duration_minutes,timezone,notes,status,calendar_status,meeting_url,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)').run(
+          iid, app.id, interviewer.id, scheduled.toISOString(), JSON.stringify(competencies), title, duration, timezone, notes, 'planned', customMeetingUrl ? 'manual_link' : 'not_synced', customMeetingUrl, now()
         );
-        audit(db, user.id, 'interview.planned', iid, { scheduled_at: scheduled.toISOString(), interviewer_id: interviewer.id, duration_minutes: duration, timezone });
+        audit(db, user.id, 'interview.planned', iid, { scheduled_at: scheduled.toISOString(), interviewer_id: interviewer.id, duration_minutes: duration, timezone, meeting_url: customMeetingUrl });
       });
       const calConfigured = isCalendarConfigured(c, db) || Boolean(c?.calendarAdapter);
       const emailConfigured = (isEmailConfigured(db) || Boolean(c?.communicationAdapter)) && body.send_invitation !== false;
       if (calConfigured || emailConfigured) {
         return (async () => {
-          let meetingUrl = null;
+          let meetingUrl = customMeetingUrl;
           if (calConfigured) {
             const calResult = await syncScheduleMeeting({
               db, user, interviewId: iid, scheduledAt: scheduled.toISOString(), durationMinutes: duration, timezone, title, notes, candidate: cand, req, interviewer, transport: c?.calendarAdapter?.transport || c?.transport || fetch, config: c
             });
-            meetingUrl = calResult.meeting_url;
+            meetingUrl = calResult.meeting_url || customMeetingUrl;
+          }
+          if (meetingUrl && meetingUrl !== customMeetingUrl) {
+            db.prepare('UPDATE interviews SET meeting_url = ? WHERE id = ?').run(meetingUrl, iid);
           }
           if (emailConfigured) {
             try {
@@ -1035,24 +1046,28 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       const notes = body.notes !== undefined ? text(body.notes, 'Notes', 5000, false) : (interview.notes || '');
       const title = body.title !== undefined ? text(body.title, 'Title', 200, false) : (interview.title || '');
       const cand = get(db, 'candidates', app.candidate_id);
+      const customMeetingUrl = body.meeting_url !== undefined ? (body.meeting_url ? text(body.meeting_url, 'Meeting URL', 1000, false) : null) : interview.meeting_url;
 
       transaction(db, () => {
-        db.prepare('UPDATE interviews SET scheduled_at=?, interviewer_id=?, competencies=?, duration_minutes=?, timezone=?, notes=?, title=? WHERE id=?').run(
-          scheduled.toISOString(), interviewerId, JSON.stringify(competencies), duration, timezone, notes, title, key
+        db.prepare('UPDATE interviews SET scheduled_at=?, interviewer_id=?, competencies=?, duration_minutes=?, timezone=?, notes=?, title=?, meeting_url=? WHERE id=?').run(
+          scheduled.toISOString(), interviewerId, JSON.stringify(competencies), duration, timezone, notes, title, customMeetingUrl, key
         );
-        audit(db, user.id, 'interview.updated', key, { scheduled_at: scheduled.toISOString(), interviewer_id: interviewerId, duration_minutes: duration });
+        audit(db, user.id, 'interview.updated', key, { scheduled_at: scheduled.toISOString(), interviewer_id: interviewerId, duration_minutes: duration, meeting_url: customMeetingUrl });
       });
 
       const calConfigured = isCalendarConfigured(c, db) || Boolean(c?.calendarAdapter);
       const emailConfigured = (isEmailConfigured(db) || Boolean(c?.communicationAdapter)) && body.send_notification !== false;
       if (calConfigured || emailConfigured) {
         return (async () => {
-          let meetingUrl = interview.meeting_url;
+          let meetingUrl = customMeetingUrl;
           if (calConfigured) {
             const calResult = await syncRescheduleMeeting({
               db, user, interviewId: key, scheduledAt: scheduled.toISOString(), durationMinutes: duration, timezone, title, notes, candidate: cand, req, interviewer: assignedInterviewer, transport: c?.calendarAdapter?.transport || c?.transport || fetch, config: c
             });
-            meetingUrl = calResult.meeting_url || meetingUrl;
+            meetingUrl = calResult.meeting_url || customMeetingUrl;
+          }
+          if (meetingUrl && meetingUrl !== customMeetingUrl) {
+            db.prepare('UPDATE interviews SET meeting_url = ? WHERE id = ?').run(meetingUrl, key);
           }
           if (emailConfigured) {
             try {
