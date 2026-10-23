@@ -27,6 +27,40 @@ import {
   toggleIntegrationForAdmin
 } from './integrations/service.js';
 import { getEffectiveIntegrationConfig } from './integrations/storage.js';
+import { extractResumeDetails } from './resume/extractor.js';
+
+function getDbSkills(db) {
+  if (!db) return [];
+  try {
+    const skills = new Set();
+    const rows = db.prepare('SELECT skills FROM requisitions WHERE deleted_at IS NULL').all();
+    for (const r of rows) {
+      try {
+        const parsed = JSON.parse(r.skills || '[]');
+        if (Array.isArray(parsed)) {
+          for (const s of parsed) {
+            if (typeof s === 'string' && s.trim()) skills.add(s.trim());
+          }
+        }
+      } catch {}
+    }
+    const candRows = db.prepare('SELECT skills FROM candidates WHERE deleted_at IS NULL').all();
+    for (const c of candRows) {
+      try {
+        const parsed = JSON.parse(c.skills || '[]');
+        if (Array.isArray(parsed)) {
+          for (const s of parsed) {
+            if (typeof s === 'string' && s.trim()) skills.add(s.trim());
+          }
+        }
+      } catch {}
+    }
+    return [...skills];
+  } catch {
+    return [];
+  }
+}
+
 
 const get = (db, table, key) => {
   const row = db.prepare(`SELECT * FROM ${table} WHERE id=?`).get(key);
@@ -406,7 +440,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       }
       if (method === 'POST') {
         return (async () => {
-          const commAdapter = c?.communicationAdapter || new CommunicationAdapter({ fromEnv: true, transport: c?.transport });
+          const commAdapter = c?.communicationAdapter || new CommunicationAdapter({ db, fromEnv: true, transport: c?.transport });
           return await sendCandidateCommunication(db, user, { ...body, candidate_id: key }, commAdapter);
         })();
       }
@@ -631,8 +665,11 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
           mimeType: body.mimeType || ''
         });
 
-        const email = result.text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0] || '';
-        const phone = result.text.match(/\+?[\d][\d ()-]{8,20}\d/)?.[0] || '';
+        const details = extractResumeDetails(result.text, getDbSkills(db));
+        const email = details.email;
+        const phone = details.phone;
+        const name = details.name;
+        const skills = details.skills;
         const resumeId = id();
         const nowStr = now();
 
@@ -668,6 +705,8 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
           text: result.text,
           email,
           phone,
+          name,
+          skills,
           filename: result.filename,
           format: result.format,
           size: result.size,
@@ -686,10 +725,22 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
   }
   if (path === 'resume/parse' && method === 'POST') {
     permit(user,'recruit'); const resume = text(body.text,'Resume text',50000);
-    const email = resume.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0] || '';
-    const phone = resume.match(/\+?[\d][\d ()-]{8,20}\d/)?.[0] || '';
-    const message = (email || phone) ? 'Email and phone number extracted successfully.' : 'No email or phone number found in resume text.';
-    return { email, phone, message, warning: message };
+    const details = extractResumeDetails(resume, getDbSkills(db));
+    const hasContact = Boolean(details.email || details.phone);
+    const hasAny = Boolean(hasContact || details.name || (details.skills && details.skills.length));
+    const message = hasContact
+      ? 'Email and phone number extracted successfully.'
+      : hasAny
+        ? 'Resume details extracted successfully.'
+        : 'No email or phone number found in resume text.';
+    return {
+      email: details.email,
+      phone: details.phone,
+      name: details.name,
+      skills: details.skills,
+      message,
+      warning: message
+    };
   }
   if (path === 'jd/draft' && method === 'POST') {
     permit(user,'recruit','requisition');
@@ -876,6 +927,11 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
   }
   if (parts[0] === 'interviews') {
     permit(user,'recruit','review','interview');
+    if (method === 'GET' && key === 'calendar-status') {
+      const calEffective = getEffectiveIntegrationConfig(db, 'microsoft_calendar');
+      const configured = Boolean((calEffective.enabled && calEffective.isConfigured) || isCalendarConfigured(c, db) || c?.calendarAdapter);
+      return { configured, status: configured ? 'active' : 'not_configured' };
+    }
     if (method === 'GET' && !key) return db.prepare(`SELECT i.*,c.name,r.title,r.team,u.name interviewer FROM interviews i
       JOIN applications a ON a.id=i.application_id JOIN candidates c ON c.id=a.candidate_id JOIN requisitions r ON r.id=a.requisition_id JOIN users u ON u.id=i.interviewer_id`).all().filter(i => user.role === 'Interviewer' ? i.interviewer_id === user.id : inTeam(user,i.team));
     if (method === 'GET' && key && !action) {
@@ -902,7 +958,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
         );
         audit(db, user.id, 'interview.planned', iid, { scheduled_at: scheduled.toISOString(), interviewer_id: interviewer.id, duration_minutes: duration, timezone });
       });
-      const calConfigured = isCalendarConfigured(c) || Boolean(c?.calendarAdapter);
+      const calConfigured = isCalendarConfigured(c, db) || Boolean(c?.calendarAdapter);
       const emailConfigured = (isEmailConfigured(db) || Boolean(c?.communicationAdapter)) && body.send_invitation !== false;
       if (calConfigured || emailConfigured) {
         return (async () => {
@@ -985,7 +1041,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
         audit(db, user.id, 'interview.updated', key, { scheduled_at: scheduled.toISOString(), interviewer_id: interviewerId, duration_minutes: duration });
       });
 
-      const calConfigured = isCalendarConfigured(c) || Boolean(c?.calendarAdapter);
+      const calConfigured = isCalendarConfigured(c, db) || Boolean(c?.calendarAdapter);
       const emailConfigured = (isEmailConfigured(db) || Boolean(c?.communicationAdapter)) && body.send_notification !== false;
       if (calConfigured || emailConfigured) {
         return (async () => {
@@ -1039,7 +1095,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
         audit(db, user.id, 'interview.cancelled', key, { reason });
       });
 
-      const calConfigured = isCalendarConfigured(c) || Boolean(c?.calendarAdapter);
+      const calConfigured = isCalendarConfigured(c, db) || Boolean(c?.calendarAdapter);
       const emailConfigured = (isEmailConfigured(db) || Boolean(c?.communicationAdapter)) && body.send_notification !== false;
       if (calConfigured || emailConfigured) {
         return (async () => {
@@ -1422,9 +1478,14 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
           nowStr,
           nowStr
         );
+        const details = extractResumeDetails(result.text, getDbSkills(db));
         return {
           resume_id: resumeId,
           text: result.text,
+          name: details.name,
+          email: details.email,
+          phone: details.phone,
+          skills: details.skills,
           filename: result.filename,
           format: result.format,
           size: result.size
@@ -1446,8 +1507,8 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
     const calEffective = getEffectiveIntegrationConfig(db, 'microsoft_calendar');
     const emailEffective = getEffectiveIntegrationConfig(db, 'email_communication');
     const hrmsEffective = getEffectiveIntegrationConfig(db, 'hrms');
-    const emailStatus = (emailEffective.enabled && emailEffective.isConfigured) || isEmailConfigured() ? 'Active (Resend provider configured)' : 'Not configured';
-    const calStatus = (calEffective.enabled && calEffective.isConfigured) || isCalendarConfigured(c) ? 'Active (Microsoft Graph / Teams configured)' : 'Not configured';
+    const emailStatus = (emailEffective.enabled && emailEffective.isConfigured) || isEmailConfigured(db) ? 'Active (Resend provider configured)' : 'Not configured';
+    const calStatus = (calEffective.enabled && calEffective.isConfigured) || isCalendarConfigured(c, db) ? 'Active (Microsoft Graph / Teams configured)' : 'Not configured';
     const aiProviders = getAvailableAiProviders(c);
     const aiStatus = aiProviders.length > 0
       ? `Active (${aiProviders.map(p => `${p.name} [${p.model}]`).join(', ')})`
@@ -1468,7 +1529,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
         : (name === 'Preboarding / HRMS' ? hrmsStatus
         : 'Not configured'))))))),
       phase: name.includes('Agency')?'4':'3',
-      externalWrites: name === 'Microsoft calendar / Teams' ? ((calEffective.enabled && calEffective.isConfigured) || isCalendarConfigured(c)) : (name === 'Candidate email' ? ((emailEffective.enabled && emailEffective.isConfigured) || isEmailConfigured()) : (name === 'AI matching' ? aiProviders.length > 0 : (name === 'Preboarding / HRMS' ? Boolean(hrmsEffective.enabled && hrmsEffective.isConfigured) : false)))
+      externalWrites: name === 'Microsoft calendar / Teams' ? ((calEffective.enabled && calEffective.isConfigured) || isCalendarConfigured(c, db)) : (name === 'Candidate email' ? ((emailEffective.enabled && emailEffective.isConfigured) || isEmailConfigured(db)) : (name === 'AI matching' ? aiProviders.length > 0 : (name === 'Preboarding / HRMS' ? Boolean(hrmsEffective.enabled && hrmsEffective.isConfigured) : false)))
     }));
   }
   throw new HttpError(404,'Endpoint not found.');
