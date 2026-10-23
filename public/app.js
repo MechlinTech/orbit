@@ -510,7 +510,67 @@ const bindResumeUpload = () => {
   });
 };
 const pad = n => String(n).padStart(2, '0');
-const getLocalDateString = (d = new Date()) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const formatDateTimeIST = (val) => {
+  if (!val) return '—';
+  const d = new Date(val);
+  if (isNaN(d.getTime())) return escape(val);
+  return d.toLocaleString('en-US', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true
+  }) + ' IST';
+};
+const formatDateIST = (val) => {
+  if (!val) return '—';
+  const d = new Date(val);
+  if (isNaN(d.getTime())) return escape(val);
+  return d.toLocaleDateString('en-US', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric'
+  });
+};
+const toISTDateTimeInput = (s) => {
+  if (!s) return '';
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return '';
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  }).formatToParts(d);
+  const p = Object.fromEntries(parts.map(x => [x.type, x.value]));
+  return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}`;
+};
+const parseISTDateTime = (str) => {
+  if (!str) return null;
+  const s = String(str).trim();
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/.test(s)) {
+    const hasSeconds = s.length > 16;
+    return new Date(`${s}${hasSeconds ? '' : ':00'}+05:30`);
+  }
+  return new Date(s);
+};
+const getLocalDateString = (d = new Date()) => {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour12: false
+  }).formatToParts(d);
+  const p = Object.fromEntries(parts.map(x => [x.type, x.value]));
+  return `${p.year}-${p.month}-${p.day}`;
+};
 const getLocalTodayMin = () => `${getLocalDateString()}T00:00`;
 const checkEmail = v => { const s = String(v ?? '').trim(); return (!s || s.length > 254 || !/^[^\s@.]+(?:\.[^\s@.]+)*@[^\s@]+\.[^\s@]+$/.test(s)) ? 'Enter a valid email address.' : ''; };
 const checkPhone = v => { const s = String(v ?? '').trim(); if (!s) return ''; const d = s.replace(/\D/g, ''); return ((!/^\+?[0-9\s\-().–—]+$/.test(s) && !/^\([+]?[0-9]+\)[\s0-9\-().–—]+$/.test(s)) || d.length < 7 || d.length > 15) ? 'Enter a valid phone number.' : ''; };
@@ -805,9 +865,9 @@ async function render() {
         const canSubmit=i.interviewer_id===me.id&&i.status!=='completed';
         const canProxy=allows('admin')&&i.interviewer_id!==me.id&&i.status!=='completed';
         const showLock=(canSubmit||canProxy)&&!ready;
-        return `<tr><td><strong>${escape(i.name)}</strong>${escape(i.title)}</td><td>${escape(i.interviewer)}</td><td>${escape(new Date(i.scheduled_at).toLocaleString())}${i.meeting_url?`<br><a href="${escape(i.meeting_url)}" target="_blank" rel="noopener noreferrer" class="teams-link" style="display:inline-flex;align-items:center;gap:4px;font-size:0.8rem;margin-top:4px;color:var(--accent,#4f46e5);font-weight:600;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>Join Teams</a>`:''}</td><td>${badge(i.status)}</td><td><div class="actions">${canSubmit&&ready?button('Submit scorecard','scorecard',i.id):''}${canProxy&&ready?button('Proxy scorecard','scorecard-proxy',i.id,'class="secondary"'):''}${i.status!=='completed'&&(allows('recruit')||allows('admin')||i.interviewer_id===me.id)?button('Edit','edit-interview',i.id,'class="secondary"'):''}${i.status==='planned'&&(allows('recruit')||allows('admin')||i.interviewer_id===me.id)?button('Cancel','cancel-interview',i.id,'class="secondary"'):''}${button('View feedback','feedback',i.id,'class="secondary"')}${showLock?`<span class="muted feedback-locked">${FEEDBACK_LOCKED_MESSAGE}</span>`:''}</div></td></tr>`;
+        return `<tr><td><strong>${escape(i.name)}</strong>${escape(i.title)}</td><td>${escape(i.interviewer)}</td><td>${escape(formatDateTimeIST(i.scheduled_at))}${i.meeting_url?`<br><a href="${escape(i.meeting_url)}" target="_blank" rel="noopener noreferrer" class="teams-link" style="display:inline-flex;align-items:center;gap:4px;font-size:0.8rem;margin-top:4px;color:var(--accent,#4f46e5);font-weight:600;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>Join Teams</a>`:''}</td><td>${badge(i.status)}</td><td><div class="actions">${canSubmit&&ready?button('Submit scorecard','scorecard',i.id):''}${canProxy&&ready?button('Proxy scorecard','scorecard-proxy',i.id,'class="secondary"'):''}${i.status!=='completed'&&(allows('recruit')||allows('admin')||i.interviewer_id===me.id)?button('Edit','edit-interview',i.id,'class="secondary"'):''}${i.status==='planned'&&(allows('recruit')||allows('admin')||i.interviewer_id===me.id)?button('Cancel','cancel-interview',i.id,'class="secondary"'):''}${button('View feedback','feedback',i.id,'class="secondary"')}${showLock?`<span class="muted feedback-locked">${FEEDBACK_LOCKED_MESSAGE}</span>`:''}</div></td></tr>`;
       });
-      html=heading('Structured interviews, independent feedback.',allows('recruit')?button('+ Plan interview','new-interview'):'')+calNotice+`<section class="panel">${table(['Candidate / role','Interviewer','Scheduled','Status','Feedback'],rows)}${pag}</section>`;
+      html=heading('Structured interviews, independent feedback.',allows('recruit')?button('+ Plan interview','new-interview'):'')+calNotice+`<section class="panel">${table(['Candidate / role','Interviewer','Scheduled (IST)','Status','Feedback'],rows)}${pag}</section>`;
     }
     if(current==='Referrals') {
       const refs=await api('referrals');
@@ -824,7 +884,7 @@ async function render() {
         if(r.can_edit)actions.push(button('Edit','edit-referral',r.id,'class="secondary"'));
         if(r.can_process)actions.push(button('Process','process-referral',r.id));
         if(r.can_withdraw)actions.push(button('Withdraw','withdraw-referral',r.id,'class="secondary"'));
-        return `<tr><td><button type="button" class="text-button person-link" data-action="referral-details" data-id="${escape(r.id)}" title="${escape(r.name)}">${escape(r.name)}</button></td><td>${escape(r.email)}</td><td>${position}</td><td class="referral-status-cell">${badge(r.status)}</td><td>${escape(new Date(r.at).toLocaleDateString())}</td><td>${escape(r.referrer_name||'You')}</td><td><div class="actions">${actions.join('')}</div></td></tr>`;
+        return `<tr><td><button type="button" class="text-button person-link" data-action="referral-details" data-id="${escape(r.id)}" title="${escape(r.name)}">${escape(r.name)}</button></td><td>${escape(r.email)}</td><td>${position}</td><td class="referral-status-cell">${badge(r.status)}</td><td>${escape(formatDateIST(r.at))}</td><td>${escape(r.referrer_name||'You')}</td><td><div class="actions">${actions.join('')}</div></td></tr>`;
       });
       html=heading(canProcess?`Review employee referrals for ${escape(me.team||'your organization')}.`:'Recommend a colleague for an open position.',button('+ Make referral','new-referral'))+`<section class="panel"><h2>${scopeTitle}</h2>${table(['Candidate','Email','Job Position','Referral Status','Referred','Referrer','Actions'],rows,'referrals-table')}${pag}</section>`;
     }
@@ -833,14 +893,14 @@ async function render() {
       const {paged,page,totalPages,total,start}=paginate(users,pageState.Administration||1,10);
       pageState.Administration=page;
       const pag=renderPagination('Administration',page,totalPages,total,start,10);
-      html=heading('Approve access and manage your organization’s users.',button('+ Add user','new-user'))+`<div class="metrics">${[['Active',users.filter(u=>u.status==='active').length],['Pending',users.filter(u=>u.status==='pending').length],['Disabled',users.filter(u=>u.status==='disabled').length],['Rejected',users.filter(u=>u.status==='rejected').length]].map(([label,count])=>`<div class="metric"><span>${label}</span><strong>${count}</strong></div>`).join('')}</div><section class="panel">${table(['User','Role / team','Access','Last sign-in','Manage'],paged.map(u=>`<tr><td><strong>${escape(u.name)}</strong><small>${escape(u.email)}</small></td><td>${escape(u.role)}<br><small>${escape(u.team||'Organization')}</small></td><td>${badge(u.status)}</td><td>${u.last_login?escape(new Date(u.last_login).toLocaleString()):'Never'}</td><td>${button('Manage','manage-user',u.id,'class="secondary"')}</td></tr>`))}${pag}</section>`;
+      html=heading('Approve access and manage your organization’s users.',button('+ Add user','new-user'))+`<div class="metrics">${[['Active',users.filter(u=>u.status==='active').length],['Pending',users.filter(u=>u.status==='pending').length],['Disabled',users.filter(u=>u.status==='disabled').length],['Rejected',users.filter(u=>u.status==='rejected').length]].map(([label,count])=>`<div class="metric"><span>${label}</span><strong>${count}</strong></div>`).join('')}</div><section class="panel">${table(['User','Role / team','Access','Last sign-in (IST)','Manage'],paged.map(u=>`<tr><td><strong>${escape(u.name)}</strong><small>${escape(u.email)}</small></td><td>${escape(u.role)}<br><small>${escape(u.team||'Organization')}</small></td><td>${badge(u.status)}</td><td>${u.last_login?escape(formatDateTimeIST(u.last_login)):'Never'}</td><td>${button('Manage','manage-user',u.id,'class="secondary"')}</td></tr>`))}${pag}</section>`;
     }
     if(current==='Audit log') {
       const events=await api('admin/audit');
       const {paged,page,totalPages,total,start}=paginate(events,pageState['Audit log']||1,20);
       pageState['Audit log']=page;
       const pag=renderPagination('Audit log',page,totalPages,total,start,20);
-      html=heading('Administrative actions, authentication and hiring changes.')+`<section class="panel"><p class="muted">Latest 200 events. Earlier entries are available through the paginated audit API.</p>${table(['Time','Event','Actor','Target'],paged.map(e=>`<tr><td>${escape(new Date(e.at).toLocaleString())}</td><td>${escape(e.event)}</td><td class="mono">${escape(e.actor)}</td><td class="mono">${escape(e.target)}</td></tr>`))}${pag}</section>`;
+      html=heading('Administrative actions, authentication and hiring changes.')+`<section class="panel"><p class="muted">Latest 200 events. Earlier entries are available through the paginated audit API.</p>${table(['Time (IST)','Event','Actor','Target'],paged.map(e=>`<tr><td>${escape(formatDateTimeIST(e.at))}</td><td>${escape(e.event)}</td><td class="mono">${escape(e.actor)}</td><td class="mono">${escape(e.target)}</td></tr>`))}${pag}</section>`;
     }
     if(current==='Settings') {
       html=heading('Make Orbit feel like your team’s workspace.')+`<section class="panel appearance-panel"><div class="panel-head"><div><h2>Appearance</h2><p class="muted">Choose a look that helps your team do their best work.</p></div><span class="subtle-label">${icon('Administration')} Admin controlled</span></div><form id="appearance-form"><fieldset class="theme-fieldset"><legend>Workspace theme</legend><div class="theme-grid">${appearance.themes.map(t=>`<label class="theme-option"><input type="radio" name="theme" value="${t.id}" ${t.id===appearance.theme?'checked':''}><span class="theme-thumbnail theme-${t.id}"><span class="mini-sidebar"><i></i><i></i><i></i></span><span class="mini-workspace"><span class="mini-topline"></span><span class="mini-metrics"><i></i><i></i><i></i></span><span class="mini-panel"><i></i><i></i><i></i></span></span><span class="theme-check" aria-hidden="true">✓</span></span><span class="theme-name">${t.name}</span><span class="theme-description">${t.description}</span></label>`).join('')}</div></fieldset><div class="theme-scope">${icon('Candidates')}<div><strong>One look, for the whole team</strong><p>The saved theme applies to every user and the sign-in screen. Existing sessions pick it up on their next page change or refresh.</p></div></div><p id="appearance-status" role="status" aria-live="polite" class="muted">${escape(appearance.themes.find(t=>t.id===appearance.theme).name)} is your saved workspace theme.</p><div class="settings-actions"><button type="button" class="secondary" data-action="reset-theme">Reset preview</button><button type="submit" id="save-theme" disabled>Save workspace theme</button></div></form></section><section class="panel brand-panel"><div><p class="eyebrow">OUR WORKSPACE</p><h2>Orbit, by Mechlin</h2><p class="muted">A place for people, possibility and your next great hire.</p></div><div class="brand-lockup"><img src="/mechlin-logo.webp" alt="Mechlin Technologies" width="174" height="40"></div></section>`;
@@ -969,7 +1029,7 @@ async function render() {
 
                 const testInfo = item.lastTestAt
                   ? (item.lastTestStatus === 'success'
-                      ? `<span class="int-diag-chip diag-ok" title="Last verified: ${escape(new Date(item.lastTestAt).toLocaleString())}">✓ Verified active</span>`
+                      ? `<span class="int-diag-chip diag-ok" title="Last verified: ${escape(formatDateTimeIST(item.lastTestAt))}">✓ Verified active</span>`
                       : `<span class="int-diag-chip diag-warn" title="${escape(item.lastError || 'Test failed')}">⚠ Connection check needed</span>`)
                   : `<span class="int-diag-chip diag-ready">Ready for test</span>`;
 
@@ -1041,7 +1101,7 @@ async function render() {
       `</div>`+
       `<div class="split">`+
         `<section class="panel"><div class="panel-head"><div><h2>Assigned requisitions</h2><p class="muted">Active roles open for your agency</p></div>${button('View all assigned','navigate','','class="text-button" data-view="Assigned Roles"')}</div>`+
-        `${table(['Position','Team','Deadline','Action'],assigned.slice(0,5).map(r=>`<tr><td><strong>${escape(r.title)}</strong><br><small>${escape((r.skills||[]).join(', '))}</small></td><td>${escape(r.team)}</td><td>${r.submission_deadline?escape(new Date(r.submission_deadline).toLocaleDateString()):'Open'}</td><td><div class="actions">${button('Add candidate','agency-submit-candidate',r.id,'class="primary"')}</div></td></tr>`))}`+
+        `${table(['Position','Team','Deadline','Action'],assigned.slice(0,5).map(r=>`<tr><td><strong>${escape(r.title)}</strong><br><small>${escape((r.skills||[]).join(', '))}</small></td><td>${escape(r.team)}</td><td>${r.submission_deadline?escape(formatDateIST(r.submission_deadline)):'Open'}</td><td><div class="actions">${button('Add candidate','agency-submit-candidate',r.id,'class="primary"')}</div></td></tr>`))}`+
         `</section>`+
         `<section class="panel"><div class="panel-head"><div><h2>Recent submissions</h2><p class="muted">Live status & feedback from internal recruiters</p></div>${button('View all submissions','navigate','','class="text-button" data-view="Submissions"')}</div>`+
         `${table(['Candidate / Ref','Requisition','Status','Feedback'],recent.slice(0,5).map(s=>`<tr><td><strong>${escape(s.candidate_name)}</strong><br><small class="mono">${escape(s.submission_ref)}</small></td><td>${escape(s.requisition_title)}</td><td>${badge(s.agency_status)}</td><td>${s.published_feedback?button('View feedback','view-agency-feedback',s.id,'class="text-button"'):'<span class="muted" style="font-size:0.8rem;">Under evaluation</span>'}</td></tr>`))}`+
@@ -1055,7 +1115,7 @@ async function render() {
       const pag=renderPagination('Assigned Roles',page,totalPages,total,start,10);
       html=heading('Job requisitions assigned to your agency for candidate sourcing.',button('+ Add candidate','agency-submit-candidate'))+
       `<section class="panel"><div class="panel-head"><div><h2>Active assigned requisitions</h2><p class="muted">Ensure candidate representation authorization before submitting.</p></div></div>`+
-      `${table(['Position','Team / Location','Skills & requirements','Deadline','Sourcing instructions','Add candidate'],paged.map(r=>`<tr><td><strong>${escape(r.title)}</strong><br><small class="mono">${escape(r.team)}</small></td><td>${escape(r.team)}<br><small class="muted">Full-time</small></td><td><div class="skill-list">${(r.skills||[]).map(s=>`<span class="skill-chip">${escape(s)}</span>`).join('')}</div></td><td>${r.submission_deadline?`<span class="badge ${new Date(r.submission_deadline)<new Date()?'rejected':'pending'}">${escape(new Date(r.submission_deadline).toLocaleDateString())}</span>`:'<span class="badge active">Open</span>'}</td><td style="max-width:240px;"><small class="muted">${escape(r.sourcing_instructions||'Standard requirements apply.')}</small></td><td><div class="actions">${button('Add candidate','agency-submit-candidate',r.id,'class="primary"')}</div></td></tr>`))}`+
+      `${table(['Position','Team / Location','Skills & requirements','Deadline','Sourcing instructions','Add candidate'],paged.map(r=>`<tr><td><strong>${escape(r.title)}</strong><br><small class="mono">${escape(r.team)}</small></td><td>${escape(r.team)}<br><small class="muted">Full-time</small></td><td><div class="skill-list">${(r.skills||[]).map(s=>`<span class="skill-chip">${escape(s)}</span>`).join('')}</div></td><td>${r.submission_deadline?`<span class="badge ${new Date(r.submission_deadline)<new Date()?'rejected':'pending'}">${escape(formatDateIST(r.submission_deadline))}</span>`:'<span class="badge active">Open</span>'}</td><td style="max-width:240px;"><small class="muted">${escape(r.sourcing_instructions||'Standard requirements apply.')}</small></td><td><div class="actions">${button('Add candidate','agency-submit-candidate',r.id,'class="primary"')}</div></td></tr>`))}`+
       `${pag}</section>`;
     }
     if(current==='Submissions') {
@@ -1065,7 +1125,7 @@ async function render() {
       const pag=renderPagination('Submissions',page,totalPages,total,start,10);
       html=heading('Candidate submissions and live status tracking.',button('+ Submit candidate','agency-submit-candidate'))+
       `<section class="panel"><div class="panel-head"><div><h2>Your agency submissions</h2><p class="muted">Live status synchronized directly with Orbit internal pipeline stages.</p></div></div>`+
-      `${table(['Reference','Candidate','Requisition','Submitted by','Date','Status','Feedback'],paged.map(s=>`<tr><td class="mono"><strong>${escape(s.submission_ref||s.reference)}</strong></td><td><strong>${escape(s.candidate_name)}</strong><br><small>${escape(s.candidate_email)}</small></td><td>${escape(s.requisition_title)}</td><td>${escape(s.recruiter_name||'Agency')}</td><td>${escape(new Date(s.created_at||s.submitted_at||Date.now()).toLocaleDateString())}</td><td>${badge(s.agency_status||s.status||'Submitted')}</td><td>${(s.published_feedback||s.feedback)?button('View feedback','view-agency-feedback',s.id,'class="secondary"'):'<span class="muted" style="font-size:0.85rem;">Under evaluation</span>'}</td></tr>`))}`+
+      `${table(['Reference','Candidate','Requisition','Submitted by','Date','Status','Feedback'],paged.map(s=>`<tr><td class="mono"><strong>${escape(s.submission_ref||s.reference)}</strong></td><td><strong>${escape(s.candidate_name)}</strong><br><small>${escape(s.candidate_email)}</small></td><td>${escape(s.requisition_title)}</td><td>${escape(s.recruiter_name||'Agency')}</td><td>${escape(formatDateIST(s.created_at||s.submitted_at||Date.now()))}</td><td>${badge(s.agency_status||s.status||'Submitted')}</td><td>${(s.published_feedback||s.feedback)?button('View feedback','view-agency-feedback',s.id,'class="secondary"'):'<span class="muted" style="font-size:0.85rem;">Under evaluation</span>'}</td></tr>`))}`+
       `${pag}</section>`;
     }
     if(current==='Agency Team') {
@@ -1075,7 +1135,7 @@ async function render() {
       const pag=renderPagination('Agency Team',page,totalPages,total,start,10);
       html=heading('Manage recruiters and partner access for your agency.',isAgencyAdmin()?button('+ Add recruiter','new-agency-recruiter'):'')+
       `<section class="panel"><div class="panel-head"><div><h2>Agency recruiters & administrators</h2><p class="muted">Recruiters can view assigned jobs and submit candidates on behalf of your agency.</p></div></div>`+
-      `${table(['Member','Role','Status','Joined','Actions'],paged.map(m=>`<tr><td><strong>${escape(m.name)}</strong><br><small>${escape(m.email)}</small></td><td><span class="badge ${m.role==='Agency Admin'?'completed':'clean'}">${escape(m.role)}</span></td><td>${badge(m.status)}</td><td>${escape(new Date(m.created_at).toLocaleDateString())}</td><td><div class="actions">${isAgencyAdmin()&&m.user_id!==me.id?button(m.status==='active'?'Suspend':'Reactivate','toggle-agency-recruiter-status',m.user_id,`data-status="${m.status==='active'?'suspended':'active'}" class="secondary"`):'<span class="muted">—</span>'}</div></td></tr>`))}`+
+      `${table(['Member','Role','Status','Joined','Actions'],paged.map(m=>`<tr><td><strong>${escape(m.name)}</strong><br><small>${escape(m.email)}</small></td><td><span class="badge ${m.role==='Agency Admin'?'completed':'clean'}">${escape(m.role)}</span></td><td>${badge(m.status)}</td><td>${escape(formatDateIST(m.created_at))}</td><td><div class="actions">${isAgencyAdmin()&&m.user_id!==me.id?button(m.status==='active'?'Suspend':'Reactivate','toggle-agency-recruiter-status',m.user_id,`data-status="${m.status==='active'?'suspended':'active'}" class="secondary"`):'<span class="muted">—</span>'}</div></td></tr>`))}`+
       `${pag}</section>`;
     }
     if(version===renderVersion && me){
@@ -1734,7 +1794,7 @@ document.addEventListener('click',async event=>{
         ? `<span class="badge rejected" style="margin-left:8px;font-size:0.75rem;">Opted out of email</span>`
         : `<span class="badge active" style="margin-left:8px;font-size:0.75rem;">Subscribed to email</span>`;
       const commsHtml = commsList.length
-        ? `<div class="comms-history" style="margin-top:14px;"><h3>Recent Communications</h3><div class="table-wrap"><table class="comms-table"><thead><tr><th scope="col">Subject</th><th scope="col">Status</th><th scope="col">Date</th></tr></thead><tbody>${commsList.slice(0, 5).map(m=>`<tr><td><strong>${escape(m.subject)}</strong></td><td>${badge(m.status)}</td><td><small class="muted">${new Date(m.created_at).toLocaleDateString()}</small></td></tr>`).join('')}</tbody></table></div></div>`
+        ? `<div class="comms-history" style="margin-top:14px;"><h3>Recent Communications</h3><div class="table-wrap"><table class="comms-table"><thead><tr><th scope="col">Subject</th><th scope="col">Status</th><th scope="col">Date</th></tr></thead><tbody>${commsList.slice(0, 5).map(m=>`<tr><td><strong>${escape(m.subject)}</strong></td><td>${badge(m.status)}</td><td><small class="muted">${formatDateIST(m.created_at)}</small></td></tr>`).join('')}</tbody></table></div></div>`
         : '';
 
       let signaturesHtml = '';
@@ -1760,8 +1820,8 @@ document.addEventListener('click',async event=>{
           if (isDone) {
             statusBadge = `<span class="badge completed" style="font-size:0.72rem;padding:2px 7px;">✓ Signed & Executed</span>`;
             const signedAtStr = (s.signers && s.signers[0]?.signed_at)
-              ? new Date(s.signers[0].signed_at).toLocaleDateString()
-              : new Date(s.updated_at || s.created_at).toLocaleDateString();
+              ? formatDateIST(s.signers[0].signed_at)
+              : formatDateIST(s.updated_at || s.created_at);
             metaText = `Executed on ${signedAtStr} · Cryptographically verified SHA-256`;
           } else if (isPending) {
             let validityNote = '';
@@ -1770,24 +1830,24 @@ document.addEventListener('click',async event=>{
               const diffMs = expDate.getTime() - Date.now();
               const diffDays = Math.ceil(diffMs / 86400000);
               const daysText = diffDays > 0 ? `${diffDays}d remaining` : 'Expired';
-              validityNote = ` · Valid until ${expDate.toLocaleDateString()} (${daysText})`;
+              validityNote = ` · Valid until ${formatDateIST(expDate)} (${daysText})`;
             }
             if (s.status === 'viewed') {
               statusBadge = `<span class="badge viewed" style="font-size:0.72rem;padding:2px 7px;">👁️ Viewed by Signer</span>`;
-              metaText = `Created ${new Date(s.created_at).toLocaleDateString()}${validityNote} · Awaiting execution`;
+              metaText = `Created ${formatDateIST(s.created_at)}${validityNote} · Awaiting execution`;
             } else {
               statusBadge = `<span class="badge pending" style="font-size:0.72rem;padding:2px 7px;">⏳ Awaiting Signature</span>`;
-              metaText = `Created ${new Date(s.created_at).toLocaleDateString()}${validityNote}`;
+              metaText = `Created ${formatDateIST(s.created_at)}${validityNote}`;
             }
           } else if (isCancelled) {
             statusBadge = `<span class="badge rejected" style="font-size:0.72rem;padding:2px 7px;">Cancelled</span>`;
-            metaText = `Cancelled on ${new Date(s.updated_at || s.created_at).toLocaleDateString()}`;
+            metaText = `Cancelled on ${formatDateIST(s.updated_at || s.created_at)}`;
           } else if (isDeclined) {
             statusBadge = `<span class="badge rejected" style="font-size:0.72rem;padding:2px 7px;">Declined</span>`;
             metaText = `Declined by candidate`;
           } else {
             statusBadge = badge(s.status);
-            metaText = `Created ${new Date(s.created_at).toLocaleDateString()}`;
+            metaText = `Created ${formatDateIST(s.created_at)}`;
           }
 
           // Document action button:
@@ -2039,7 +2099,7 @@ document.addEventListener('click',async event=>{
               </div>
             </div>
             ${select('Interviewer', 'interviewer_id', users.map(u => [u.id, `${u.name}${u.team ? ' (' + u.team + ')' : ''}`]), defaultInterviewer)}
-            ${field('Date and time (your timezone)', 'scheduled_at', 'datetime-local', defaultScheduled, true, `min="${todayMin}"`)}
+            ${field('Date and time (IST)', 'scheduled_at', 'datetime-local', defaultScheduled, true, `min="${todayMin}"`)}
             ${select('Duration', 'duration_minutes', [['30', '30 minutes'], ['45', '45 minutes (Standard)'], ['60', '60 minutes'], ['90', '90 minutes']], '45', false)}
             ${field('Meeting link / Video URL (Optional)', 'meeting_url', 'url', '', false, 'placeholder="Auto-generated via Teams when connected, or paste Google Meet / Zoom link"')}
             ${field('Competencies, comma separated', 'competencies', 'text', defaultComps, true)}
@@ -2047,8 +2107,8 @@ document.addEventListener('click',async event=>{
             <p class="full status-note">Orbit will advance the application to <strong>Interview</strong>, synchronize the Microsoft Teams calendar event (or use your provided meeting link), and automatically dispatch an invitation email with meeting details and schedule link to <strong>${escape(app.email)}</strong>.</p>
           </div>
         `, async v => {
-          const scheduledDate = new Date(v.scheduled_at);
-          if (!Number.isFinite(scheduledDate.getTime()) || scheduledDate.getTime() < Date.now()) {
+          const scheduledDate = parseISTDateTime(v.scheduled_at);
+          if (!scheduledDate || !Number.isFinite(scheduledDate.getTime()) || scheduledDate.getTime() < Date.now()) {
             throw new Error('Enter a future interview date.');
           }
           const sErr = checkSkills(v.competencies);
@@ -2064,6 +2124,7 @@ document.addEventListener('click',async event=>{
             interviewer_id: v.interviewer_id,
             scheduled_at: scheduledDate.toISOString(),
             duration_minutes: Number(v.duration_minutes) || 45,
+            timezone: 'Asia/Kolkata',
             meeting_url: v.meeting_url?.trim() || undefined,
             competencies: compList,
             notes: v.notes?.trim() || undefined
@@ -2216,23 +2277,23 @@ document.addEventListener('click',async event=>{
         return 'Review decision recorded successfully.';
       });
     }
-    if(a==='new-interview'){const [apps,users]=await Promise.all([api('applications'),api('interviewers')]);const active=apps.filter(a=>!['Hired','Rejected'].includes(a.stage));if(!active.length||!users.length)throw new Error('An active application and interviewer are required.');const todayMin=getLocalTodayMin();modal('Plan interview',select('Application','application_id',active.map(a=>[a.id,`${a.name} · ${a.title}`]))+select('Interviewer','interviewer_id',users.map(u=>[u.id,u.name]))+field('Date and time (your timezone)','scheduled_at','datetime-local','',true,`min="${todayMin}"`)+select('Duration','duration_minutes',[['30','30 minutes'],['45','45 minutes (Standard)'],['60','60 minutes'],['90','90 minutes']],'45',false)+field('Meeting link / Video URL (Optional)','meeting_url','url','',false,'placeholder="Auto-generated via Teams when connected, or paste Google Meet / Zoom link"')+field('Competencies, comma separated','competencies','text','Role knowledge, Problem solving')+area('Agenda / Notes (Optional)','notes','',false)+'<p class="status-note">This schedules the interview and creates a Microsoft Teams meeting and candidate invite when configured.</p>',async v=>{const scheduledDate=new Date(v.scheduled_at);if(!Number.isFinite(scheduledDate.getTime())||scheduledDate.getTime()<Date.now()){throw new Error('Enter a future interview date.');}await api('interviews','POST',{...v,scheduled_at:scheduledDate.toISOString(),competencies:skills(v.competencies),duration_minutes:Number(v.duration_minutes)||45,meeting_url:v.meeting_url?.trim()||undefined,notes:v.notes?.trim()||undefined});return 'Interview scheduled successfully.';});const dateInp=$('#edit-form [name="scheduled_at"]');if(dateInp)dateInp.min=todayMin;}
+    if(a==='new-interview'){const [apps,users]=await Promise.all([api('applications'),api('interviewers')]);const active=apps.filter(a=>!['Hired','Rejected'].includes(a.stage));if(!active.length||!users.length)throw new Error('An active application and interviewer are required.');const todayMin=getLocalTodayMin();modal('Plan interview',select('Application','application_id',active.map(a=>[a.id,`${a.name} · ${a.title}`]))+select('Interviewer','interviewer_id',users.map(u=>[u.id,u.name]))+field('Date and time (IST)','scheduled_at','datetime-local','',true,`min="${todayMin}"`)+select('Duration','duration_minutes',[['30','30 minutes'],['45','45 minutes (Standard)'],['60','60 minutes'],['90','90 minutes']],'45',false)+field('Meeting link / Video URL (Optional)','meeting_url','url','',false,'placeholder="Auto-generated via Teams when connected, or paste Google Meet / Zoom link"')+field('Competencies, comma separated','competencies','text','Role knowledge, Problem solving')+area('Agenda / Notes (Optional)','notes','',false)+'<p class="status-note">This schedules the interview and creates a Microsoft Teams meeting and candidate invite when configured.</p>',async v=>{const scheduledDate=parseISTDateTime(v.scheduled_at);if(!scheduledDate||!Number.isFinite(scheduledDate.getTime())||scheduledDate.getTime()<Date.now()){throw new Error('Enter a future interview date.');}await api('interviews','POST',{...v,scheduled_at:scheduledDate.toISOString(),timezone:'Asia/Kolkata',competencies:skills(v.competencies),duration_minutes:Number(v.duration_minutes)||45,meeting_url:v.meeting_url?.trim()||undefined,notes:v.notes?.trim()||undefined});return 'Interview scheduled successfully.';});const dateInp=$('#edit-form [name="scheduled_at"]');if(dateInp)dateInp.min=todayMin;}
     if(a==='edit-interview'||a==='reschedule-interview'){
       const interviews=await api('interviews');
       const i=interviews.find(item=>item.id===id)||await api(`interviews/${id}`);
       if(!i)throw new Error('Interview not found.');
       const canManage=allows('recruit')||allows('admin');
       const users=canManage?await api('interviewers'):[];
-      const toLocal=s=>{const d=new Date(s);return isNaN(d.getTime())?'':`${getLocalDateString(d)}T${pad(d.getHours())}:${pad(d.getMinutes())}`;};
+      const toLocal=s=>toISTDateTimeInput(s);
       const comps=JSON.parse(i.competencies||'[]');
       const interviewerOptions = users.map(u=>[u.id,u.name]);
       if(i.interviewer_id && !interviewerOptions.some(([uid])=>uid===i.interviewer_id)){
         interviewerOptions.unshift([i.interviewer_id, `${i.interviewer || 'Assigned interviewer'} (Current)`]);
       }
       const todayMin=getLocalTodayMin();
-      modal('Edit interview',`<div class="form-grid"><p class="full"><strong>Candidate:</strong> ${escape(i.name)} · ${escape(i.title)}</p>${interviewerOptions.length?select('Interviewer','interviewer_id',interviewerOptions,i.interviewer_id):`<p class="full"><strong>Interviewer:</strong> ${escape(i.interviewer)}</p>`}${field('Date and time (your timezone)','scheduled_at','datetime-local',toLocal(i.scheduled_at),true,`min="${todayMin}"`)}${select('Duration','duration_minutes',[['30','30 minutes'],['45','45 minutes (Standard)'],['60','60 minutes'],['90','90 minutes']],String(i.duration_minutes||45),false)}${field('Meeting link / Video URL (Optional)','meeting_url','url',i.meeting_url||'',false,'placeholder="Auto-generated via Teams when connected, or paste Google Meet / Zoom link"')}${canManage?field('Competencies, comma separated','competencies','text',comps.join(', '),true):''}${area('Agenda / Update notes (Optional)','notes',i.notes||'',false)}<p class="full status-note">This updates the scheduled interview date and time and synchronizes with Microsoft Teams when configured.</p></div>`,async v=>{
-        const scheduledDate=new Date(v.scheduled_at);
-        if(!Number.isFinite(scheduledDate.getTime())||scheduledDate.getTime()<Date.now()){
+      modal('Edit interview',`<div class="form-grid"><p class="full"><strong>Candidate:</strong> ${escape(i.name)} · ${escape(i.title)}</p>${interviewerOptions.length?select('Interviewer','interviewer_id',interviewerOptions,i.interviewer_id):`<p class="full"><strong>Interviewer:</strong> ${escape(i.interviewer)}</p>`}${field('Date and time (IST)','scheduled_at','datetime-local',toLocal(i.scheduled_at),true,`min="${todayMin}"`)}${select('Duration','duration_minutes',[['30','30 minutes'],['45','45 minutes (Standard)'],['60','60 minutes'],['90','90 minutes']],String(i.duration_minutes||45),false)}${field('Meeting link / Video URL (Optional)','meeting_url','url',i.meeting_url||'',false,'placeholder="Auto-generated via Teams when connected, or paste Google Meet / Zoom link"')}${canManage?field('Competencies, comma separated','competencies','text',comps.join(', '),true):''}${area('Agenda / Update notes (Optional)','notes',i.notes||'',false)}<p class="full status-note">This updates the scheduled interview date and time and synchronizes with Microsoft Teams when configured.</p></div>`,async v=>{
+        const scheduledDate=parseISTDateTime(v.scheduled_at);
+        if(!scheduledDate||!Number.isFinite(scheduledDate.getTime())||scheduledDate.getTime()<Date.now()){
           throw new Error('Enter a future interview date.');
         }
         let updatedComps;
@@ -2243,6 +2304,7 @@ document.addEventListener('click',async event=>{
         const payload={
           scheduled_at:scheduledDate.toISOString(),
           duration_minutes:Number(v.duration_minutes)||45,
+          timezone:'Asia/Kolkata',
           meeting_url:v.meeting_url?.trim()||undefined,
           notes:v.notes?.trim()||undefined,
           ...(v.interviewer_id?{interviewer_id:v.interviewer_id}:{}),
@@ -2299,7 +2361,7 @@ document.addEventListener('click',async event=>{
       if(r.can_edit)actions.push(button('Edit','edit-referral',r.id,'class="secondary"'));
       if(r.can_process)actions.push(button('Process referral','process-referral',r.id));
       if(r.can_withdraw)actions.push(button('Withdraw referral','withdraw-referral',r.id,'class="secondary"'));
-      modal(`Referral: ${r.name}`,`<dl class="detail-list"><dt>Candidate</dt><dd><strong>${escape(r.name)}</strong><br>${escape(r.email)}</dd><dt>Job Position</dt><dd>${position}${reqAction}</dd><dt>Referral Status</dt><dd>${badge(r.status)}${r.application_id?`<br><small>Linked application ${escape(r.application_id)}</small>`:''}</dd><dt>Referral Date</dt><dd>${escape(new Date(r.at).toLocaleString())}</dd><dt>Referrer</dt><dd>${escape(r.referrer_name||'You')}${r.referrer_email?`<br><small>${escape(r.referrer_email)}</small>`:''}</dd><dt>Referral Note</dt><dd class="score-note">${escape(r.note||'No referral note provided.')}</dd></dl>${actions.length?`<div class="actions" style="margin-top:16px">${actions.join('')}</div>`:''}`);
+      modal(`Referral: ${r.name}`,`<dl class="detail-list"><dt>Candidate</dt><dd><strong>${escape(r.name)}</strong><br>${escape(r.email)}</dd><dt>Job Position</dt><dd>${position}${reqAction}</dd><dt>Referral Status</dt><dd>${badge(r.status)}${r.application_id?`<br><small>Linked application ${escape(r.application_id)}</small>`:''}</dd><dt>Referral Date</dt><dd>${escape(formatDateTimeIST(r.at))}</dd><dt>Referrer</dt><dd>${escape(r.referrer_name||'You')}${r.referrer_email?`<br><small>${escape(r.referrer_email)}</small>`:''}</dd><dt>Referral Note</dt><dd class="score-note">${escape(r.note||'No referral note provided.')}</dd></dl>${actions.length?`<div class="actions" style="margin-top:16px">${actions.join('')}</div>`:''}`);
     }
     if(a==='edit-referral'){
       const r=await api(`referrals/${id}`);
@@ -2516,7 +2578,7 @@ document.addEventListener('click',async event=>{
       const assignmentsList = ass.length ? `
         <div class="table-wrap" style="margin-top:8px;">
           <table class="table"><thead><tr><th scope="col">Requisition</th><th scope="col">Deadline</th><th scope="col">Instructions</th><th scope="col">Action</th></tr></thead>
-          <tbody>${ass.map(j=>`<tr><td><strong>${escape(j.title)}</strong><br><small>${escape(j.team)}</small></td><td>${(j.submission_deadline||j.deadline)?escape(new Date(j.submission_deadline||j.deadline).toLocaleDateString()):'None'}</td><td><small class="muted">${escape(j.sourcing_instructions||j.instructions||'—')}</small></td><td>${allows('admin')?button('Revoke','revoke-agency-req',ag.id,`data-req-id="${j.requisition_id}" class="secondary text-button"`):'—'}</td></tr>`).join('')}</tbody>
+          <tbody>${ass.map(j=>`<tr><td><strong>${escape(j.title)}</strong><br><small>${escape(j.team)}</small></td><td>${(j.submission_deadline||j.deadline)?escape(formatDateIST(j.submission_deadline||j.deadline)):'None'}</td><td><small class="muted">${escape(j.sourcing_instructions||j.instructions||'—')}</small></td><td>${allows('admin')?button('Revoke','revoke-agency-req',ag.id,`data-req-id="${j.requisition_id}" class="secondary text-button"`):'—'}</td></tr>`).join('')}</tbody>
           </table>
         </div>
       ` : '<p class="muted" style="font-size:0.85rem;margin-top:6px;">No requisitions currently assigned.</p>';
@@ -2684,7 +2746,7 @@ document.addEventListener('click',async event=>{
         ${sub.published_feedback?`
           <div class="agency-feedback-box">
             <p class="feedback-text">${escape(sub.published_feedback)}</p>
-            <div class="feedback-meta">Published on ${escape(new Date(sub.feedback_published_at||sub.created_at).toLocaleString())}</div>
+            <div class="feedback-meta">Published on ${escape(formatDateTimeIST(sub.feedback_published_at||sub.created_at))}</div>
           </div>
         `:'<p class="muted">No feedback published yet. Your candidate is currently under active evaluation by the hiring team.</p>'}
       `);
@@ -2826,7 +2888,7 @@ async function renderSigningPortal(token) {
         <p class="muted" style="margin:0 0 8px;">Recipient: <strong>${signerName}</strong> &lt;${escape(session.signer.email)}&gt; · Role: ${escape(session.signer.role)}</p>
         ${session.request.expires_at ? `
           <div style="font-size:0.82rem;color:var(--text-muted,#475569);margin-bottom:8px;">
-            ⏱️ <strong>Link Validity:</strong> Valid until ${escape(new Date(session.request.expires_at).toLocaleDateString())} (${Math.max(0, Math.ceil((new Date(session.request.expires_at).getTime() - Date.now()) / 86400000))} days remaining)
+            ⏱️ <strong>Link Validity:</strong> Valid until ${escape(formatDateIST(session.request.expires_at))} (${Math.max(0, Math.ceil((new Date(session.request.expires_at).getTime() - Date.now()) / 86400000))} days remaining)
           </div>
         ` : ''}
         <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:10px;">

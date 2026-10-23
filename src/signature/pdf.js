@@ -682,6 +682,24 @@ export function stampSignedPdf({
 }) {
   const originalHash = createHash('sha256').update(originalPdfBuffer).digest('hex');
   const nowIso = new Date().toISOString();
+  const formatPdfIstTimestamp = (isoStr) => {
+    try {
+      const d = new Date(isoStr);
+      if (!Number.isFinite(d.getTime())) return isoStr;
+      return d.toLocaleString('en-US', {
+        timeZone: 'Asia/Kolkata',
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: true
+      }) + ' IST';
+    } catch {
+      return isoStr;
+    }
+  };
 
   let signersStream = '';
   let yPos = 610;
@@ -777,7 +795,7 @@ ${sigVisualStream}
 BT
 /F1 8 Tf
 54 ${yPos - 52} Td
-(Timestamp: ${escapePdfText(signedDate)} UTC | Verification: Authenticated Session Token) Tj
+(Timestamp: ${escapePdfText(formatPdfIstTimestamp(signedDate))} | Verification: Authenticated Session Token) Tj
 ET
 
 BT
@@ -849,7 +867,7 @@ ET
 BT
 /F1 8 Tf
 54 60 Td
-(Generated on: ${escapePdfText(nowIso)} UTC · Orbit ATS) Tj
+(Generated on: ${escapePdfText(formatPdfIstTimestamp(nowIso))} · Orbit ATS) Tj
 ET
 `;
 
