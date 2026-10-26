@@ -111,7 +111,19 @@ export function openDb(path = 'data/talentos.sqlite') {
       signed_at TEXT, ip_address TEXT, user_agent TEXT, consent_confirmed INTEGER DEFAULT 0, declined_reason TEXT,
       created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
     CREATE INDEX IF NOT EXISTS idx_signature_signers_request ON signature_signers(request_id);
-    CREATE INDEX IF NOT EXISTS idx_signature_signers_token ON signature_signers(token_hash);
+    CREATE TABLE IF NOT EXISTS offer_letter_templates(
+      id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT,
+      status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','active','archived')),
+      version INTEGER NOT NULL DEFAULT 1, is_default INTEGER NOT NULL DEFAULT 0,
+      page_config TEXT, header_config TEXT, footer_config TEXT, background_config TEXT,
+      sections TEXT NOT NULL, created_by TEXT NOT NULL REFERENCES users(id),
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS idx_offer_templates_status ON offer_letter_templates(status);
+    CREATE TABLE IF NOT EXISTS offer_letter_assets(
+      id TEXT PRIMARY KEY, filename TEXT NOT NULL, file_format TEXT NOT NULL,
+      file_size INTEGER NOT NULL, mime_type TEXT NOT NULL, storage_path TEXT NOT NULL,
+      sha256_hash TEXT NOT NULL, width INTEGER, height INTEGER,
+      created_by TEXT NOT NULL REFERENCES users(id), created_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS agencies (
       id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE COLLATE NOCASE, code TEXT NOT NULL UNIQUE COLLATE NOCASE,
       contact_name TEXT NOT NULL, contact_email TEXT NOT NULL COLLATE NOCASE, contact_phone TEXT NOT NULL DEFAULT '',
@@ -168,11 +180,28 @@ export function openDb(path = 'data/talentos.sqlite') {
       updated_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_integration_configs_category ON integration_configs(category);
+    CREATE TABLE IF NOT EXISTS training_evaluations(
+      id TEXT PRIMARY KEY,
+      application_id TEXT NOT NULL REFERENCES applications(id),
+      candidate_id TEXT NOT NULL REFERENCES candidates(id),
+      evaluator_id TEXT NOT NULL REFERENCES users(id),
+      rating INTEGER NOT NULL CHECK(rating >= 1 AND rating <= 5),
+      practical_score REAL,
+      status TEXT NOT NULL CHECK(status IN ('in_progress','passed','failed')) DEFAULT 'passed',
+      decision TEXT NOT NULL CHECK(decision IN ('next','rejected','revoked')) DEFAULT 'next',
+      notes TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_training_eval_app ON training_evaluations(application_id);
+    CREATE INDEX IF NOT EXISTS idx_training_eval_cand ON training_evaluations(candidate_id);
     CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
-    INSERT OR IGNORE INTO settings VALUES('pipeline','["Applied","Screening","Interview","Offer","Hired","Rejected"]');
+    INSERT OR IGNORE INTO settings VALUES('pipeline','["Applied","Screening Round","Interview Round 1","Interview Round 2","HR Round","Pre-Onboarding Training","Onboarding","Hired","Rejected","Revoked"]');
     INSERT OR IGNORE INTO schema_migrations VALUES(1,datetime('now'));`);
   try { db.exec('ALTER TABLE scorecards ADD COLUMN proxy_for TEXT REFERENCES users(id);'); } catch {}
   try { db.exec('ALTER TABLE scorecards ADD COLUMN proxy_reason TEXT;'); } catch {}
+  try { db.exec("ALTER TABLE interviews ADD COLUMN round TEXT DEFAULT 'Round 1';"); } catch {}
+  try { db.exec("ALTER TABLE interviews ADD COLUMN round_number INTEGER DEFAULT 1;"); } catch {}
   // v0.2 referrals required a requisition. Existing databases are rebuilt in
   // place so historic referrals without a linked requisition remain readable
   // and future records can be stored with "Not linked" until processed.
@@ -227,10 +256,14 @@ export function openDb(path = 'data/talentos.sqlite') {
   try { db.exec('ALTER TABLE interviews ADD COLUMN meeting_url TEXT;'); } catch {}
   try { db.exec('ALTER TABLE interviews ADD COLUMN calendar_event_id TEXT;'); } catch {}
   try { db.exec('ALTER TABLE interviews ADD COLUMN calendar_status TEXT DEFAULT "not_synced";'); } catch {}
+  try { db.exec('ALTER TABLE interviews ADD COLUMN interview_type TEXT DEFAULT "virtual";'); } catch {}
+  try { db.exec('ALTER TABLE interviews ADD COLUMN location TEXT DEFAULT "";'); } catch {}
   addColumn('signature_signers', 'raw_token TEXT');
   addColumn('signature_requests', 'salary TEXT');
   addColumn('signature_requests', 'currency TEXT');
   addColumn('signature_requests', 'start_date TEXT');
+  addColumn('signature_requests', 'template_id TEXT REFERENCES offer_letter_templates(id)');
+  addColumn('signature_requests', 'template_snapshot TEXT');
   return db;
 }
 export function audit(db, actor, event, target = '', detail = {}) {

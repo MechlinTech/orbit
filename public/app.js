@@ -1,7 +1,7 @@
 const $ = s => document.querySelector(s);
 const escape = v => String(v ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let me, csrf, permissions = [], current = 'Overview', renderVersion = 0, reqPage = 1, candidateQuery = '';
-const pageState = { Requisitions: 1, Candidates: 1, Interviews: 1, Referrals: 1, Administration: 1, 'Audit log': 1, Agencies: 1, 'Portal Dashboard': 1, 'Assigned Roles': 1, Submissions: 1, 'Agency Team': 1 };
+const pageState = { Requisitions: 1, Candidates: 1, Interviews: 1, Referrals: 1, Administration: 1, 'Audit log': 1, Agencies: 1, 'Portal Dashboard': 1, 'Assigned Roles': 1, Submissions: 1, 'Agency Team': 1, 'Offer Templates': 1 };
 const isAgencyMember = () => Boolean(me?.agency || ['Agency Admin','Agency Recruiter'].includes(me?.role));
 const isAgencyUser = () => Boolean(isAgencyMember() || me?.role === 'Agency' || me?.user?.isAgency || me?.isAgency);
 const isAgencyAdmin = () => Boolean(isAgencyUser() && (me?.role === 'Agency Admin' || me?.agency?.role === 'Agency Admin'));
@@ -16,6 +16,7 @@ const getNavList = () => {
     ...(allows('review') || allows('recruit') ? ['Candidates', 'Pipeline'] : []),
     ...(allows('review') || allows('recruit') || allows('interview') ? ['Interviews'] : []),
     ...(allows('refer') ? ['Referrals'] : []),
+    ...(allows('recruit') || allows('admin') ? ['Offer Templates'] : []),
     ...(allows('admin') || allows('recruit') ? ['Agencies'] : []),
     ...(allows('admin') ? ['Administration', 'Settings', 'Audit log', 'Pipeline settings'] : []),
     ...(allows('admin') && me?.role === 'System Admin' ? ['Integrations'] : [])
@@ -108,7 +109,7 @@ const loadSavedPages = () => {
   } catch {}
 };
 let appearance={theme:document.documentElement.dataset.theme || 'mechlin',themes:[]};
-const iconPaths={Overview:'M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z',Requisitions:'M8 6V4h8v2 M3 7h18v13H3z M3 12h18 M10 11v3h4v-3',Candidates:'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M9 3a4 4 0 1 0 0 8a4 4 0 0 0 0-8 M17 4a4 4 0 0 1 0 8 M22 21v-2a4 4 0 0 0-3-4',Pipeline:'M4 4h4v16H4z M10 4h4v11h-4z M16 4h4v7h-4z',Interviews:'M4 5h16v16H4z M8 2v6 M16 2v6 M4 10h16 M8 14h3 M14 14h2 M8 17h3',Referrals:'M12 20V10 M7 15l5-5 5 5 M4 4h16v4H4z',Agencies:'M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2 M9 3a4 4 0 1 0 0 8a4 4 0 0 0 0-8 M23 21v-2a4 4 0 0 0-3-3.87 M16 3.13a4 4 0 0 1 0 7.75','Portal Dashboard':'M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z','Assigned Roles':'M8 6V4h8v2 M3 7h18v13H3z M3 12h18 M10 11v3h4v-3',Submissions:'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M16 13H8 M16 17H8 M10 9H8','Agency Team':'M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2 M9 3a4 4 0 1 0 0 8a4 4 0 0 0 0-8 M23 21v-2a4 4 0 0 0-3-3.87 M16 3.13a4 4 0 0 1 0 7.75',Administration:'M12 3l8 4v6c0 4-4 7-8 9-4-2-8-5-8-9V7z M8 12l3 3 5-6','Audit log':'M6 3h12v18H6z M9 7h6 M9 11h6 M9 15h4','Pipeline settings':'M4 7h16 M4 17h16 M8 4v6 M16 14v6',Settings:'M12 8a4 4 0 1 0 0 8a4 4 0 0 0 0-8 M12 2v3 M12 19v3 M2 12h3 M19 12h3 M5 5l2 2 M17 17l2 2 M5 19l2-2 M17 7l2-2',Integrations:'M8 3v5 M16 3v5 M5 8h14v4a7 7 0 0 1-14 0z M12 19v3','Agency portal':'M4 21v-8a8 8 0 0 1 16 0v8 M9 21v-4a3 3 0 0 1 6 0v4 M2 21h20'};
+const iconPaths={Overview:'M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z',Requisitions:'M8 6V4h8v2 M3 7h18v13H3z M3 12h18 M10 11v3h4v-3',Candidates:'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M9 3a4 4 0 1 0 0 8a4 4 0 0 0 0-8 M17 4a4 4 0 0 1 0 8 M22 21v-2a4 4 0 0 0-3-4',Pipeline:'M4 4h4v16H4z M10 4h4v11h-4z M16 4h4v7h-4z',Interviews:'M4 5h16v16H4z M8 2v6 M16 2v6 M4 10h16 M8 14h3 M14 14h2 M8 17h3',Referrals:'M12 20V10 M7 15l5-5 5 5 M4 4h16v4H4z','Offer Templates':'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M16 13H8 M16 17H8 M10 9H8 M18 21H6',Agencies:'M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2 M9 3a4 4 0 1 0 0 8a4 4 0 0 0 0-8 M23 21v-2a4 4 0 0 0-3-3.87 M16 3.13a4 4 0 0 1 0 7.75','Portal Dashboard':'M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z','Assigned Roles':'M8 6V4h8v2 M3 7h18v13H3z M3 12h18 M10 11v3h4v-3',Submissions:'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M16 13H8 M16 17H8 M10 9H8','Agency Team':'M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2 M9 3a4 4 0 1 0 0 8a4 4 0 0 0 0-8 M23 21v-2a4 4 0 0 0-3-3.87 M16 3.13a4 4 0 0 1 0 7.75',Administration:'M12 3l8 4v6c0 4-4 7-8 9-4-2-8-5-8-9V7z M8 12l3 3 5-6','Audit log':'M6 3h12v18H6z M9 7h6 M9 11h6 M9 15h4','Pipeline settings':'M4 7h16 M4 17h16 M8 4v6 M16 14v6',Settings:'M12 8a4 4 0 1 0 0 8a4 4 0 0 0 0-8 M12 2v3 M12 19v3 M2 12h3 M19 12h3 M5 5l2 2 M17 17l2 2 M5 19l2-2 M17 7l2-2',Integrations:'M8 3v5 M16 3v5 M5 8h14v4a7 7 0 0 1-14 0z M12 19v3','Agency portal':'M4 21v-8a8 8 0 0 1 16 0v8 M9 21v-4a3 3 0 0 1 6 0v4 M2 21h20'};
 const icon=name=>`<svg class="ui-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${iconPaths[name]||iconPaths.Overview}"/></svg>`;
 const initials=name=>escape(String(name).split(/\s+/).filter(Boolean).slice(0,2).map(n=>n[0]).join('').toUpperCase());
 const applyTheme=theme=>{document.documentElement.dataset.theme=theme;document.querySelector('meta[name="theme-color"]').content=theme==='midnight'?'#0b1322':'#111f35';};
@@ -446,6 +447,29 @@ const bindValidation = (name, checkFn) => {
     }
   };
 };
+const setupInterviewFormatToggle = (initialType = 'virtual') => {
+  const form = $('#edit-form');
+  if (!form) return;
+  const typeSelect = form.querySelector('[name="interview_type"]');
+  const meetRow = form.querySelector('#row-meeting-url');
+  const locRow = form.querySelector('#row-location');
+  const noteEl = form.querySelector('#interview-format-note');
+  if (!typeSelect) return;
+  const sync = () => {
+    const isPhysical = typeSelect.value === 'in_person';
+    if (meetRow) meetRow.style.display = isPhysical ? 'none' : '';
+    if (locRow) locRow.style.display = isPhysical ? '' : 'none';
+    if (noteEl) {
+      if (isPhysical) {
+        noteEl.innerHTML = '<strong>Physical / In-Person interview:</strong> No virtual meeting link will be generated. Candidate arrival instructions and office venue details will be dispatched.';
+      } else {
+        noteEl.innerHTML = '<strong>Virtual / Online interview:</strong> Microsoft Teams meeting link synchronizes automatically (or uses your custom URL) and is emailed to the candidate.';
+      }
+    }
+  };
+  typeSelect.addEventListener('change', sync);
+  sync();
+};
 const bindSalaryInput = (name) => {
   const inp = $(`#edit-form [name="${name}"]`);
   if (!inp) return;
@@ -540,7 +564,7 @@ const bindResumeUpload = () => {
 
       const resObj = data.resume || data;
       const warningsText = data.warnings && data.warnings.length ? ` (${data.warnings.join(', ')})` : '';
-      statusEl.innerHTML = `<span style="color:var(--success, #16a34a);">✓ <strong>${escape(resObj.filename || file.name)}</strong> (${escape((resObj.format || 'doc').toUpperCase())}, ${Math.round((resObj.size || file.size) / 1024)} KB) extracted successfully.${escape(warningsText)}</span>`;
+      statusEl.innerHTML = `<span style="color:var(--success, #16a34a);"><strong>${escape(resObj.filename || file.name)}</strong> (${escape((resObj.format || 'doc').toUpperCase())}, ${Math.round((resObj.size || file.size) / 1024)} KB) extracted successfully.${escape(warningsText)}</span>`;
       notice(`Resume ${resObj.filename || file.name} parsed successfully. Review extracted text below.`, 'success');
     } catch (err) {
       statusEl.innerHTML = `<span class="error">Upload failed: ${escape(err.message)}</span>`;
@@ -637,7 +661,15 @@ const checkCurrency = v => { const s = String(v ?? '').trim().toUpperCase(); ret
 const closeModal = () => {
   const n = $('#notice');
   if(n && n.parentElement !== document.body) document.body.appendChild(n);
-  $('#modal').close();
+  const m = $('#modal');
+  if(m){
+    try{
+      if(typeof m.close === 'function' && m.open) m.close();
+    }catch{}
+    m.removeAttribute('open');
+  }
+  const body = $('#modal-body');
+  if(body) body.innerHTML = '';
 };
 function modal(title,html,onSubmit,options={}) {
   const saveButton=`<button type="submit">${escape(options.saveLabel||'Save')}</button>`;
@@ -680,7 +712,7 @@ function deleteDialog(kind, record, impact, path, success) {
 }
 $('#close-modal').onclick=closeModal;
 $('#modal').addEventListener('click',e=>{const r=$('#modal').getBoundingClientRect();if(e.clientY<r.top||e.clientY>r.bottom||e.clientX<r.left||e.clientX>r.right)closeModal();});
-$('#modal').addEventListener('close',()=>{const n=$('#notice');if(n&&n.parentElement!==document.body)document.body.appendChild(n);});
+$('#modal').addEventListener('close',()=>{const n=$('#notice');if(n&&n.parentElement!==document.body)document.body.appendChild(n);const body=$('#modal-body');if(body)body.innerHTML='';});
 async function openDemoModal(isSwitch=false){
   let demoMeta=window._demoMeta;
   if(!demoMeta){
@@ -933,7 +965,8 @@ async function render() {
     }
     if(current==='Pipeline') {
       const [apps,stages]=await Promise.all([api('applications'),api('pipeline')]);
-      const activeStages = stages.filter(s => !['Hired', 'Rejected'].includes(s));
+      const isTerminalStage = s => ['Hired', 'Rejected', 'Revoked'].includes(s);
+      const activeStages = stages.filter(s => !isTerminalStage(s));
       html=heading('Move each application through a consistent hiring process.',allows('recruit')?button('+ Add application','new-application'):'')+
       `<div class="pipeline-wrapper">`+
         `<div class="pipeline-flow-legend" aria-label="Pipeline overview">`+
@@ -947,9 +980,66 @@ async function render() {
             `<span class="legend-title">Terminal Outcomes:</span>`+
             `<span class="legend-outcome-pill hired-pill"><span class="legend-outcome-dot"></span> Hired</span>`+
             `<span class="legend-outcome-pill rejected-pill"><span class="legend-outcome-dot"></span> Rejected</span>`+
+            (stages.includes('Revoked') ? `<span class="legend-outcome-pill revoked-pill"><span class="legend-outcome-dot"></span> Revoked</span>` : '')+
           `</div>`+
         `</div>`+
-        `<div class="board" id="pipeline-board">${stages.map((stage,index)=>`<section class="column${['Hired','Rejected'].includes(stage)?' column-terminal':''}${stage==='Hired'?' column-terminal-hired':''}${stage==='Rejected'?' column-terminal-rejected':''}" data-stage="${escape(stage)}"><h2><span class="column-header-title">${['Hired','Rejected'].includes(stage)?`<span class="column-stage-type ${stage==='Hired'?'type-hired':'type-rejected'}">${stage==='Hired'?'✓ Outcome':'✕ Outcome'}</span>`:''}<span class="column-name-text">${escape(stage)}</span></span><span class="column-count ${stage==='Hired'?'count-hired':stage==='Rejected'?'count-rejected':''}">${apps.filter(a=>a.stage===stage).length}</span></h2><div class="column-content">${apps.filter(a=>a.stage===stage).map(a=>`<article class="card"><h3>${escape(a.name)}</h3><p class="muted card-role" title="${escape(a.title)}">${escape(a.title)}</p><div class="actions">${button('Skill match','match',a.id,'class="secondary"')}${allows('recruit')&&!['Hired','Rejected'].includes(stage)?(index>0?button(`Back to ${stages[index-1]}`,'move',a.id,`data-stage="${escape(stages[index-1])}" class="secondary"`):'')+button(`Move to ${stages[index+1]}`,'move',a.id,`data-stage="${escape(stages[index+1])}"`)+button('Reject','reject-app',a.id,'class="secondary"'):''}</div></article>`).join('')||'<p class="muted column-empty">No applications</p>'}</div></section>`).join('')}</div>`+
+        `<div class="board" id="pipeline-board">${stages.map((stage,index)=>{
+          const isTerm = isTerminalStage(stage);
+          const colTerminalClass = isTerm ? ' column-terminal' : '';
+          const stageColClass = stage==='Hired' ? ' column-terminal-hired' : (stage==='Rejected' ? ' column-terminal-rejected' : (stage==='Revoked' ? ' column-terminal-revoked' : ''));
+          const stageApps = apps.filter(a => a.stage === stage);
+          const isTraining = /pre-onboarding|training/i.test(stage);
+
+          return `<section class="column${colTerminalClass}${stageColClass}" data-stage="${escape(stage)}">`+
+            `<h2><span class="column-header-title">`+
+              (isTerm ? `<span class="column-stage-type ${stage==='Hired'?'type-hired':(stage==='Revoked'?'type-revoked':'type-rejected')}">${stage==='Hired'?'Hired':(stage==='Revoked'?'Revoked':'Outcome')}</span>` : '')+
+              `<span class="column-name-text">${escape(stage)}</span>`+
+            `</span><span class="column-count ${stage==='Hired'?'count-hired':(stage==='Revoked'?'count-revoked':(stage==='Rejected'?'count-rejected':''))}">${stageApps.length}</span></h2>`+
+            `<div class="column-content">${stageApps.map(a=>{
+              const hasEval = Boolean(a.training_evaluation || a.training_rating);
+              const evalRating = a.training_rating || a.training_evaluation?.rating;
+              const evalDec = a.training_decision || a.training_evaluation?.decision || 'next';
+              const evalChip = hasEval ? `<div class="training-card-chip"><span class="badge ${evalDec==='rejected'||evalDec==='revoked'?'rejected':'completed'}" style="font-size:0.72rem;">${evalRating}/5 ${evalDec==='next'?'Passed':(evalDec==='revoked'?'Revoked':'Failed')}</span></div>` : '';
+
+              const curStageIdx = stages.indexOf(stage);
+              const nextStage = stages[curStageIdx + 1];
+              const prevStage = curStageIdx > 0 ? stages[curStageIdx - 1] : null;
+
+              const skippableTargets = stages.slice(curStageIdx + 2).filter(target => {
+                if (['Hired', 'Rejected', 'Revoked'].includes(target)) return false;
+                const skipped = stages.slice(curStageIdx + 1, stages.indexOf(target));
+                if (skipped.some(s => /(^|\b)(offer|hired)(\b|$)/i.test(s))) return false;
+                if (stage === 'Applied' && /pre-onboarding|training/i.test(target)) return false;
+                return true;
+              });
+              const canSkipForward = skippableTargets.length > 0;
+
+              let actionsHtml = button('Skill match','match',a.id,'class="secondary"');
+              if (allows('recruit') && !isTerm) {
+                if (prevStage) {
+                  actionsHtml += button(`Back to ${prevStage}`,'move',a.id,`data-stage="${escape(prevStage)}" class="secondary"`);
+                }
+                if (isTraining) {
+                  actionsHtml += button('Rate & Next', 'rate-training', a.id, 'class="primary training-rate-btn"');
+                  if (nextStage) {
+                    actionsHtml += button(`Move to ${nextStage}`, 'move', a.id, `data-stage="${escape(nextStage)}" class="secondary"`);
+                  }
+                } else {
+                  if (nextStage) {
+                    actionsHtml += button(`Move to ${nextStage}`, 'move', a.id, `data-stage="${escape(nextStage)}"`);
+                  }
+                }
+                if (canSkipForward) {
+                  actionsHtml += button('Skip to...', 'skip-stage', a.id, 'class="secondary skip-stage-btn" title="Skip intermediate interview or evaluation rounds"');
+                }
+                actionsHtml += button('Reject', 'reject-app', a.id, 'class="secondary"');
+                if (stages.includes('Revoked') && (stage === 'Offer' || /hr round|onboarding|training/i.test(stage))) {
+                  actionsHtml += button('Revoke', 'revoke-app', a.id, 'class="secondary text-button" style="color:var(--negative);font-size:0.74rem;"');
+                }
+              }
+              return `<article class="card"><h3>${escape(a.name)}</h3><p class="muted card-role" title="${escape(a.title)}">${escape(a.title)}</p>${evalChip}<div class="actions">${actionsHtml}</div></article>`;
+            }).join('')||'<p class="muted column-empty">No applications</p>'}</div></section>`;
+        }).join('')}</div>`+
         `<div class="pipeline-scroll-bar pipeline-scroll-bottom" id="pipeline-bottom-scroll" aria-label="Horizontal scroll sticky at bottom of screen"><div class="pipeline-scroll-track"></div></div>`+
       `</div>`;
     }
@@ -968,7 +1058,7 @@ async function render() {
               `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="color:var(--positive);flex-shrink:0;"><path d="M20 6L9 17l-5-5"/></svg>`+
               `<span><strong>Microsoft Teams calendar connected:</strong> Interview plans and meeting links synchronize automatically with participant calendars.</span>`+
             `</div>`+
-            `<span class="badge" style="background:var(--positive-bg);color:var(--positive);border:1px solid var(--positive);font-weight:600;font-size:0.75rem;padding:3px 9px;">✓ Active Integration</span>`+
+            `<span class="badge" style="background:var(--positive-bg);color:var(--positive);border:1px solid var(--positive);font-weight:600;font-size:0.75rem;padding:3px 9px;">Active Integration</span>`+
           `</div>`
         : `<div class="notice-inline" style="border-left-color:var(--warning);background:var(--warning-bg);color:var(--warning);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">`+
             `<div><strong>Microsoft Teams calendar not configured:</strong> Interview plans are stored locally. Configure Microsoft 365 credentials in Integrations to sync Teams invites.</div>`+
@@ -979,7 +1069,11 @@ async function render() {
         const canSubmit=i.interviewer_id===me.id&&i.status!=='completed';
         const canProxy=allows('admin')&&i.interviewer_id!==me.id&&i.status!=='completed';
         const showLock=(canSubmit||canProxy)&&!ready;
-        return `<tr><td><strong>${escape(i.name)}</strong>${escape(i.title)}</td><td>${escape(i.interviewer)}</td><td>${escape(formatDateTimeIST(i.scheduled_at))}${i.meeting_url?`<br><a href="${escape(i.meeting_url)}" target="_blank" rel="noopener noreferrer" class="teams-link" style="display:inline-flex;align-items:center;gap:4px;font-size:0.8rem;margin-top:4px;color:var(--accent,#4f46e5);font-weight:600;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>Join Teams</a>`:''}</td><td>${badge(i.status)}</td><td><div class="actions">${canSubmit&&ready?button('Submit scorecard','scorecard',i.id):''}${canProxy&&ready?button('Proxy scorecard','scorecard-proxy',i.id,'class="secondary"'):''}${i.status!=='completed'&&(allows('recruit')||allows('admin')||i.interviewer_id===me.id)?button('Edit','edit-interview',i.id,'class="secondary"'):''}${i.status==='planned'&&(allows('recruit')||allows('admin')||i.interviewer_id===me.id)?button('Cancel','cancel-interview',i.id,'class="secondary"'):''}${button('View feedback','feedback',i.id,'class="secondary"')}${showLock?`<span class="muted feedback-locked">${FEEDBACK_LOCKED_MESSAGE}</span>`:''}</div></td></tr>`;
+        const isPhysical = i.interview_type === 'in_person';
+        const meetBadge = isPhysical
+          ? `<br><span class="badge" style="display:inline-flex;align-items:center;gap:4px;font-size:0.75rem;margin-top:4px;background:#f0f9ff;color:#0369a1;border:1px solid #bae6fd;padding:2px 8px;border-radius:4px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>In-Person • ${escape(i.location || 'Office')}</span>`
+          : (i.meeting_url ? `<br><a href="${escape(i.meeting_url)}" target="_blank" rel="noopener noreferrer" class="teams-link" style="display:inline-flex;align-items:center;gap:4px;font-size:0.8rem;margin-top:4px;color:var(--accent,#4f46e5);font-weight:600;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>Join Teams</a>` : '');
+        return `<tr><td><strong>${escape(i.name)}</strong>${escape(i.title)}</td><td>${escape(i.interviewer)}</td><td>${escape(formatDateTimeIST(i.scheduled_at))}${meetBadge}</td><td>${badge(i.status)}</td><td><div class="actions">${canSubmit&&ready?button('Submit scorecard','scorecard',i.id):''}${canProxy&&ready?button('Proxy scorecard','scorecard-proxy',i.id,'class="secondary"'):''}${i.status!=='completed'&&(allows('recruit')||allows('admin')||i.interviewer_id===me.id)?button('Edit','edit-interview',i.id,'class="secondary"'):''}${i.status==='planned'&&(allows('recruit')||allows('admin')||i.interviewer_id===me.id)?button('Cancel','cancel-interview',i.id,'class="secondary"'):''}${button('View feedback','feedback',i.id,'class="secondary"')}${showLock?`<span class="muted feedback-locked">${FEEDBACK_LOCKED_MESSAGE}</span>`:''}</div></td></tr>`;
       });
       html=heading('Structured interviews, independent feedback.',allows('recruit')?button('+ Plan interview','new-interview'):'')+calNotice+`<section class="panel">${table(['Candidate / role','Interviewer','Scheduled (IST)','Status','Feedback'],rows)}${pag}</section>`;
     }
@@ -1002,6 +1096,25 @@ async function render() {
       });
       html=heading(canProcess?`Review employee referrals for ${escape(me.team||'your organization')}.`:'Recommend a colleague for an open position.',button('+ Make referral','new-referral'))+`<section class="panel"><h2>${scopeTitle}</h2>${table(['Candidate','Email','Job Position','Referral Status','Referred','Referrer','Actions'],rows,'referrals-table')}${pag}</section>`;
     }
+    if(current==='Offer Templates') {
+      const [templates, assets] = await Promise.all([
+        api('offer-templates').catch(() => []),
+        api('offer-letter-assets').catch(() => [])
+      ]);
+      const activeCount = templates.filter(t => t.status === 'active').length;
+      const draftCount = templates.filter(t => t.status === 'draft').length;
+      const defaultTpl = templates.find(t => t.is_default);
+
+      html=heading('Design company-branded templates, manage letterheads, and configure dynamic A4 offer documents.',`<div style="display:flex;gap:8px;">${button('+ New Template','new-offer-template')}${button('Upload Letterhead','upload-letterhead','','class="secondary"')}</div>`)+
+      `<div class="metrics">${[['Total templates',templates.length,'Offer Templates','Configured offer templates'],['Active templates',activeCount,'Requisitions','Available for candidate offers'],['Draft templates',draftCount,'Settings','In design and revision'],['Default template',defaultTpl?defaultTpl.name:'None','Candidates',defaultTpl?`v${defaultTpl.version} (Active)`:'Auto-selected for new offers']].map(([label,count,i,note],n)=>`<div class="metric metric-${n}"><div class="metric-top"><span>${label}</span><span class="metric-icon">${icon(i)}</span></div><strong style="font-size:1.15rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${count}</strong><small>${note}</small></div>`).join('')}</div>`+
+      `<section class="panel"><div class="panel-head"><div><h2>Offer Letter Templates</h2><p class="muted">Reusable templates with multi-page A4 flow, dynamic variables, and salary annexures</p></div></div>${templates.length?table(['Template name','Version','Status','Letterhead','Updated','Actions'],templates.map(t=>{
+        const hasBg = t.background_config?.assetId || t.background_config?.firstPageAssetId;
+        const bgBadge = hasBg ? `<span class="badge" style="background:#e0f2fe;color:#0369a1;">Stationery</span>` : `<span class="muted" style="font-size:0.75rem;">Standard A4</span>`;
+        const defBadge = t.is_default ? ` <span class="badge" style="background:#fef3c7;color:#92400e;margin-left:6px;">Default</span>` : '';
+        return `<tr><td><strong>${escape(t.name)}</strong>${defBadge}<br><small class="muted">${escape(t.description||'No description')}</small></td><td><span class="badge mono" style="font-size:0.75rem;">v${t.version}</span></td><td>${badge(t.status)}</td><td>${bgBadge}</td><td>${escape(formatDateIST(t.updated_at))}</td><td><div class="actions" style="gap:4px;">${button('Preview','preview-template',t.id,'class="secondary" style="font-size:0.78rem;padding:4px 8px;"')}${button('Edit','edit-template',t.id,'style="font-size:0.78rem;padding:4px 8px;"')}${button('Duplicate','duplicate-template',t.id,'class="secondary text-button" style="font-size:0.78rem;padding:4px 8px;"')}${!t.is_default?button('Set Default','set-template-default',t.id,'class="secondary text-button" style="font-size:0.78rem;padding:4px 8px;"'):''}${t.status!=='archived'?button('Archive','archive-template',t.id,'class="secondary text-button" style="font-size:0.78rem;padding:4px 8px;color:var(--negative);"'):button('Activate','activate-template',t.id,'class="secondary text-button" style="font-size:0.78rem;padding:4px 8px;color:var(--positive);"')}</div></td></tr>`;
+      })) : empty('No offer templates created yet. Click "+ New Template" to create your first company offer letter.')}</section>`+
+      `<section class="panel"><div class="panel-head"><div><h2>Company Letterhead & Background Stationery</h2><p class="muted">Upload official PNG, JPG, PDF, or DOCX stationery for multi-page branding</p></div>${button('+ Upload asset','upload-letterhead','','class="secondary"')}</div>${assets.length?table(['Asset name','Format','Dimensions','Scaling mode','Target pages','Uploaded','Actions'],assets.map(a=>`<tr><td><strong>${escape(a.name)}</strong><br><small class="muted mono">${escape(a.filename)}</small></td><td><span class="badge mono" style="font-size:0.72rem;text-transform:uppercase;">${escape(a.file_format)}</span></td><td><small class="mono">${a.width&&a.height?`${a.width} × ${a.height} px`:'A4 Document'}</small></td><td><span class="badge" style="font-size:0.72rem;background:#f1f5f9;color:#334155;">${escape(a.scaling_mode)}</span></td><td><small>${escape(a.page_target)}</small></td><td>${escape(formatDateIST(a.created_at))}</td><td><a href="/api/offer-letter-assets/${a.id}" target="_blank" class="button secondary" style="font-size:0.78rem;padding:4px 8px;">View File</a></td></tr>`)):empty('No company letterhead uploaded yet. Click "+ Upload asset" to add company stationery.')}</section>`;
+    }
     if(current==='Administration') {
       const users=await api('admin/users');window.currentUsers=users;
       const {paged,page,totalPages,total,start}=paginate(users,pageState.Administration||1,10);
@@ -1017,14 +1130,15 @@ async function render() {
       html=heading('Administrative actions, authentication and hiring changes.')+`<section class="panel"><p class="muted">Latest 200 events. Earlier entries are available through the paginated audit API.</p>${table(['Time (IST)','Event','Actor','Target'],paged.map(e=>`<tr><td>${escape(formatDateTimeIST(e.at))}</td><td>${escape(e.event)}</td><td class="mono">${escape(e.actor)}</td><td class="mono">${escape(e.target)}</td></tr>`))}${pag}</section>`;
     }
     if(current==='Settings') {
-      html=heading('Make Orbit feel like your team’s workspace.')+`<section class="panel appearance-panel"><div class="panel-head"><div><h2>Appearance</h2><p class="muted">Choose a look that helps your team do their best work.</p></div><span class="subtle-label">${icon('Administration')} Admin controlled</span></div><form id="appearance-form"><fieldset class="theme-fieldset"><legend>Workspace theme</legend><div class="theme-grid">${appearance.themes.map(t=>`<label class="theme-option"><input type="radio" name="theme" value="${t.id}" ${t.id===appearance.theme?'checked':''}><span class="theme-thumbnail theme-${t.id}"><span class="mini-sidebar"><i></i><i></i><i></i></span><span class="mini-workspace"><span class="mini-topline"></span><span class="mini-metrics"><i></i><i></i><i></i></span><span class="mini-panel"><i></i><i></i><i></i></span></span><span class="theme-check" aria-hidden="true">✓</span></span><span class="theme-name">${t.name}</span><span class="theme-description">${t.description}</span></label>`).join('')}</div></fieldset><div class="theme-scope">${icon('Candidates')}<div><strong>One look, for the whole team</strong><p>The saved theme applies to every user and the sign-in screen. Existing sessions pick it up on their next page change or refresh.</p></div></div><p id="appearance-status" role="status" aria-live="polite" class="muted">${escape(appearance.themes.find(t=>t.id===appearance.theme).name)} is your saved workspace theme.</p><div class="settings-actions"><button type="button" class="secondary" data-action="reset-theme">Reset preview</button><button type="submit" id="save-theme" disabled>Save workspace theme</button></div></form></section><section class="panel brand-panel"><div><p class="eyebrow">OUR WORKSPACE</p><h2>Orbit, by Mechlin</h2><p class="muted">A place for people, possibility and your next great hire.</p></div><div class="brand-lockup"><img src="/mechlin-logo.webp" alt="Mechlin Technologies" width="174" height="40"></div></section>`;
+      html=heading('Make Orbit feel like your team’s workspace.')+`<section class="panel appearance-panel"><div class="panel-head"><div><h2>Appearance</h2><p class="muted">Choose a look that helps your team do their best work.</p></div><span class="subtle-label">${icon('Administration')} Admin controlled</span></div><form id="appearance-form"><fieldset class="theme-fieldset"><legend>Workspace theme</legend><div class="theme-grid">${appearance.themes.map(t=>`<label class="theme-option"><input type="radio" name="theme" value="${t.id}" ${t.id===appearance.theme?'checked':''}><span class="theme-thumbnail theme-${t.id}"><span class="mini-sidebar"><i></i><i></i><i></i></span><span class="mini-workspace"><span class="mini-topline"></span><span class="mini-metrics"><i></i><i></i><i></i></span><span class="mini-panel"><i></i><i></i><i></i></span></span><span class="theme-check" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span></span><span class="theme-name">${t.name}</span><span class="theme-description">${t.description}</span></label>`).join('')}</div></fieldset><div class="theme-scope">${icon('Candidates')}<div><strong>One look, for the whole team</strong><p>The saved theme applies to every user and the sign-in screen. Existing sessions pick it up on their next page change or refresh.</p></div></div><p id="appearance-status" role="status" aria-live="polite" class="muted">${escape(appearance.themes.find(t=>t.id===appearance.theme).name)} is your saved workspace theme.</p><div class="settings-actions"><button type="button" class="secondary" data-action="reset-theme">Reset preview</button><button type="submit" id="save-theme" disabled>Save workspace theme</button></div></form></section><section class="panel brand-panel"><div><p class="eyebrow">OUR WORKSPACE</p><h2>Orbit, by Mechlin</h2><p class="muted">A place for people, possibility and your next great hire.</p></div><div class="brand-lockup"><img src="/mechlin-logo.webp" alt="Mechlin Technologies" width="174" height="40"></div></section>`;
     }
     if(current==='Pipeline settings') {
       const stages=await api('pipeline');
-      const activeStages = stages.filter(s => !['Hired', 'Rejected'].includes(s));
+      const isTerminal = s => ['Hired', 'Rejected', 'Revoked'].includes(s);
+      const activeStages = stages.filter(s => !isTerminal(s));
       const metrics = [
-        ['Active Progression', `${activeStages.length} Stages`, 'Pipeline', 'Sequential applicant advancement'],
-        ['Terminal Outcomes', '2 Outcomes', 'Candidates', 'Hired (Success) & Rejected (Closed)'],
+        ['Active Progression', `${activeStages.length} Stages`, 'Pipeline', 'Sequential & flexible applicant advancement'],
+        ['Terminal Outcomes', `${stages.filter(isTerminal).length} Outcomes`, 'Candidates', 'Hired (Success), Rejected, Revoked'],
         ['Entry Stage', escape(stages[0] || 'Applied'), 'Overview', 'Mandatory starting point'],
         ['Governance', 'Enforced', 'Administration', 'Sequential moves & headcount limits']
       ];
@@ -1033,22 +1147,24 @@ async function render() {
       `<div class="metrics">${metrics.map(([label,count,i,note],n)=>`<div class="metric metric-${n}"><div class="metric-top"><span>${label}</span><span class="metric-icon">${icon(i)}</span></div><strong>${count}</strong><small>${note}</small></div>`).join('')}</div>`+
       `<section class="panel pipeline-flow-panel">`+
         `<div class="panel-head">`+
-          `<div><h2>Hiring Workflow Architecture</h2><p class="muted">Applicants advance through sequential active stages and conclude at one of two terminal outcomes.</p></div>`+
-          `<div class="actions">${button('Edit stages','edit-pipeline')}</div>`+
+          `<div><h2>Hiring Workflow Architecture</h2><p class="muted">Applicants advance through sequential active stages and conclude at terminal outcomes.</p></div>`+
+          `<div class="actions">`+
+            `${button('Customize stages','edit-pipeline')}`+
+          `</div>`+
         `</div>`+
         `<div class="pipeline-diagram-wrapper">`+
           `<div class="pipeline-track active-track">`+
-            `<div class="track-header"><span class="track-badge">In-Progress Sequential Funnel</span><span class="track-hint">Candidates progress forward one stage at a time (or step back to correct mistakes)</span></div>`+
+            `<div class="track-header"><span class="track-badge">In-Progress Sequential Funnel</span><span class="track-hint">Candidates progress forward through interview rounds, HR evaluation, pre-onboarding training, and onboarding</span></div>`+
             `<div class="pipeline-flow-steps">`+
               activeStages.map((s, idx) =>
-                `<div class="pipeline-step-card"><div class="step-num-pill">${idx + 1}</div><div class="step-card-body"><span class="step-card-name">${escape(s)}</span><span class="step-card-sub">${idx === 0 ? 'Initial intake' : idx === activeStages.length - 1 ? 'Final evaluation / offer' : 'Interview & evaluation'}</span></div></div>` +
+                `<div class="pipeline-step-card"><div class="step-num-pill">${idx + 1}</div><div class="step-card-body"><span class="step-card-name">${escape(s)}</span><span class="step-card-sub">${idx === 0 ? 'Initial intake' : (/training/i.test(s) ? 'Rating & evaluation' : (/onboarding/i.test(s) ? 'Pre-hire onboarding' : idx === activeStages.length - 1 ? 'Final evaluation / offer' : 'Interview & evaluation'))}</span></div></div>` +
                 (idx < activeStages.length - 1 ? `<div class="flow-connector" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg></div>` : '')
               ).join('')+
             `</div>`+
           `</div>`+
           `<div class="pipeline-fork-bridge">`+
             `<div class="fork-label-pill"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;"><path d="M6 3v12"></path><circle cx="18" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M18 9a9 9 0 0 1-9 9"></path></svg> Terminal Resolution Branches</div>`+
-            `<div class="fork-split-arrows" aria-hidden="true"><span>↙ Successful Hire</span><span>·</span><span>Concluded ↘</span></div>`+
+            `<div class="fork-split-arrows" aria-hidden="true"><span>↙ Successful Hire</span><span>·</span><span>Concluded / Revoked ↘</span></div>`+
           `</div>`+
           `<div class="pipeline-outcomes-container">`+
             `<div class="terminal-outcome-card outcome-hired">`+
@@ -1057,7 +1173,7 @@ async function render() {
                 `<div><span class="outcome-type success-text">Positive Terminal Outcome</span><h3 class="outcome-title">Hired</h3></div>`+
                 `<span class="badge" style="background:#e3f3ed;color:#24614d;font-weight:600;margin-left:auto;">Success</span>`+
               `</div>`+
-              `<p class="outcome-desc">Candidate successfully accepts offer. Approved headcount is filled and onboarding begins. Candidates do not move beyond this stage.</p>`+
+              `<p class="outcome-desc">Candidate successfully accepts offer. Approved headcount is filled and onboarding completes. Candidates do not move beyond this stage.</p>`+
               `<div class="outcome-badge-meta"><span class="outcome-rule-chip">● Headcount enforced</span><span class="outcome-rule-chip">● Final victory state</span></div>`+
             `</div>`+
             `<div class="terminal-outcome-card outcome-rejected">`+
@@ -1069,6 +1185,17 @@ async function render() {
               `<p class="outcome-desc">Candidate is disqualified, offer declined, or application withdrawn. Can occur from any active stage in the pipeline without progressing through Hired.</p>`+
               `<div class="outcome-badge-meta"><span class="outcome-rule-chip">● Available at any stage</span><span class="outcome-rule-chip">● Closes application cycle</span></div>`+
             `</div>`+
+            (stages.includes('Revoked') ? `
+              <div class="terminal-outcome-card outcome-rejected" style="border-top:3px solid #b91c1c;">
+                <div class="outcome-header">
+                  <div class="outcome-icon-wrap rejected-wrap" style="background:#fee2e2;color:#991b1b;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"></circle><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"></line></svg></div>
+                  <div><span class="outcome-type" style="color:#991b1b;">Concluded / Rescinded Outcome</span><h3 class="outcome-title">Revoked</h3></div>
+                  <span class="badge" style="background:#fee2e2;color:#991b1b;font-weight:600;margin-left:auto;">Revoked</span>
+                </div>
+                <p class="outcome-desc">Offer or candidacy is formally revoked following failed pre-onboarding training, verification discrepancy, or candidate reneging.</p>
+                <div class="outcome-badge-meta"><span class="outcome-rule-chip">● Terminal closed state</span><span class="outcome-rule-chip">● Audit logged</span></div>
+              </div>
+            ` : '')+
           `</div>`+
         `</div>`+
       `</section>`+
@@ -1608,6 +1735,1139 @@ async function toggleIntegrationEnabled(integrationId, newEnabled) {
   }
 }
 
+function pdfBase64ToBlobUrl(base64) {
+  if (!base64) return null;
+  try {
+    const binStr = atob(base64);
+    const len = binStr.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+      bytes[i] = binStr.charCodeAt(i);
+    }
+    const blob = new Blob([bytes], { type: 'application/pdf' });
+    return URL.createObjectURL(blob);
+  } catch (e) {
+    console.error('Failed to convert base64 to Blob URL:', e);
+    return null;
+  }
+}
+
+function renderSectionsToA4Html(sections, vars = {}, headerText = '', footerText = '') {
+  const interpolate = (txt) => {
+    if (!txt) return '';
+    return txt.replace(/\{\{([a-zA-Z0-9_.]+)\}\}/g, (_, key) => vars[key] !== undefined ? vars[key] : `{{${key}}}`);
+  };
+
+  const pages = [[]];
+  for (const s of (sections || [])) {
+    if (s.type === 'page_break') {
+      pages.push([]);
+    } else {
+      pages[pages.length - 1].push(s);
+    }
+  }
+
+  const annualCtcStr = vars['offer.annual_ctc'] || vars['offer.salary'] || '₹2,400,000';
+  const cleanSalary = Number(String(annualCtcStr).replace(/[^0-9.]/g, '')) || 2400000;
+  const currSym = vars['offer.currency_symbol'] || (vars['offer.currency'] === 'USD' ? '$' : '₹');
+  const basic = Math.round(cleanSalary * 0.40);
+  const hra = Math.round(cleanSalary * 0.20);
+  const sa = cleanSalary - basic - hra;
+  const mCtc = Math.round(cleanSalary / 12);
+  const mBasic = Math.round(basic / 12);
+  const mHra = Math.round(hra / 12);
+  const mSa = mCtc - mBasic - mHra;
+
+  return pages.map((pageSections, pIdx) => `
+    <div class="a4-sheet-page">
+      <div class="a4-sheet-header">
+        <span>${escape(interpolate(headerText || 'Mechlin Technologies • Confidential Offer'))}</span>
+        <span>Private & Confidential</span>
+      </div>
+      <div class="a4-sheet-body">
+        ${pageSections.map(s => {
+          if (s.type === 'heading') {
+            const lvl = s.level || 2;
+            const align = s.align || 'left';
+            return `<div class="a4-sheet-h${lvl}" style="text-align:${align};">${escape(interpolate(s.text || ''))}</div>`;
+          }
+          if (s.type === 'paragraph') {
+            const align = s.align || 'left';
+            const size = s.fontSize || 9.5;
+            const weight = s.bold ? '700' : '400';
+            return `<p class="a4-sheet-p" style="text-align:${align};font-size:${size}pt;font-weight:${weight};">${escape(interpolate(s.text || ''))}</p>`;
+          }
+          if (s.type === 'bullet_list' || s.type === 'numbered_list') {
+            const isNum = s.listType === 'numbered';
+            const tag = isNum ? 'ol' : 'ul';
+            const items = Array.isArray(s.items) ? s.items : (s.items || '').split('\n').filter(Boolean);
+            return `<${tag} class="a4-sheet-list">${items.map(it => `<li>${escape(interpolate(it))}</li>`).join('')}</${tag}>`;
+          }
+          if (s.type === 'key_value') {
+            const pairs = Array.isArray(s.pairs) ? s.pairs : [];
+            return `
+              <table class="a4-sheet-table">
+                <tbody>
+                  ${pairs.map(p => `<tr><td style="width:35%;font-weight:600;background:#f8fafc;">${escape(p.key)}</td><td>${escape(interpolate(p.value))}</td></tr>`).join('')}
+                </tbody>
+              </table>
+            `;
+          }
+          if (s.type === 'salary_annexure') {
+            return `
+              <div style="margin:16px 0;">
+                <div style="font-weight:700;font-size:10pt;margin-bottom:6px;color:#0f172a;">${escape(s.title || 'ANNEXURE A — REMUNERATION STRUCTURE')}</div>
+                <table class="a4-sheet-table">
+                  <thead>
+                    <tr><th>Salary Component</th><th style="text-align:right;">Monthly</th><th style="text-align:right;">Annual</th></tr>
+                  </thead>
+                  <tbody>
+                    <tr><td>Basic Salary</td><td style="text-align:right;">${currSym}${mBasic.toLocaleString()}</td><td style="text-align:right;">${currSym}${basic.toLocaleString()}</td></tr>
+                    <tr><td>House Rent Allowance (HRA)</td><td style="text-align:right;">${currSym}${mHra.toLocaleString()}</td><td style="text-align:right;">${currSym}${hra.toLocaleString()}</td></tr>
+                    <tr><td>Special Allowance</td><td style="text-align:right;">${currSym}${mSa.toLocaleString()}</td><td style="text-align:right;">${currSym}${sa.toLocaleString()}</td></tr>
+                    <tr style="font-weight:700;background:#f1f5f9;"><td>Total Cost to Company (CTC)</td><td style="text-align:right;">${currSym}${mCtc.toLocaleString()}</td><td style="text-align:right;">${currSym}${cleanSalary.toLocaleString()}</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            `;
+          }
+          if (s.type === 'signature_block') {
+            return `
+              <div class="a4-sheet-signatures">
+                <div class="a4-sheet-sig-box">
+                  <strong>For ${escape(vars['company.name'] || 'Mechlin Technologies')}</strong><br><br>
+                  <div style="height:24px;"></div>
+                  <div><strong>${escape(interpolate(s.authorizerName || 'Authorized Signatory'))}</strong></div>
+                  <div style="color:#64748b;">${escape(interpolate(s.authorizerTitle || 'Managing Director'))}</div>
+                </div>
+                <div class="a4-sheet-sig-box">
+                  <strong>Candidate Acceptance</strong><br><br>
+                  <div style="height:24px;"></div>
+                  <div><strong>${escape(interpolate(s.signerName || vars['candidate.name'] || 'Candidate Name'))}</strong></div>
+                  <div style="color:#64748b;">Accepted & Signed Electronically</div>
+                </div>
+              </div>
+            `;
+          }
+          if (s.type === 'divider') {
+            return `<hr style="border:none;border-top:1px solid #e2e8f0;margin:16px 0;">`;
+          }
+          return '';
+        }).join('')}
+      </div>
+      <div class="a4-sheet-footer">
+        <span>${escape(interpolate(footerText || 'Strictly Private & Confidential'))}</span>
+        <span>Page ${pIdx + 1} of ${pages.length}</span>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function openOfferTemplatePreview(templateId, candId, reqId, appId, salary, currency, customSections = null) {
+  try {
+    const payload = {};
+    if (candId) payload.candidateId = candId;
+    if (reqId) payload.requisitionId = reqId;
+    if (appId) payload.applicationId = appId;
+    if (salary || currency) payload.offerData = { salary, currency };
+    if (customSections) payload.customSections = customSections;
+
+    const preview = await api(`offer-templates/${templateId}/preview`, 'POST', payload);
+    const valid = preview.validation?.valid;
+    const missing = preview.validation?.missingRequired || [];
+    const blobUrl = pdfBase64ToBlobUrl(preview.pdfBase64);
+    const fallbackUrl = `/api/offer-templates/${templateId}/preview.pdf?t=${Date.now()}`;
+    const pdfUrl = blobUrl || fallbackUrl;
+    const sectionsToRender = preview.sections || customSections || [];
+    const visualHtml = renderSectionsToA4Html(sectionsToRender, preview.variables || {}, preview.headerConfig?.text, preview.footerConfig?.text);
+
+    const previewHtml = `
+      <div class="a4-preview-modal" style="display:flex;flex-direction:column;gap:12px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;padding-bottom:10px;border-bottom:1px solid var(--line);">
+          <div>
+            <strong>${escape(preview.templateName)}</strong> <span class="badge mono">v${preview.version}</span>
+            <p class="muted" style="margin:2px 0 0;font-size:0.8rem;">A4 Multi-Page Layout • <strong>${preview.totalPages} page(s)</strong> • ${(preview.pdfSize / 1024).toFixed(1)} KB</p>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+            <div style="display:flex;gap:3px;background:var(--surface-alt);padding:3px;border-radius:6px;border:1px solid var(--line);">
+              <button type="button" class="studio-view-toggle active" id="btn-pv-visual" style="font-size:0.75rem;padding:3px 9px;">Visual Document</button>
+              <button type="button" class="studio-view-toggle" id="btn-pv-pdf" style="font-size:0.75rem;padding:3px 9px;">PDF File</button>
+            </div>
+            <a href="${pdfUrl}" target="_blank" class="button secondary" style="font-size:0.75rem;padding:4px 10px;">Open in Tab</a>
+            <a href="${pdfUrl}" download="${escape(preview.templateName.replace(/\s+/g, '_'))}.pdf" class="button secondary" style="font-size:0.75rem;padding:4px 10px;">Download PDF</a>
+            <button type="button" class="secondary" data-action="close-modal" style="font-size:0.75rem;padding:4px 10px;">Close</button>
+          </div>
+        </div>
+        ${valid ? `
+          <div class="validation-box valid" style="padding:6px 10px;font-size:0.75rem;">
+            <span style="font-weight:600;">Ready for issuance:</span>
+            <span>All required dynamic placeholders have been resolved for this document.</span>
+          </div>
+        ` : `
+          <div class="validation-box" style="padding:6px 10px;font-size:0.75rem;">
+            <span style="font-weight:600;">Missing Required Placeholders (${missing.length}):</span>
+            <div class="validation-item-list">${missing.map(m => `<span class="validation-pill">${escape(m)}</span>`).join('')}</div>
+          </div>
+        `}
+        <div id="pv-visual-container" class="studio-a4-sheet-container" style="max-height:65vh;overflow-y:auto;display:flex;">
+          ${visualHtml}
+        </div>
+        <div id="pv-pdf-container" style="display:none;width:100%;height:65vh;background:var(--surface-alt);border:1px solid var(--line);border-radius:10px;overflow:hidden;">
+          <iframe src="${pdfUrl}" style="width:100%;height:100%;border:none;display:block;" title="A4 Document Preview"></iframe>
+        </div>
+      </div>
+    `;
+
+    modal(`Document Preview — ${preview.templateName}`, previewHtml, null);
+
+    const visualBtn = $('#btn-pv-visual');
+    const pdfBtn = $('#btn-pv-pdf');
+    const visualBox = $('#pv-visual-container');
+    const pdfBox = $('#pv-pdf-container');
+
+    if (visualBtn && pdfBtn && visualBox && pdfBox) {
+      visualBtn.onclick = () => {
+        visualBtn.classList.add('active');
+        pdfBtn.classList.remove('active');
+        visualBox.style.display = 'flex';
+        pdfBox.style.display = 'none';
+      };
+      pdfBtn.onclick = () => {
+        pdfBtn.classList.add('active');
+        visualBtn.classList.remove('active');
+        visualBox.style.display = 'none';
+        pdfBox.style.display = 'block';
+      };
+    }
+  } catch (err) {
+    notice(err.message, 'error');
+  }
+}
+
+async function openLetterheadUploadModal() {
+  const uploadHtml = `
+    <div class="form-grid">
+      ${field('Asset name / Title', 'name', 'text', 'Company Letterhead 2026', true)}
+      <label class="full">
+        <span class="label-heading">Stationery / Letterhead File<span class="field-required">*</span></span>
+        <input type="file" id="letterhead-file" accept=".png,.jpg,.jpeg,.pdf,.docx" required style="padding:8px;">
+        <small class="muted" style="display:block;margin-top:4px;">Supports PNG, JPG, PDF, and DOCX (Max 10MB). Automatically scaled to A4 portrait.</small>
+      </label>
+      <label>
+        <span class="label-heading">Scaling Mode</span>
+        <select name="scaling">
+          <option value="fit" selected>Fit to Page (Preserve Aspect Ratio)</option>
+          <option value="stretch">Stretch to Full Page</option>
+          <option value="header-only">Header Band Only (Top 120pt)</option>
+          <option value="footer-only">Footer Band Only (Bottom 80pt)</option>
+          <option value="original">Original Dimensions</option>
+        </select>
+      </label>
+      <label>
+        <span class="label-heading">Page Target</span>
+        <select name="page_target">
+          <option value="all" selected>All Pages</option>
+          <option value="first_page">First Page Only</option>
+          <option value="continuation">Continuation Pages Only</option>
+        </select>
+      </label>
+      <div id="upload-status" class="full muted" style="font-size:0.8rem;"></div>
+    </div>
+  `;
+
+  modal('Upload Company Letterhead / Stationery', uploadHtml, async v => {
+    const fileInput = $('#letterhead-file');
+    const file = fileInput?.files?.[0];
+    if (!file) throw new Error('Please choose a file to upload.');
+    if (file.size > 10 * 1024 * 1024) throw new Error('File exceeds maximum upload size of 10MB.');
+
+    const statusEl = $('#upload-status');
+    if (statusEl) statusEl.textContent = 'Processing and validating asset format...';
+
+    const base64 = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const res = reader.result;
+        const b64 = String(res).split(',')[1] || String(res);
+        resolve(b64);
+      };
+      reader.onerror = () => reject(new Error('Failed to read file.'));
+      reader.readAsDataURL(file);
+    });
+
+    await api('offer-letter-assets', 'POST', {
+      name: v.name?.trim() || file.name,
+      filename: file.name,
+      fileBase64: base64,
+      scaling: v.scaling || 'fit',
+      pageTarget: v.page_target || 'all'
+    });
+
+    notice('Company letterhead uploaded and processed successfully!', 'success');
+    return 'Letterhead saved.';
+  }, { saveLabel: 'Upload & Process Letterhead' });
+}
+
+const PREBUILT_CLAUSES = [
+  {
+    id: 'clause_appointment',
+    name: '1. Appointment & Designation',
+    category: 'Core Terms',
+    description: 'Executive appointment terms, department, reporting manager, and commencement.',
+    sections: [
+      { id: 'sec_pos_head', type: 'heading', level: 2, text: '1. Position Details & Commencement' },
+      { id: 'sec_pos_body', type: 'paragraph', text: 'On behalf of {{company.name}}, we are pleased to appoint you as {{employment.designation}} within our {{requisition.department}} team, reporting to {{employment.manager}}. Your employment commences on {{employment.joining_date}}.' }
+    ]
+  },
+  {
+    id: 'clause_workplace',
+    name: '2. Workplace & Hybrid Guidelines',
+    category: 'Workplace',
+    description: 'Primary work location and corporate hybrid/remote work schedule expectations.',
+    sections: [
+      { id: 'sec_loc_head', type: 'heading', level: 2, text: '2. Work Location & Hybrid Policy' },
+      { id: 'sec_loc_body', type: 'paragraph', text: 'Your primary workplace is designated as {{employment.location}}, subject to company hybrid working guidelines. The company reserves the right to adjust location based on business requirements.' }
+    ]
+  },
+  {
+    id: 'clause_probation',
+    name: '3. Probation & Performance Review',
+    category: 'Employment Terms',
+    description: 'Probationary period review, criteria, and written confirmation.',
+    sections: [
+      { id: 'sec_prob_head', type: 'heading', level: 2, text: '3. Probationary Period & Confirmation' },
+      { id: 'sec_prob_body', type: 'paragraph', text: 'You will be on probation for a period of {{employment.probation_period}} from your joining date, during which your performance will be evaluated. Upon satisfactory review, employment will be confirmed in writing.' }
+    ]
+  },
+  {
+    id: 'clause_compensation',
+    name: '4. Compensation & Salary Schedule',
+    category: 'Compensation',
+    description: 'Total annual Cost to Company (CTC), payment frequency, and annexure reference.',
+    sections: [
+      { id: 'sec_comp_head', type: 'heading', level: 2, text: '4. Compensation & Remuneration' },
+      { id: 'sec_comp_body', type: 'paragraph', text: 'Your total annual Cost to Company (CTC) will be {{offer.annual_ctc}} ({{offer.salary_period}}), payable monthly in arrears in accordance with company payroll schedules. The detailed breakup is set forth in Annexure A.' }
+    ]
+  },
+  {
+    id: 'clause_joining_bonus',
+    name: '5. Sign-On / Joining Bonus',
+    category: 'Compensation',
+    description: 'Special sign-on bonus with clawback terms if resigning within 12 months.',
+    sections: [
+      { id: 'sec_bonus_head', type: 'heading', level: 2, text: '5. One-Time Joining Bonus' },
+      { id: 'sec_bonus_body', type: 'paragraph', text: 'You are eligible for a one-time joining bonus of ₹100,000, payable alongside your first monthly salary cycle. Should you voluntarily resign or be terminated for cause within 12 months, this bonus must be repaid in full.' }
+    ]
+  },
+  {
+    id: 'clause_benefits',
+    name: '6. Health & Retiral Benefits',
+    category: 'Benefits',
+    description: 'Group Medical Insurance, Provident Fund, Gratuity, and paid leave.',
+    sections: [
+      { id: 'sec_ben_head', type: 'heading', level: 2, text: '6. Employee Benefits & Coverage' },
+      { id: 'sec_ben_list', type: 'bullet_list', items: [
+        'Comprehensive Group Medical Insurance covering hospitalization for self and eligible dependents',
+        'Statutory contributions to Employee Provident Fund (PF) and Gratuity as mandated by law',
+        'Annual entitlement to paid leave, sick leave, and statutory national and festival holidays'
+      ]}
+    ]
+  },
+  {
+    id: 'clause_confidentiality',
+    name: '7. Confidentiality & IP Rights',
+    category: 'Legal & IP',
+    description: 'Trade secrets protection and intellectual property assignment.',
+    sections: [
+      { id: 'sec_conf_head', type: 'heading', level: 2, text: '7. Confidentiality & Intellectual Property' },
+      { id: 'sec_conf_body', type: 'paragraph', text: 'You agree to maintain strict confidentiality regarding all proprietary information, software code, algorithms, and client data of {{company.name}}. All work products and inventions created during employment belong exclusively to the company.' }
+    ]
+  },
+  {
+    id: 'clause_non_compete',
+    name: '8. Non-Compete & Non-Solicitation',
+    category: 'Legal & IP',
+    description: '12-month post-employment covenant not to solicit clients or staff.',
+    sections: [
+      { id: 'sec_nc_head', type: 'heading', level: 2, text: '8. Non-Solicitation & Non-Compete' },
+      { id: 'sec_nc_body', type: 'paragraph', text: 'During your employment and for a period of 12 months thereafter, you agree not to solicit or hire company employees, nor divert business from any clients of {{company.name}}.' }
+    ]
+  },
+  {
+    id: 'clause_bgv',
+    name: '9. Background Check Contingencies',
+    category: 'Compliance',
+    description: 'Contingent upon background verification and previous employer relieving letter.',
+    sections: [
+      { id: 'sec_bgv_head', type: 'heading', level: 2, text: '9. Background Verification & Pre-Conditions' },
+      { id: 'sec_bgv_body', type: 'paragraph', text: 'This offer is contingent upon satisfactory completion of background verification checks, verification of academic credentials, and submission of formal relieving documentation from your previous employer.' }
+    ]
+  },
+  {
+    id: 'clause_termination',
+    name: '10. Termination & Notice Period',
+    category: 'Employment Terms',
+    description: 'Notice period during probation vs post-confirmation.',
+    sections: [
+      { id: 'sec_term_head', type: 'heading', level: 2, text: '10. Termination & Notice Period' },
+      { id: 'sec_term_body', type: 'paragraph', text: 'During probation, either party may terminate employment with 15 days written notice. Following confirmation, the notice period shall be {{employment.notice_period}} (or salary in lieu thereof).' }
+    ]
+  },
+  {
+    id: 'clause_acceptance',
+    name: '11. Offer Acceptance & Expiration',
+    category: 'Execution',
+    description: 'Expiration date and electronic signing instructions.',
+    sections: [
+      { id: 'sec_acc_head', type: 'heading', level: 2, text: '11. Offer Acceptance & Validity' },
+      { id: 'sec_acc_body', type: 'paragraph', text: 'This offer remains open for acceptance until {{offer.expiry_date}}. Please execute your electronic signature below to confirm your acceptance of employment terms.' }
+    ]
+  },
+  {
+    id: 'clause_salary_annexure',
+    name: '12. Compensation Annexure Table',
+    category: 'Compensation',
+    description: 'Dynamic multi-column HRMS payroll table matching tax & statutory guidelines.',
+    sections: [
+      { id: 'sec_annex_pb', type: 'page_break' },
+      { id: 'sec_annex_h', type: 'heading', level: 1, text: 'ANNEXURE A — DETAILED REMUNERATION STRUCTURE' },
+      { id: 'sec_annex_p', type: 'paragraph', text: 'Candidate Name: {{candidate.name}}  |  Designation: {{employment.designation}}  |  Location: {{employment.location}}\nEffective Date: {{employment.joining_date}}  |  Currency: {{offer.currency}}', fontSize: 9 },
+      { id: 'sec_annex_tbl', type: 'salary_annexure', title: 'ANNUAL & MONTHLY REMUNERATION DETAILS' }
+    ]
+  },
+  {
+    id: 'clause_signatures',
+    name: '13. Dual Signature & Acceptance Block',
+    category: 'Execution',
+    description: 'Company Authorized Signatory and Candidate Acceptance signature lines.',
+    sections: [
+      { id: 'sec_sig_block', type: 'signature_block', authorizerName: '{{signature.authorizer_name}}', authorizerTitle: 'Managing Director', signerName: '{{signature.signer_name}}' }
+    ]
+  }
+];
+
+function openClauseLibraryModal(onSelectClause) {
+  const modalHtml = `
+    <div style="display:flex;flex-direction:column;gap:14px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+        <p class="muted" style="margin:0;font-size:0.84rem;">Click "+ Insert Clause" to add pre-drafted, production-ready legal and compensation clauses into your offer letter.</p>
+        <input type="text" id="clause-search-input" placeholder="Search clauses..." style="max-width:240px;font-size:0.8rem;padding:6px 10px;">
+      </div>
+      <div class="clause-library-modal-wrap" id="clause-library-cards">
+        ${PREBUILT_CLAUSES.map((c, idx) => `
+          <div class="clause-library-card" data-clause-idx="${idx}" data-category="${escape(c.category)}" data-name="${escape(c.name.toLowerCase())}">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:6px;">
+              <span class="badge" style="font-size:0.68rem;background:var(--tint);color:var(--accent);font-weight:700;">${escape(c.category)}</span>
+              <button type="button" class="button" data-clause-insert="${idx}" style="font-size:0.75rem;padding:3px 10px;min-height:26px;">+ Insert Clause</button>
+            </div>
+            <h4 style="margin:4px 0 0;">${escape(c.name)}</h4>
+            <p>${escape(c.description)}</p>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `;
+
+  modal('Pre-Built Clause Library', modalHtml, null, {
+    actions: `<button type="button" class="secondary" data-action="close-modal">Done</button>`
+  });
+
+  const searchInp = $('#clause-search-input');
+  if (searchInp) {
+    searchInp.oninput = () => {
+      const q = searchInp.value.toLowerCase().trim();
+      document.querySelectorAll('#clause-library-cards .clause-library-card').forEach(el => {
+        const matches = !q || el.dataset.name.includes(q) || el.dataset.category.toLowerCase().includes(q);
+        el.style.display = matches ? 'flex' : 'none';
+      });
+    };
+  }
+
+  document.querySelectorAll('[data-clause-insert]').forEach(btn => {
+    btn.onclick = () => {
+      const idx = Number(btn.dataset.clauseInsert);
+      const clause = PREBUILT_CLAUSES[idx];
+      if (clause && onSelectClause) {
+        onSelectClause(JSON.parse(JSON.stringify(clause.sections)));
+        btn.textContent = 'Added';
+        btn.style.background = 'var(--positive)';
+        setTimeout(() => { btn.textContent = 'Insert Clause'; btn.style.background = ''; }, 1200);
+        notice(`Added "${clause.name}" to template!`, 'success');
+      }
+    };
+  });
+}
+
+async function openOfferTemplateEditor(templateId) {
+  try {
+    const [tpl, assets, varReg] = await Promise.all([
+      templateId ? api(`offer-templates/${templateId}`) : null,
+      api('offer-letter-assets').catch(() => []),
+      api('offer-variables').catch(() => ({ variables: [] }))
+    ]);
+
+    const initialSections = tpl ? JSON.parse(JSON.stringify(tpl.sections)) : [
+      { id: 'sec_head', type: 'heading', level: 1, text: 'OFFER OF EMPLOYMENT' },
+      { id: 'sec_intro', type: 'paragraph', text: 'Dear {{candidate.name}},\n\nOn behalf of {{company.name}}, we are pleased to extend an offer of employment for the position of {{employment.designation}} within the {{requisition.department}} department.' },
+      { id: 'sec_terms_head', type: 'heading', level: 2, text: '1. Employment Terms & Reporting' },
+      { id: 'sec_terms_list', type: 'bullet_list', items: ['Designation: {{employment.designation}}', 'Location: {{employment.location}}', 'Commencement: {{employment.joining_date}}'] },
+      { id: 'sec_comp_head', type: 'heading', level: 2, text: '2. Remuneration & Benefits' },
+      { id: 'sec_comp_text', type: 'paragraph', text: 'Your total annual Cost to Company (CTC) will be {{offer.annual_ctc}} ({{offer.salary_period}}). Statutory benefits and detailed structure are outlined in Annexure A.' },
+      { id: 'sec_sig', type: 'signature_block', authorizerName: '{{signature.authorizer_name}}', authorizerTitle: 'Managing Director', signerName: '{{signature.signer_name}}' },
+      { id: 'sec_pb', type: 'page_break' },
+      { id: 'sec_annexure_h', type: 'heading', level: 1, text: 'ANNEXURE A — COMPENSATION BREAKDOWN' },
+      { id: 'sec_annexure_tbl', type: 'salary_annexure', title: 'DETAILED REMUNERATION STRUCTURE' }
+    ];
+
+    let currentSections = initialSections;
+    let lastActiveField = null;
+    let activeStudioTab = 'sections';
+
+    let pageConfig = tpl?.page_config || {
+      size: 'A4', orientation: 'portrait',
+      margins: { top: 36, bottom: 36, left: 40, right: 40 }
+    };
+    let headerConfig = tpl?.header_config || {
+      enabled: true, text: '{{company.name}} • Confidential Offer of Employment', showOnFirstPage: false
+    };
+    let footerConfig = tpl?.footer_config || {
+      enabled: true, text: 'Strictly Confidential', pageNumberFormat: 'Page {page} of {pages}'
+    };
+    let backgroundConfig = tpl?.background_config || {
+      firstPageAssetId: '', continuationAssetId: ''
+    };
+
+    const categorizedVars = {};
+    for (const v of (varReg.variables || [])) {
+      if (!categorizedVars[v.category]) categorizedVars[v.category] = [];
+      categorizedVars[v.category].push(v);
+    }
+
+    const assetOptions = [['', 'None (Standard White Background)']];
+    for (const a of assets) {
+      assetOptions.push([a.id, `${a.name} (${a.file_format.toUpperCase()})`]);
+    }
+
+    const editorHtml = `
+      <div class="offer-studio">
+        <div class="offer-studio-header">
+          <div class="offer-studio-header-left">
+            <input type="text" id="studio-tpl-name" class="offer-studio-title-input" value="${escape(tpl?.name || 'Standard Employment Agreement')}" placeholder="Template Title..." title="Click to rename template">
+            <select id="studio-tpl-status" style="font-size:0.78rem;padding:4px 8px;min-height:28px;">
+              <option value="active" ${tpl?.status === 'active' ? 'selected' : ''}>Active</option>
+              <option value="draft" ${tpl?.status === 'draft' || !tpl ? 'selected' : ''}>Draft</option>
+            </select>
+            <label class="checkbox-row" style="font-size:0.78rem;margin:0;cursor:pointer;">
+              <input type="checkbox" id="studio-tpl-default" value="1" ${tpl?.is_default ? 'checked' : ''}>
+              <span>Default Template</span>
+            </label>
+          </div>
+          <div class="offer-studio-header-actions">
+            <button type="button" class="secondary" id="btn-studio-clause-lib" style="font-size:0.8rem;padding:6px 12px;">Clause Library</button>
+            <button type="button" class="secondary" id="btn-studio-refresh-preview" style="font-size:0.8rem;padding:6px 12px;">Refresh Preview</button>
+            <button type="button" id="btn-studio-save-tpl" style="font-size:0.8rem;padding:6px 16px;">${templateId ? 'Save Changes' : 'Create Template'}</button>
+            <button type="button" class="secondary" data-action="close-modal" id="btn-studio-header-close" style="font-size:0.8rem;padding:6px 14px;">Close</button>
+          </div>
+        </div>
+
+        <div class="offer-studio-layout">
+          <!-- Left Editor Column -->
+          <div class="offer-studio-editor">
+            <div class="offer-studio-tabs">
+              <button type="button" class="offer-studio-tab-btn active" data-tab="sections">Document Sections</button>
+              <button type="button" class="offer-studio-tab-btn" data-tab="branding">Page Setup & Stationery</button>
+              <button type="button" class="offer-studio-tab-btn" data-tab="variables">Dynamic Variables</button>
+            </div>
+
+            <!-- Tab 1: Sections & Clauses -->
+            <div id="tab-pane-sections">
+              <div class="studio-toolbar">
+                <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                  <span class="studio-toolbar-label">Add Block:</span>
+                  <div class="studio-quick-add-group">
+                    <button type="button" class="studio-quick-add-btn" data-add-sec="heading">Heading</button>
+                    <button type="button" class="studio-quick-add-btn" data-add-sec="paragraph">Paragraph</button>
+                    <button type="button" class="studio-quick-add-btn" data-add-sec="bullet_list">Bullet List</button>
+                    <button type="button" class="studio-quick-add-btn" data-add-sec="key_value">Key-Value</button>
+                    <button type="button" class="studio-quick-add-btn" data-add-sec="salary_annexure">Salary Table</button>
+                    <button type="button" class="studio-quick-add-btn" data-add-sec="signature_block">Signatures</button>
+                    <button type="button" class="studio-quick-add-btn" data-add-sec="page_break">Page Break</button>
+                    <button type="button" class="studio-quick-add-btn" data-add-sec="divider">Divider</button>
+                  </div>
+                </div>
+                <button type="button" class="secondary studio-quick-lib-btn" id="btn-studio-add-prebuilt">Insert Prebuilt Clause</button>
+              </div>
+
+              <div id="studio-sections-list"></div>
+            </div>
+
+            <!-- Tab 2: Page Setup & Stationery -->
+            <div id="tab-pane-branding" style="display:none;">
+              <div class="form-grid">
+                <div class="full" style="display:grid;grid-template-columns:repeat(4, 1fr);gap:10px;background:var(--surface-alt);padding:12px 14px;border-radius:8px;border:1px solid var(--line);">
+                  <strong class="full" style="font-size:0.82rem;grid-column:1/-1;">Page Margins (Points, A4 = 595 × 842 pt)</strong>
+                  <label><span class="label-heading">Top</span><input type="number" id="cfg-margin-top" value="${pageConfig?.margins?.top ?? 36}"></label>
+                  <label><span class="label-heading">Bottom</span><input type="number" id="cfg-margin-bottom" value="${pageConfig?.margins?.bottom ?? 36}"></label>
+                  <label><span class="label-heading">Left</span><input type="number" id="cfg-margin-left" value="${pageConfig?.margins?.left ?? 40}"></label>
+                  <label><span class="label-heading">Right</span><input type="number" id="cfg-margin-right" value="${pageConfig?.margins?.right ?? 40}"></label>
+                </div>
+
+                <div class="full" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;background:var(--surface-alt);padding:12px 14px;border-radius:8px;border:1px solid var(--line);">
+                  <strong class="full" style="font-size:0.82rem;grid-column:1/-1;">Running Header & Footer</strong>
+                  <label><span class="label-heading">Header Text</span><input type="text" id="cfg-header-text" value="${escape(headerConfig?.text || '{{company.name}} • Confidential Offer')}"></label>
+                  <label><span class="label-heading">Footer Confidentiality Notice</span><input type="text" id="cfg-footer-text" value="${escape(footerConfig?.text || 'Strictly Private & Confidential')}"></label>
+                  <label class="checkbox-row full"><input type="checkbox" id="cfg-header-first-page" ${headerConfig?.showOnFirstPage ? 'checked' : ''}><span>Show header on first page</span></label>
+                </div>
+
+                <div class="full" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;background:var(--surface-alt);padding:12px 14px;border-radius:8px;border:1px solid var(--line);">
+                  <strong class="full" style="font-size:0.82rem;grid-column:1/-1;">Company Letterhead Stationery</strong>
+                  <label><span class="label-heading">First Page Letterhead</span><select id="cfg-first-page-asset">${assetOptions.map(([id, title]) => `<option value="${id}" ${backgroundConfig?.firstPageAssetId === id ? 'selected' : ''}>${escape(title)}</option>`).join('')}</select></label>
+                  <label><span class="label-heading">Continuation Pages Letterhead</span><select id="cfg-continuation-asset">${assetOptions.map(([id, title]) => `<option value="${id}" ${backgroundConfig?.continuationAssetId === id ? 'selected' : ''}>${escape(title)}</option>`).join('')}</select></label>
+                  <div class="full" style="display:flex;justify-content:flex-end;">
+                    <button type="button" class="secondary" id="btn-studio-upload-asset" style="font-size:0.78rem;padding:4px 10px;">Upload Letterhead Asset</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Tab 3: Dynamic Variables & Simulator -->
+            <div id="tab-pane-variables" style="display:none;">
+              <div class="variable-palette">
+                <div class="variable-palette-header">
+                  <strong style="font-size:0.84rem;">Dynamic Variables Registry (Click to copy & insert into active field)</strong>
+                  <input type="text" id="var-search-filter" placeholder="Filter variables..." style="font-size:0.75rem;padding:4px 8px;max-width:180px;">
+                </div>
+                <div class="variable-chip-group" id="studio-var-chips">
+                  ${Object.entries(categorizedVars).map(([cat, list]) => `
+                    <div class="var-category-block" style="width:100%;margin-top:6px;" data-cat="${escape(cat.toLowerCase())}">
+                      <small class="muted" style="font-weight:700;text-transform:uppercase;font-size:0.68rem;">${escape(cat)}</small>
+                      <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:2px;">
+                        ${list.map(v => `<button type="button" class="var-pill-btn" data-var="{{${v.key}}}" title="${escape(v.description)}">{{${v.key}}}</button>`).join('')}
+                      </div>
+                    </div>
+                  `).join('')}
+                </div>
+              </div>
+
+              <div style="margin-top:14px;background:var(--surface-alt);border:1px solid var(--line);border-radius:10px;padding:12px 14px;">
+                <strong style="font-size:0.82rem;display:block;margin-bottom:8px;">Live Simulator Test Data (Affects Right Preview)</strong>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+                  <label><span class="label-heading">Test Candidate Name</span><input type="text" id="sim-cand-name" value="Raman Joshi"></label>
+                  <label><span class="label-heading">Test Designation</span><input type="text" id="sim-designation" value="Senior Full-Stack Engineer"></label>
+                  <label><span class="label-heading">Test Annual CTC</span><input type="text" id="sim-salary" value="2,400,000"></label>
+                  <label><span class="label-heading">Currency</span><input type="text" id="sim-currency" value="INR"></label>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Right Live Preview Column -->
+          <div class="offer-studio-preview">
+            <div class="offer-studio-preview-head">
+              <div>
+                <strong style="font-size:0.92rem;">Document Preview</strong>
+                <p id="studio-preview-meta" class="muted" style="margin:2px 0 0;font-size:0.76rem;">Generating real-time multi-page layout...</p>
+              </div>
+              <div class="studio-preview-actions">
+                <div class="studio-view-toggle-group">
+                  <button type="button" class="studio-view-toggle active" id="btn-studio-view-visual">Visual Canvas</button>
+                  <button type="button" class="studio-view-toggle" id="btn-studio-view-pdf">PDF View</button>
+                </div>
+                <a id="btn-studio-open-pdf" href="#" target="_blank" class="button secondary studio-preview-btn">Open in Tab</a>
+                <a id="btn-studio-download-pdf" href="#" download="offer_letter.pdf" class="button secondary studio-preview-btn">Download PDF</a>
+                <button type="button" class="secondary studio-preview-btn" id="btn-studio-force-refresh">Refresh</button>
+              </div>
+            </div>
+
+            <div id="studio-preview-validation" style="margin-bottom:10px;"></div>
+
+            <div id="studio-visual-canvas" class="studio-a4-sheet-container" style="display:flex;"></div>
+            <div id="studio-pdf-canvas" class="offer-studio-preview-frame-wrap" style="display:none;">
+              <iframe id="studio-preview-iframe" class="offer-studio-preview-iframe" title="Real-time A4 PDF Preview"></iframe>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    modal(templateId ? `Offer Letter Studio — ${tpl.name}` : 'Offer Letter Studio — New Template', editorHtml, null, {
+      actions: `<div></div>`
+    });
+
+    const syncSectionsFromDom = () => {
+      const container = $('#studio-sections-list');
+      if (!container) return;
+      container.querySelectorAll('.studio-section-card').forEach(itemEl => {
+        const i = Number(itemEl.dataset.idx);
+        const s = currentSections[i];
+        if (!s) return;
+        if (s.type === 'heading') {
+          s.level = Number(itemEl.querySelector('[data-field="level"]')?.value) || 2;
+          s.align = itemEl.querySelector('[data-field="align"]')?.value || 'left';
+          s.text = itemEl.querySelector('[data-field="text"]')?.value || '';
+        } else if (s.type === 'paragraph') {
+          s.fontSize = Number(itemEl.querySelector('[data-field="fontSize"]')?.value) || 10;
+          s.bold = itemEl.querySelector('[data-field="bold"]')?.value === 'true';
+          s.align = itemEl.querySelector('[data-field="align"]')?.value || 'left';
+          s.text = itemEl.querySelector('[data-field="text"]')?.value || '';
+        } else if (s.type === 'bullet_list' || s.type === 'numbered_list') {
+          s.listType = itemEl.querySelector('[data-field="listType"]')?.value || 'bullet';
+          s.items = (itemEl.querySelector('[data-field="items"]')?.value || '').split('\n').map(x => x.trim()).filter(Boolean);
+        } else if (s.type === 'key_value') {
+          const lines = (itemEl.querySelector('[data-field="pairs"]')?.value || '').split('\n');
+          s.pairs = lines.filter(Boolean).map(line => {
+            const p = line.split(':');
+            return { key: p[0]?.trim() || '', value: p.slice(1).join(':')?.trim() || '' };
+          });
+        } else if (s.type === 'salary_annexure') {
+          s.title = itemEl.querySelector('[data-field="title"]')?.value || 'DETAILED REMUNERATION STRUCTURE';
+        } else if (s.type === 'signature_block') {
+          s.authorizerName = itemEl.querySelector('[data-field="authorizerName"]')?.value || '';
+          s.authorizerTitle = itemEl.querySelector('[data-field="authorizerTitle"]')?.value || '';
+          s.signerName = itemEl.querySelector('[data-field="signerName"]')?.value || '';
+        }
+      });
+
+      pageConfig = {
+        size: 'A4', orientation: 'portrait',
+        margins: {
+          top: Number($('#cfg-margin-top')?.value) || 36,
+          bottom: Number($('#cfg-margin-bottom')?.value) || 36,
+          left: Number($('#cfg-margin-left')?.value) || 40,
+          right: Number($('#cfg-margin-right')?.value) || 40
+        }
+      };
+
+      headerConfig = {
+        enabled: true,
+        text: $('#cfg-header-text')?.value || '',
+        showOnFirstPage: Boolean($('#cfg-header-first-page')?.checked)
+      };
+
+      footerConfig = {
+        enabled: true,
+        text: $('#cfg-footer-text')?.value || 'Strictly Private & Confidential',
+        pageNumberFormat: 'Page {page} of {pages}'
+      };
+
+      backgroundConfig = {
+        firstPageAssetId: $('#cfg-first-page-asset')?.value || '',
+        continuationAssetId: $('#cfg-continuation-asset')?.value || ''
+      };
+    };
+
+    let previewDebounce = null;
+    const triggerLivePreview = async () => {
+      syncSectionsFromDom();
+      const metaEl = $('#studio-preview-meta');
+      const valEl = $('#studio-preview-validation');
+      const iframe = $('#studio-preview-iframe');
+      const openLink = $('#btn-studio-open-pdf');
+      if (metaEl) metaEl.textContent = 'Updating live preview...';
+
+      try {
+        const simSalary = $('#sim-salary')?.value || '2,400,000';
+        const simCurr = $('#sim-currency')?.value || 'INR';
+
+        const previewData = await api(`offer-templates/${templateId || 'preview'}/preview`, 'POST', {
+          customSections: currentSections,
+          pageConfig,
+          headerConfig,
+          footerConfig,
+          backgroundConfig,
+          offerData: {
+            salary: simSalary,
+            currency: simCurr,
+            start_date: 'Two weeks following signature acceptance'
+          },
+          customVariables: {
+            'candidate.name': $('#sim-cand-name')?.value || 'Raman Joshi',
+            'employment.designation': $('#sim-designation')?.value || 'Senior Full-Stack Engineer'
+          }
+        });
+
+        if (metaEl) {
+          metaEl.textContent = `${previewData.totalPages} Page(s) • ${(previewData.pdfSize / 1024).toFixed(1)} KB • A4 Portrait`;
+        }
+
+        if (valEl) {
+          const valid = previewData.validation?.valid;
+          const missing = previewData.validation?.missingRequired || [];
+          if (valid) {
+            valEl.innerHTML = `<div class="validation-box valid" style="padding:6px 10px;font-size:0.75rem;"><span style="font-weight:600;">Ready for Issuance:</span> All dynamic placeholders resolved.</div>`;
+          } else {
+            valEl.innerHTML = `<div class="validation-box" style="padding:6px 10px;font-size:0.75rem;"><span style="font-weight:600;">Missing Placeholders (${missing.length}):</span> <span style="font-family:monospace;">${missing.join(', ')}</span></div>`;
+          }
+        }
+
+        const visualCanvas = $('#studio-visual-canvas');
+        if (visualCanvas) {
+          const simVars = {
+            'company.name': 'Mechlin Technologies',
+            'candidate.name': $('#sim-cand-name')?.value || 'Raman Joshi',
+            'employment.designation': $('#sim-designation')?.value || 'Senior Full-Stack Engineer',
+            'offer.salary': $('#sim-salary')?.value || '2,400,000',
+            'offer.annual_ctc': `${$('#sim-currency')?.value || 'INR'} ${$('#sim-salary')?.value || '2,400,000'}`,
+            'offer.currency': $('#sim-currency')?.value || 'INR',
+            'offer.currency_symbol': ($('#sim-currency')?.value || 'INR') === 'USD' ? '$' : '₹',
+            'employment.joining_date': 'December 1, 2026',
+            'employment.location': 'Mohali, India (Hybrid)',
+            'employment.probation_period': '3 months',
+            'employment.notice_period': '30 days',
+            'offer.expiry_date': 'November 15, 2026',
+            'signature.authorizer_name': 'Managing Director',
+            'signature.signer_name': $('#sim-cand-name')?.value || 'Raman Joshi'
+          };
+          visualCanvas.innerHTML = renderSectionsToA4Html(currentSections, simVars, headerConfig?.text, footerConfig?.text);
+        }
+
+        if (iframe && previewData.pdfBase64) {
+          if (iframe._currentBlobUrl) {
+            try { URL.revokeObjectURL(iframe._currentBlobUrl); } catch {}
+          }
+          const blobUrl = pdfBase64ToBlobUrl(previewData.pdfBase64);
+          iframe._currentBlobUrl = blobUrl;
+          const targetUrl = blobUrl || `data:application/pdf;base64,${previewData.pdfBase64}`;
+          iframe.src = targetUrl;
+          if (openLink) openLink.href = targetUrl;
+          const dlLink = $('#btn-studio-download-pdf');
+          if (dlLink) dlLink.href = targetUrl;
+        }
+
+        const studioVisBtn = $('#btn-studio-view-visual');
+        const studioPdfBtn = $('#btn-studio-view-pdf');
+        const studioVisBox = $('#studio-visual-canvas');
+        const studioPdfBox = $('#studio-pdf-canvas');
+        if (studioVisBtn && studioPdfBtn && studioVisBox && studioPdfBox && !studioVisBtn._bound) {
+          studioVisBtn._bound = true;
+          studioVisBtn.onclick = () => {
+            studioVisBtn.classList.add('active');
+            studioPdfBtn.classList.remove('active');
+            studioVisBox.style.display = 'flex';
+            studioPdfBox.style.display = 'none';
+          };
+          studioPdfBtn.onclick = () => {
+            studioPdfBtn.classList.add('active');
+            studioVisBtn.classList.remove('active');
+            studioVisBox.style.display = 'none';
+            studioPdfBox.style.display = 'block';
+          };
+        }
+      } catch (err) {
+        if (metaEl) metaEl.textContent = `Preview error: ${err.message}`;
+      }
+    };
+
+    const debouncedPreview = () => {
+      clearTimeout(previewDebounce);
+      previewDebounce = setTimeout(triggerLivePreview, 600);
+    };
+
+    const renderSections = () => {
+      const container = $('#studio-sections-list');
+      if (!container) return;
+      container.innerHTML = currentSections.map((s, idx) => {
+        let fieldsHtml = '';
+        if (s.type === 'heading') {
+          fieldsHtml = `
+            <div style="display:flex;flex-direction:column;gap:8px;">
+              <div class="studio-formatting-bar">
+                <span class="studio-format-label">Level</span>
+                <div class="studio-format-group">
+                  <button type="button" class="studio-format-btn ${s.level === 1 ? 'active' : ''}" data-fmt="level" data-val="1" data-idx="${idx}">H1</button>
+                  <button type="button" class="studio-format-btn ${s.level === 2 || !s.level ? 'active' : ''}" data-fmt="level" data-val="2" data-idx="${idx}">H2</button>
+                  <button type="button" class="studio-format-btn ${s.level === 3 ? 'active' : ''}" data-fmt="level" data-val="3" data-idx="${idx}">H3</button>
+                </div>
+                <input type="hidden" data-field="level" value="${s.level || 2}">
+                <span class="studio-format-label" style="margin-left:8px;">Align</span>
+                <div class="studio-format-group">
+                  <button type="button" class="studio-format-btn ${s.align === 'left' || !s.align ? 'active' : ''}" data-fmt="align" data-val="left" data-idx="${idx}">Left</button>
+                  <button type="button" class="studio-format-btn ${s.align === 'center' ? 'active' : ''}" data-fmt="align" data-val="center" data-idx="${idx}">Center</button>
+                  <button type="button" class="studio-format-btn ${s.align === 'right' ? 'active' : ''}" data-fmt="align" data-val="right" data-idx="${idx}">Right</button>
+                </div>
+                <input type="hidden" data-field="align" value="${s.align || 'left'}">
+              </div>
+              <input type="text" data-field="text" data-idx="${idx}" value="${escape(s.text || '')}" placeholder="Section Heading Text..." style="font-weight:600;">
+            </div>
+          `;
+        } else if (s.type === 'paragraph') {
+          fieldsHtml = `
+            <div style="display:flex;flex-direction:column;gap:8px;">
+              <div class="studio-formatting-bar">
+                <span class="studio-format-label">Size</span>
+                <div class="studio-format-group">
+                  <button type="button" class="studio-format-btn ${s.fontSize === 8.5 ? 'active' : ''}" data-fmt="fontSize" data-val="8.5" data-idx="${idx}">8.5pt</button>
+                  <button type="button" class="studio-format-btn ${s.fontSize === 9 ? 'active' : ''}" data-fmt="fontSize" data-val="9" data-idx="${idx}">9pt</button>
+                  <button type="button" class="studio-format-btn ${s.fontSize === 10 || !s.fontSize ? 'active' : ''}" data-fmt="fontSize" data-val="10" data-idx="${idx}">10pt</button>
+                  <button type="button" class="studio-format-btn ${s.fontSize === 11 ? 'active' : ''}" data-fmt="fontSize" data-val="11" data-idx="${idx}">11pt</button>
+                </div>
+                <input type="hidden" data-field="fontSize" value="${s.fontSize || 10}">
+                <div class="studio-format-group" style="margin-left:4px;">
+                  <button type="button" class="studio-format-btn ${s.bold ? 'active' : ''}" data-fmt="bold" data-val="${s.bold ? 'false' : 'true'}" data-idx="${idx}" style="font-weight:700;">Bold</button>
+                </div>
+                <input type="hidden" data-field="bold" value="${s.bold ? 'true' : 'false'}">
+                <span class="studio-format-label" style="margin-left:8px;">Align</span>
+                <div class="studio-format-group">
+                  <button type="button" class="studio-format-btn ${s.align === 'left' || !s.align ? 'active' : ''}" data-fmt="align" data-val="left" data-idx="${idx}">Left</button>
+                  <button type="button" class="studio-format-btn ${s.align === 'center' ? 'active' : ''}" data-fmt="align" data-val="center" data-idx="${idx}">Center</button>
+                </div>
+                <input type="hidden" data-field="align" value="${s.align || 'left'}">
+              </div>
+              <textarea data-field="text" data-idx="${idx}" rows="4" style="font-size:0.85rem;line-height:1.45;" placeholder="Enter legal clause, terms, or paragraph with {{variables}}...">${escape(s.text || '')}</textarea>
+            </div>
+          `;
+        } else if (s.type === 'bullet_list' || s.type === 'numbered_list') {
+          fieldsHtml = `
+            <div style="display:flex;flex-direction:column;gap:8px;">
+              <div class="studio-formatting-bar">
+                <span class="studio-format-label">Style</span>
+                <div class="studio-format-group">
+                  <button type="button" class="studio-format-btn ${s.listType !== 'numbered' ? 'active' : ''}" data-fmt="listType" data-val="bullet" data-idx="${idx}">Bullets</button>
+                  <button type="button" class="studio-format-btn ${s.listType === 'numbered' ? 'active' : ''}" data-fmt="listType" data-val="numbered" data-idx="${idx}">Numbered</button>
+                </div>
+                <input type="hidden" data-field="listType" value="${s.listType || 'bullet'}">
+              </div>
+              <textarea data-field="items" data-idx="${idx}" rows="3" style="font-size:0.85rem;" placeholder="List items (one line per item)...">${escape((s.items || []).join('\n'))}</textarea>
+            </div>
+          `;
+        } else if (s.type === 'key_value') {
+          const pairsStr = (s.pairs || []).map(p => `${p.key} : ${p.value}`).join('\n');
+          fieldsHtml = `
+            <textarea data-field="pairs" data-idx="${idx}" rows="3" style="font-size:0.85rem;" placeholder="Key : Value (e.g. Work Location : {{employment.location}})...">${escape(pairsStr)}</textarea>
+          `;
+        } else if (s.type === 'salary_annexure') {
+          fieldsHtml = `
+            <input type="text" data-field="title" data-idx="${idx}" value="${escape(s.title || 'DETAILED REMUNERATION STRUCTURE')}">
+            <small class="muted" style="display:block;margin-top:4px;">Generates verified payroll breakdown matching HRMS conventions (Basic, HRA, PF, Gratuity, Allowances, Gross, Deductions, CTC).</small>
+          `;
+        } else if (s.type === 'signature_block') {
+          fieldsHtml = `
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">
+              <label><span class="label-heading">Authorizer Name</span><input type="text" data-field="authorizerName" data-idx="${idx}" value="${escape(s.authorizerName || '{{signature.authorizer_name}}')}"></label>
+              <label><span class="label-heading">Authorizer Title</span><input type="text" data-field="authorizerTitle" data-idx="${idx}" value="${escape(s.authorizerTitle || 'Managing Director')}"></label>
+              <label><span class="label-heading">Candidate Signer</span><input type="text" data-field="signerName" data-idx="${idx}" value="${escape(s.signerName || '{{signature.signer_name}}')}"></label>
+            </div>
+          `;
+        } else if (s.type === 'page_break') {
+          fieldsHtml = `<div class="muted" style="font-size:0.78rem;padding:4px 0;">Page Break: Content following this section begins on a new page.</div>`;
+        } else if (s.type === 'divider') {
+          fieldsHtml = `<div class="muted" style="font-size:0.78rem;padding:4px 0;">Horizontal Rule: Visual divider line.</div>`;
+        }
+
+        const badgeClass = `studio-badge-${s.type}`;
+        return `
+          <div class="studio-section-card" data-idx="${idx}">
+            <div class="studio-section-header">
+              <div class="studio-sec-title-group">
+                <span class="studio-section-badge ${badgeClass}">${s.type.replace('_', ' ')}</span>
+                <strong class="studio-sec-num">Section #${idx + 1}</strong>
+              </div>
+              <div class="studio-sec-actions">
+                <button type="button" class="studio-action-btn" data-sec-act="up" data-idx="${idx}" ${idx === 0 ? 'disabled' : ''} title="Move Up">Up</button>
+                <button type="button" class="studio-action-btn" data-sec-act="down" data-idx="${idx}" ${idx === currentSections.length - 1 ? 'disabled' : ''} title="Move Down">Down</button>
+                <button type="button" class="studio-action-btn" data-sec-act="clone" data-idx="${idx}" title="Duplicate Section">Duplicate</button>
+                <button type="button" class="studio-action-btn studio-action-delete" data-sec-act="del" data-idx="${idx}" title="Remove Section">Remove</button>
+              </div>
+            </div>
+            ${fieldsHtml}
+          </div>
+        `;
+      }).join('');
+
+      container.querySelectorAll('textarea, input').forEach(el => {
+        el.onfocus = () => { lastActiveField = el; };
+        el.oninput = () => { syncSectionsFromDom(); debouncedPreview(); };
+      });
+
+      container.querySelectorAll('[data-fmt]').forEach(btn => {
+        btn.onclick = () => {
+          const idx = Number(btn.dataset.idx);
+          const fmt = btn.dataset.fmt;
+          const val = btn.dataset.val;
+          const card = btn.closest('.studio-section-card');
+          const hiddenInput = card?.querySelector(`[data-field="${fmt}"]`);
+          if (hiddenInput) {
+            hiddenInput.value = val;
+            syncSectionsFromDom();
+            renderSections();
+            debouncedPreview();
+          }
+        };
+      });
+
+      container.querySelectorAll('[data-sec-act]').forEach(btn => {
+        btn.onclick = () => {
+          syncSectionsFromDom();
+          const act = btn.dataset.secAct;
+          const i = Number(btn.dataset.idx);
+          if (act === 'up' && i > 0) {
+            const temp = currentSections[i];
+            currentSections[i] = currentSections[i - 1];
+            currentSections[i - 1] = temp;
+          } else if (act === 'down' && i < currentSections.length - 1) {
+            const temp = currentSections[i];
+            currentSections[i] = currentSections[i + 1];
+            currentSections[i + 1] = temp;
+          } else if (act === 'clone') {
+            const clone = JSON.parse(JSON.stringify(currentSections[i]));
+            clone.id = `sec_${Date.now()}`;
+            currentSections.splice(i + 1, 0, clone);
+          } else if (act === 'del') {
+            currentSections.splice(i, 1);
+          }
+          renderSections();
+          debouncedPreview();
+        };
+      });
+    };
+
+    renderSections();
+    triggerLivePreview();
+
+    // Studio tabs wiring
+    document.querySelectorAll('.offer-studio-tab-btn').forEach(btn => {
+      btn.onclick = () => {
+        document.querySelectorAll('.offer-studio-tab-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        const tab = btn.dataset.tab;
+        $('#tab-pane-sections').style.display = tab === 'sections' ? 'block' : 'none';
+        $('#tab-pane-branding').style.display = tab === 'branding' ? 'block' : 'none';
+        $('#tab-pane-variables').style.display = tab === 'variables' ? 'block' : 'none';
+      };
+    });
+
+    // Variable insertion pills
+    document.querySelectorAll('.var-pill-btn').forEach(btn => {
+      btn.onclick = () => {
+        const varTag = btn.dataset.var;
+        if (navigator.clipboard) navigator.clipboard.writeText(varTag);
+        notice(`Copied ${varTag} to clipboard!`, 'success');
+        if (lastActiveField) {
+          const start = lastActiveField.selectionStart ?? lastActiveField.value.length;
+          const end = lastActiveField.selectionEnd ?? lastActiveField.value.length;
+          const val = lastActiveField.value;
+          lastActiveField.value = val.substring(0, start) + varTag + val.substring(end);
+          lastActiveField.selectionStart = lastActiveField.selectionEnd = start + varTag.length;
+          lastActiveField.focus();
+          syncSectionsFromDom();
+          debouncedPreview();
+        }
+      };
+    });
+
+    // Variable search filter
+    const varFilterInput = $('#var-search-filter');
+    if (varFilterInput) {
+      varFilterInput.oninput = () => {
+        const q = varFilterInput.value.toLowerCase().trim();
+        document.querySelectorAll('#studio-var-chips .var-pill-btn').forEach(b => {
+          const match = !q || b.textContent.toLowerCase().includes(q) || b.title.toLowerCase().includes(q);
+          b.style.display = match ? 'inline-block' : 'none';
+        });
+      };
+    }
+
+    // Add quick section toolbar
+    document.querySelectorAll('[data-add-sec]').forEach(btn => {
+      btn.onclick = () => {
+        syncSectionsFromDom();
+        const type = btn.dataset.addSec;
+        const newSec = { id: `sec_${Date.now()}`, type };
+        if (type === 'heading') { newSec.level = 2; newSec.text = 'New Section Heading'; newSec.align = 'left'; }
+        else if (type === 'paragraph') { newSec.text = 'Enter terms or clauses here. Placeholders like {{candidate.name}} are supported.'; newSec.fontSize = 10; newSec.align = 'left'; }
+        else if (type === 'bullet_list') { newSec.items = ['Item 1', 'Item 2']; newSec.listType = 'bullet'; }
+        else if (type === 'key_value') { newSec.pairs = [{ key: 'Designation', value: '{{employment.designation}}' }]; }
+        else if (type === 'salary_annexure') { newSec.title = 'DETAILED COMPENSATION BREAKDOWN'; }
+        else if (type === 'signature_block') {
+          newSec.authorizerName = '{{signature.authorizer_name}}';
+          newSec.authorizerTitle = 'Managing Director';
+          newSec.signerName = '{{signature.signer_name}}';
+        }
+        currentSections.push(newSec);
+        renderSections();
+        debouncedPreview();
+      };
+    });
+
+    // Pre-built clause library trigger
+    const openLibrary = () => {
+      openClauseLibraryModal(clauseSections => {
+        syncSectionsFromDom();
+        currentSections.push(...clauseSections);
+        renderSections();
+        debouncedPreview();
+      });
+    };
+    const libBtn1 = $('#btn-studio-clause-lib');
+    const libBtn2 = $('#btn-studio-add-prebuilt');
+    if (libBtn1) libBtn1.onclick = openLibrary;
+    if (libBtn2) libBtn2.onclick = openLibrary;
+
+    // Refresh preview buttons
+    const refBtn1 = $('#btn-studio-refresh-preview');
+    const refBtn2 = $('#btn-studio-force-refresh');
+    if (refBtn1) refBtn1.onclick = triggerLivePreview;
+    if (refBtn2) refBtn2.onclick = triggerLivePreview;
+
+    // Upload asset shortcut
+    const uploadAssetBtn = $('#btn-studio-upload-asset');
+    if (uploadAssetBtn) uploadAssetBtn.onclick = () => openLetterheadUploadModal();
+
+    // Save button
+    const saveBtn = $('#btn-studio-save-tpl');
+    if (saveBtn) {
+      saveBtn.onclick = async () => {
+        syncSectionsFromDom();
+        const name = String($('#studio-tpl-name')?.value || '').trim();
+        if (!name) {
+          notice('Template title is required.', 'error');
+          $('#studio-tpl-name')?.focus();
+          return;
+        }
+        if (!currentSections.length) {
+          notice('At least one content section is required.', 'error');
+          return;
+        }
+
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Saving...';
+
+        try {
+          const body = {
+            name,
+            description: tpl?.description || 'Company branded offer letter with multi-page terms and salary annexure',
+            status: $('#studio-tpl-status')?.value || 'draft',
+            is_default: $('#studio-tpl-default')?.checked ? 1 : 0,
+            page_config: pageConfig,
+            header_config: headerConfig,
+            footer_config: footerConfig,
+            background_config: backgroundConfig,
+            sections: currentSections
+          };
+
+          if (templateId) {
+            await api(`offer-templates/${templateId}`, 'PUT', body);
+            notice('Offer template updated successfully.', 'success');
+          } else {
+            await api('offer-templates', 'POST', body);
+            notice('Offer template created successfully.', 'success');
+          }
+
+          const closeBtn = $('#close-modal');
+          if (closeBtn) closeBtn.click();
+          await render();
+        } catch (err) {
+          notice(err.message, 'error');
+          saveBtn.disabled = false;
+          saveBtn.textContent = templateId ? 'Save Version' : 'Create Template';
+        }
+      };
+    }
+  } catch (err) {
+    notice(err.message, 'error');
+  }
+}
+
 document.addEventListener('change',event=>{
   if(event.target.matches('#appearance-form input[name="theme"]')){
     const chosen=event.target.value;applyTheme(chosen);$('#save-theme').disabled=chosen===appearance.theme;
@@ -1622,6 +2882,7 @@ document.addEventListener('submit',async event=>{
 document.addEventListener('click',async event=>{
   const b=event.target.closest('[data-action]');if(!b)return;const a=b.dataset.action,id=b.dataset.id;
   try {
+    if(a==='close-modal'){closeModal();return;}
     if(a==='demo-login-modal'){await openDemoModal(false);return;}
     if(a==='switch-demo-role'){await openDemoModal(true);return;}
     if(a==='req-page'||a==='page'){const view=b.dataset.view||'Requisitions';const p=Number(b.dataset.page);const total=Number(b.dataset.totalPages||Infinity);if(p>=1&&p<=total&&p!==(pageState[view]||1)){pageState[view]=p;reqPage=pageState.Requisitions;await render();}return;}
@@ -1655,8 +2916,37 @@ document.addEventListener('click',async event=>{
       await toggleIntegrationEnabled(id, newEnabled);
       return;
     }
+    if(a==='new-offer-template'){await openOfferTemplateEditor();return;}
+    if(a==='edit-template'){await openOfferTemplateEditor(id);return;}
+    if(a==='preview-template'){await openOfferTemplatePreview(id);return;}
+    if(a==='duplicate-template'){
+      await api(`offer-templates/${id}/duplicate`, 'POST', {});
+      notice('Template duplicated successfully.', 'success');
+      await render();
+      return;
+    }
+    if(a==='set-template-default'){
+      await api(`offer-templates/${id}/status`, 'POST', { is_default: 1 });
+      notice('Template set as default.', 'success');
+      await render();
+      return;
+    }
+    if(a==='archive-template'){
+      if(!window.confirm('Archive this offer letter template? Existing issued offers will remain unchanged.'))return;
+      await api(`offer-templates/${id}/status`, 'POST', { status: 'archived' });
+      notice('Template archived.', 'success');
+      await render();
+      return;
+    }
+    if(a==='activate-template'){
+      await api(`offer-templates/${id}/status`, 'POST', { status: 'active' });
+      notice('Template activated.', 'success');
+      await render();
+      return;
+    }
+    if(a==='upload-letterhead'){await openLetterheadUploadModal();return;}
     if(a==='new-req'){
-      modal('New requisition',`<div class="form-grid">${field('Position title','title')}${teamSelect('Team','team',me.team||'Dev',false)}${field('Headcount','headcount','number','1')}${field('Currency','currency','text','USD')}${field('Minimum annual salary','salary_min','number','0')}${field('Maximum annual salary','salary_max','number','0')}${field('Required skills, comma separated','skills','text','',false)}${area('Job description','description','',true)}</div>${button('Draft description from title & skills','draft-jd','','class="secondary"')}`,async v=>{
+      modal('New requisition',`<div class="form-grid">${field('Position title','title')}${teamSelect('Team','team',me.team||'Dev',false)}${field('Headcount','headcount','number','1')}${field('Currency','currency','text','INR')}${field('Minimum annual salary','salary_min','number','0')}${field('Maximum annual salary','salary_max','number','0')}${field('Required skills, comma separated','skills','text','',false)}${area('Job description','description','',true)}</div>${button('Draft description from title & skills','draft-jd','','class="secondary"')}`,async v=>{
         const cErr=checkCurrency(v.currency);
         if(cErr){
           const el=$('#currency-error');if(el)el.textContent=cErr;
@@ -1740,7 +3030,7 @@ document.addEventListener('click',async event=>{
       modal('Review requisition',
         summaryCard +
         adminNotice +
-        select('Decision', 'decision', [['approve', '✓ Approve requisition'], ['reject', '✕ Reject requisition']], 'approve') +
+        select('Decision', 'decision', [['approve', 'Approve requisition'], ['reject', 'Reject requisition']], 'approve') +
         area('Decision note', 'note', ''),
         async v => {
           const payload = { note: v.note };
@@ -1764,7 +3054,7 @@ document.addEventListener('click',async event=>{
       const r=reqs.find(item=>item.id===id)||await api(`requisitions/${id}`);
       if(!r)throw new Error('Requisition not found.');
       if(!['draft','open'].includes(r.status)&&!(allows('admin')&&['pending_manager','pending_finance'].includes(r.status)))throw new Error(`Cannot edit requisition with status ${r.status}.`);
-      modal('Edit requisition',`<div class="form-grid">${field('Position title','title','text',r.title)}${teamSelect('Team','team',r.team||'Dev',false)}${field('Headcount','headcount','number',String(r.headcount))}${field('Currency','currency','text',r.currency)}${field('Minimum annual salary','salary_min','number',String(r.salary_min??0))}${field('Maximum annual salary','salary_max','number',String(r.salary_max??0))}${field('Required skills, comma separated','skills','text',(r.skills||[]).join(', '),false)}${area('Job description','description',r.description,true)}</div>${button('Draft description from title & skills','draft-jd','','class="secondary"')}`,async v=>{
+      modal('Edit requisition',`<div class="form-grid">${field('Position title','title','text',r.title)}${teamSelect('Team','team',r.team||'Dev',false)}${field('Headcount','headcount','number',String(r.headcount))}${field('Currency','currency','text',r.currency||'INR')}${field('Minimum annual salary','salary_min','number',String(r.salary_min??0))}${field('Maximum annual salary','salary_max','number',String(r.salary_max??0))}${field('Required skills, comma separated','skills','text',(r.skills||[]).join(', '),false)}${area('Job description','description',r.description,true)}</div>${button('Draft description from title & skills','draft-jd','','class="secondary"')}`,async v=>{
         const cErr=checkCurrency(v.currency);
         if(cErr){
           const el=$('#currency-error');if(el)el.textContent=cErr;
@@ -1896,6 +3186,36 @@ document.addEventListener('click',async event=>{
         api(`candidates/${id}/signatures`).catch(() => [])
       ]);
       const appsHtml=(c.applications&&c.applications.length)?`<h3>Applications & Status</h3><div class="candidate-status-list" style="margin-bottom:14px;">${c.applications.map(app=>{const title=escape(app.title||'General Application');return `<div class="candidate-status-pair"><span class="candidate-status-role" title="${title}">${title}</span> <span class="status-sep" aria-hidden="true">—</span> ${badge(app.stage||'Applied')}</div>`;}).join('')}</div>`:'';
+
+      // Pre-Onboarding Training Evaluation block if present
+      let trainingEvalHtml = '';
+      const candAppsList = c.applications || [];
+      const appWithEval = candAppsList.find(a => a.training_evaluation || a.training_rating);
+      if (appWithEval) {
+        const ev = appWithEval.training_evaluation || (await api(`applications/${appWithEval.id}/training-evaluation`).catch(() => ({ evaluation: null }))).evaluation;
+        if (ev) {
+          const decisionBadge = ev.decision === 'next'
+            ? `<span class="badge completed" style="font-size:0.75rem;">Passed & Advanced</span>`
+            : (ev.decision === 'revoked'
+              ? `<span class="badge rejected" style="font-size:0.75rem;">Offer Revoked</span>`
+              : `<span class="badge rejected" style="font-size:0.75rem;">Rejected</span>`);
+
+          trainingEvalHtml = `
+            <div class="training-evaluation-card">
+              <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+                <h3 style="margin:0;font-size:0.95rem;">Pre-Onboarding Training Evaluation</h3>
+                ${decisionBadge}
+              </div>
+              <div style="margin-top:6px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+                <span class="badge" style="font-size:0.8rem;font-weight:600;">Rating: ${ev.rating}/5</span>
+                ${ev.practical_score !== null && ev.practical_score !== undefined ? `<span class="muted">· Score: <strong>${ev.practical_score}%</strong></span>` : ''}
+                ${ev.evaluator_name ? `<span class="muted">· Evaluator: ${escape(ev.evaluator_name)}</span>` : ''}
+              </div>
+              ${ev.notes ? `<p class="score-note" style="margin-top:8px;font-size:0.85rem;"><strong>Notes:</strong> ${escape(ev.notes)}</p>` : ''}
+            </div>
+          `;
+        }
+      }
       const resumeHtml=c.resume?`<div class="resume-info" style="margin:10px 0;padding:10px 12px;background:var(--surface-alt);border:1px solid var(--line);border-radius:8px;font-size:0.85rem;"><span class="muted">Attached resume:</span> <strong>${escape(c.resume.filename)}</strong> <span class="badge clean" style="margin-left:6px;font-size:0.75rem;">${escape(c.resume.file_format.toUpperCase())}</span> <span class="muted">(${Math.round(c.resume.file_size/1024)} KB)</span></div>`:'';
       const consent = commsData.consent || { opted_out: false };
       const commsList = commsData.communications || [];
@@ -1927,7 +3247,7 @@ document.addEventListener('click',async event=>{
           let metaText = '';
 
           if (isDone) {
-            statusBadge = `<span class="badge completed" style="font-size:0.72rem;padding:2px 7px;">✓ Signed & Executed</span>`;
+            statusBadge = `<span class="badge completed" style="font-size:0.72rem;padding:2px 7px;">Signed & Executed</span>`;
             const signedAtStr = (s.signers && s.signers[0]?.signed_at)
               ? formatDateIST(s.signers[0].signed_at)
               : formatDateIST(s.updated_at || s.created_at);
@@ -1942,10 +3262,10 @@ document.addEventListener('click',async event=>{
               validityNote = ` · Valid until ${formatDateIST(expDate)} (${daysText})`;
             }
             if (s.status === 'viewed') {
-              statusBadge = `<span class="badge viewed" style="font-size:0.72rem;padding:2px 7px;">👁️ Viewed by Signer</span>`;
+              statusBadge = `<span class="badge viewed" style="font-size:0.72rem;padding:2px 7px;">Viewed by Signer</span>`;
               metaText = `Created ${formatDateIST(s.created_at)}${validityNote} · Awaiting execution`;
             } else {
-              statusBadge = `<span class="badge pending" style="font-size:0.72rem;padding:2px 7px;">⏳ Awaiting Signature</span>`;
+              statusBadge = `<span class="badge pending" style="font-size:0.72rem;padding:2px 7px;">Awaiting Signature</span>`;
               metaText = `Created ${formatDateIST(s.created_at)}${validityNote}`;
             }
           } else if (isCancelled) {
@@ -1966,13 +3286,13 @@ document.addEventListener('click',async event=>{
 
           // Resend email invitation button:
           const sendEmailBtn = (isPending && allows('recruit'))
-            ? `<button type="button" class="button secondary" data-action="resend-sig-email" data-id="${s.id}" data-candidate-id="${c.id}" style="font-size:0.78rem;padding:5px 11px;" title="Invitation email was dispatched upon request creation. Click to resend to candidate.">✉️ Resend Email</button>`
+            ? `<button type="button" class="button secondary" data-action="resend-sig-email" data-id="${s.id}" data-candidate-id="${c.id}" style="font-size:0.78rem;padding:5px 11px;" title="Invitation email was dispatched upon request creation. Click to resend to candidate.">Resend Email</button>`
             : '';
 
           // Copy sign link ONLY if pending/viewed - NEVER when completed, cancelled, or declined
           const firstSigner = (s.signers && s.signers[0]) || null;
           const copyLinkBtn = (isPending)
-            ? `<button type="button" class="button secondary" data-action="copy-sig-link" data-id="${s.id}" data-token="${escape(firstSigner?.token || '')}" style="font-size:0.78rem;padding:5px 11px;" title="Copy secure electronic signing link">📋 Copy Link</button>`
+            ? `<button type="button" class="button secondary" data-action="copy-sig-link" data-id="${s.id}" data-token="${escape(firstSigner?.token || '')}" style="font-size:0.78rem;padding:5px 11px;" title="Copy secure electronic signing link">Copy Link</button>`
             : '';
 
           // Cancel action ONLY if pending/viewed
@@ -2017,7 +3337,7 @@ document.addEventListener('click',async event=>{
           if (sigList.length > 0) {
             footerActionHtml = `
               <div class="sig-action-footer">
-                <span class="sig-status-notice" style="color:var(--negative);font-weight:550;">✕ ${escape(signatureState.reason)} Offer agreements are unavailable</span>
+                <span class="sig-status-notice" style="color:var(--negative);font-weight:550;">${escape(signatureState.reason)} Offer agreements are unavailable</span>
               </div>
             `;
           }
@@ -2032,14 +3352,14 @@ document.addEventListener('click',async event=>{
         } else if (hasCompleted) {
           footerActionHtml = `
             <div class="sig-action-footer">
-              <span class="sig-status-notice" style="color:var(--positive);font-weight:550;">✓ Offer agreement completed and legally executed</span>
+              <span class="sig-status-notice" style="color:var(--positive);font-weight:550;">Offer agreement completed and legally executed</span>
               <button type="button" class="secondary text-button" data-action="new-signature-request" data-id="${c.id}" style="font-size:0.78rem;color:var(--muted);">+ Send Additional Document</button>
             </div>
           `;
         } else if (hasActivePending) {
           footerActionHtml = `
             <div class="sig-action-footer">
-              <span class="sig-status-notice" style="color:var(--warning);font-weight:550;">⏳ Offer letter is currently awaiting candidate signature</span>
+              <span class="sig-status-notice" style="color:var(--warning);font-weight:550;">Offer letter is currently awaiting candidate signature</span>
               <span class="muted" style="font-size:0.75rem;">To send a revised offer, cancel the pending request above first.</span>
             </div>
           `;
@@ -2055,9 +3375,9 @@ document.addEventListener('click',async event=>{
       const totalBadge = isRejected
         ? `<span class="badge rejected" style="font-size:0.74rem;">${signatureState.reason.includes('withdrawn application') ? 'Withdrawn' : 'Rejected'}</span>`
         : (hasCompleted
-          ? `<span class="badge completed" style="font-size:0.74rem;">✓ Executed</span>`
+          ? `<span class="badge completed" style="font-size:0.74rem;">Executed</span>`
           : (hasActivePending
-            ? `<span class="badge pending" style="font-size:0.74rem;">⏳ Pending Signature</span>`
+            ? `<span class="badge pending" style="font-size:0.74rem;">Pending Signature</span>`
             : (!hasApps
               ? `<span class="badge draft" style="font-size:0.74rem;">No Application</span>`
               : (sigList.length ? `<span class="badge rejected" style="font-size:0.74rem;">Inactive</span>` : `<span class="badge draft" style="font-size:0.74rem;">0 Agreements</span>`))));
@@ -2125,7 +3445,7 @@ document.addEventListener('click',async event=>{
       const showFooterOfferBtn = allows('recruit') && signatureState.eligible && !hasCompleted && !hasActivePending;
       const offerFooterBtn = showFooterOfferBtn ? button('Offer & E-Sign','new-signature-request',c.id,'class="secondary" style="margin-right:8px;"') : '';
       const emailAction = allows('recruit') ? `${offerFooterBtn}${button('Send email','send-candidate-email',c.id,'class="primary" style="margin-right:8px;"')}${button('Edit','edit-candidate',c.id,'class="secondary"')}` : '';
-      modal(c.name,`<p>${escape(c.email)}${c.phone?` · ${escape(c.phone)}`:''}${consentBadge}</p><p>${escape((c.skills||[]).join(', '))}</p>${appsHtml}${resumeHtml}${signaturesHtml}<h3>Experience / Resume</h3><p class="score-note">${escape(c.resume_text||c.experience||'No resume text provided.')}</p>${fraudHtml}${commsHtml}${emailAction?`<div class="actions" style="margin-top:16px">${emailAction}</div>`:''}`);
+      modal(c.name,`<p>${escape(c.email)}${c.phone?` · ${escape(c.phone)}`:''}${consentBadge}</p><p>${escape((c.skills||[]).join(', '))}</p>${appsHtml}${resumeHtml}${signaturesHtml}${trainingEvalHtml}<h3>Experience / Resume</h3><p class="score-note">${escape(c.resume_text||c.experience||'No resume text provided.')}</p>${fraudHtml}${commsHtml}${emailAction?`<div class="actions" style="margin-top:16px">${emailAction}</div>`:''}`);
     }
     if(a==='send-candidate-email'){
       const formKey = `comm_${id}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -2179,10 +3499,10 @@ document.addEventListener('click',async event=>{
       bindSearchableSelect('candidate_id');
       bindSearchableSelect('requisition_id');
     }
-    if(a==='move'||a==='reject-app'){
-      const stage=a==='move'?b.dataset.stage:'Rejected';
-      const isBackMove = b && typeof b.textContent === 'string' && b.textContent.trim().startsWith('Back to');
-      if(a==='move' && stage==='Interview' && !isBackMove){
+    async function executeStageMove(targetAppId, stage, isBackMove = false) {
+      const id = targetAppId;
+      const isInterviewLike = /interview/i.test(stage) || stage === 'Screening Round' || stage === 'HR Round';
+      if(isInterviewLike && !isBackMove){
         const [apps, users] = await Promise.all([api('applications'), api('interviewers')]);
         const app = apps.find(x => x.id === id);
         if(!app) throw new Error('Application not found.');
@@ -2199,7 +3519,7 @@ document.addEventListener('click',async event=>{
             if (Array.isArray(s) && s.length) defaultComps = s.slice(0, 3).join(', ');
           } catch {}
         }
-        modal(`Schedule Interview — ${escape(app.name)}`, `
+        modal(`Schedule ${escape(stage)} — ${escape(app.name)}`, `
           <div class="form-grid">
             <div class="full" style="background:var(--surface-alt, #f8fafc);padding:10px 14px;border-radius:6px;border:1px solid var(--line, #e2e8f0);margin-bottom:8px;">
               <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
@@ -2207,13 +3527,22 @@ document.addEventListener('click',async event=>{
                 <div><strong>Position:</strong> ${escape(app.title)}</div>
               </div>
             </div>
+            ${select('Interview Format', 'interview_type', [
+              ['virtual', 'Virtual / Online (Microsoft Teams / Video Call)'],
+              ['in_person', 'In-Person / Physical (Office / On-Site)']
+            ], 'virtual')}
             ${select('Interviewer', 'interviewer_id', users.map(u => [u.id, `${u.name}${u.team ? ' (' + u.team + ')' : ''}`]), defaultInterviewer)}
             ${field('Date and time (IST)', 'scheduled_at', 'datetime-local', defaultScheduled, true, `min="${todayMin}"`)}
             ${select('Duration', 'duration_minutes', [['30', '30 minutes'], ['45', '45 minutes (Standard)'], ['60', '60 minutes'], ['90', '90 minutes']], '45', false)}
-            ${field('Meeting link / Video URL (Optional)', 'meeting_url', 'url', '', false, 'placeholder="Auto-generated via Teams when connected, or paste Google Meet / Zoom link"')}
+            <div id="row-meeting-url" class="full">
+              ${field('Meeting link / Video URL (Optional)', 'meeting_url', 'url', '', false, 'placeholder="Auto-generated via Teams when connected, or paste Google Meet / Zoom link"')}
+            </div>
+            <div id="row-location" class="full" style="display:none;">
+              ${field('Office / Physical Location', 'location', 'text', 'Mechlin Technologies — Corporate HQ, Mohali', false, 'placeholder="e.g. Mechlin Technologies Office, Sector 67, Mohali"')}
+            </div>
             ${field('Competencies, comma separated', 'competencies', 'text', defaultComps, true)}
             ${area('Agenda / Notes (Optional)', 'notes', '', false)}
-            <p class="full status-note">Orbit will advance the application to <strong>Interview</strong>, synchronize the Microsoft Teams calendar event (or use your provided meeting link), and automatically dispatch an invitation email with meeting details and schedule link to <strong>${escape(app.email)}</strong>.</p>
+            <p class="full status-note" id="interview-format-note">Orbit will advance the application to <strong>${escape(stage)}</strong>, synchronize calendar event, and automatically dispatch an invitation email to <strong>${escape(app.email)}</strong>.</p>
           </div>
         `, async v => {
           const scheduledDate = parseISTDateTime(v.scheduled_at);
@@ -2228,42 +3557,103 @@ document.addEventListener('click',async event=>{
           }
           const compList = skills(v.competencies);
           if (!compList.length) throw new Error('At least one competency is required.');
+          const isPhysical = v.interview_type === 'in_person';
           await api('interviews', 'POST', {
             application_id: id,
             interviewer_id: v.interviewer_id,
             scheduled_at: scheduledDate.toISOString(),
             duration_minutes: Number(v.duration_minutes) || 45,
             timezone: 'Asia/Kolkata',
-            meeting_url: v.meeting_url?.trim() || undefined,
+            interview_type: isPhysical ? 'in_person' : 'virtual',
+            location: isPhysical ? (v.location?.trim() || 'Mechlin Technologies — Corporate HQ, Mohali') : undefined,
+            meeting_url: isPhysical ? undefined : (v.meeting_url?.trim() || undefined),
             competencies: compList,
+            round: stage,
             notes: v.notes?.trim() || undefined
           });
-          await api(`applications/${id}/stage`, 'POST', { stage: 'Interview', send_notification: false });
+          await api(`applications/${id}/stage`, 'POST', { stage, send_notification: false });
           const interviewerObj = users.find(u => u.id === v.interviewer_id);
           const interviewerName = interviewerObj ? interviewerObj.name : 'assigned interviewer';
-          notice(`Interview scheduled with ${interviewerName}. Invitation email with meeting link sent to ${app.name}!`, 'success');
-          return `Interview scheduled with ${interviewerName}. Application moved to Interview and invitation email sent to ${app.name}.`;
+          const formatMsg = isPhysical ? 'In-person interview scheduled (arrival details sent)' : 'Interview scheduled (meeting link sent)';
+          notice(`${formatMsg} with ${interviewerName}. Moved to ${stage}!`, 'success');
+          return `Interview scheduled with ${interviewerName}. Application moved to ${stage}.`;
         }, { saveLabel: 'Schedule & Send Invite' });
         const dateInp = $('#edit-form [name="scheduled_at"]');
         if (dateInp) dateInp.min = todayMin;
         bindValidation('competencies', checkSkills);
+        setupInterviewFormatToggle('virtual');
         return;
       }
-      if(a==='move' && stage==='Offer' && !isBackMove){
-        const [apps, reqs] = await Promise.all([api('applications'), api('requisitions')]);
+      if(/pre-onboarding/i.test(stage) && !isBackMove){
+        const apps = await api('applications');
+        const app = apps.find(x => x.id === id);
+        if(!app) throw new Error('Application not found.');
+        modal(`Commence Pre-Onboarding Training — ${escape(app.name)}`, `
+          <div class="form-grid">
+            <div class="full" style="background:var(--surface-alt, #f8fafc);padding:10px 14px;border-radius:6px;border:1px solid var(--line, #e2e8f0);margin-bottom:8px;">
+              <div><strong>Candidate:</strong> ${escape(app.name)} <span class="muted">(${escape(app.email)})</span></div>
+              <div><strong>Position:</strong> ${escape(app.title)}</div>
+            </div>
+            <p class="full status-note" style="color:#065f46;background:#ecfdf5;border:1px solid #a7f3d0;padding:12px;border-radius:8px;">
+              <strong>Pre-Onboarding Training Workflow:</strong><br>
+              Advancing to <strong>Pre-Onboarding Training</strong> enrolls the candidate into initial orientation and technical preparation.<br>
+              Once training is completed, evaluators can record a <strong>Performance Rating (1–5 Stars)</strong> and select <strong>Pass & Advance to Onboarding (Next)</strong> or <strong>Reject/Revoke</strong> directly from the pipeline card.
+            </p>
+          </div>
+        `, async () => {
+          await api(`applications/${id}/stage`, 'POST', { stage, send_notification: true });
+          notice(`Application moved to ${stage}. Ready for training evaluation and rating!`, 'success');
+          return `Application moved to ${stage}.`;
+        }, { saveLabel: 'Start Pre-Onboarding Training' });
+        return;
+      }
+      if(stage==='Offer' && !isBackMove){
+        const [apps, reqs, templates] = await Promise.all([
+          api('applications'),
+          api('requisitions'),
+          api('offer-templates?status=active').catch(() => [])
+        ]);
         const app = apps.find(x => x.id === id);
         if(!app) throw new Error('Application not found.');
         const req = reqs.find(r => r.id === app.requisition_id);
         const defaultSalary = req?.salary_max
           ? Number(req.salary_max).toLocaleString()
           : (req?.salary_min ? Number(req.salary_min).toLocaleString() : '120,000');
-        const defaultCurrency = req?.currency || 'USD';
+        const defaultCurrency = req?.currency || 'INR';
         modal(`Verify Offer & Issue Agreement — ${escape(app.name)}`, `
           <div class="form-grid">
             <div class="full" style="background:var(--surface-alt, #f8fafc);padding:10px 14px;border-radius:6px;border:1px solid var(--line, #e2e8f0);margin-bottom:8px;">
               <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
                 <div><strong>Candidate:</strong> ${escape(app.name)} <span class="muted">(${escape(app.email)})</span></div>
                 <div><strong>Requisition:</strong> ${escape(req?.title || app.title)} ${req?.team ? '<span class="muted">(' + escape(req.team) + ')</span>' : ''}</div>
+              </div>
+            </div>
+            ${templates.length ? `
+              <label class="full">
+                <span class="label-heading">Offer Letter Template</span>
+                <select name="template_id" id="move-offer-tpl-select">
+                  ${templates.map(t => `<option value="${t.id}" ${t.is_default ? 'selected' : ''}>${escape(t.name)} (v${t.version}${t.is_default ? ' — Default' : ''})</option>`).join('')}
+                </select>
+              </label>
+              <div class="full" style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
+                <button type="button" class="button secondary" id="btn-preview-move-offer" style="font-size:0.82rem;padding:6px 14px;">Preview Offer Letter (A4)</button>
+                <small class="muted">Review multi-page A4 flow and salary annexure before sending.</small>
+              </div>
+            ` : ''}
+            <div class="candidate-tailor-toggle-box full">
+              <div class="candidate-tailor-head" id="btn-toggle-tailor-move">
+                <strong style="color:var(--accent);font-size:0.86rem;display:flex;align-items:center;gap:6px;">Customize Clauses for this Offer</strong>
+                <span id="tailor-move-chevron" style="font-size:0.75rem;color:var(--muted);font-weight:700;">[ Customize Clauses ]</span>
+              </div>
+              <div id="tailor-move-body" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--line);">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:6px;">
+                  <small class="muted">Add a joining bonus, modify notice period, or tailor terms specifically for this candidate.</small>
+                  <div style="display:flex;gap:4px;">
+                    <button type="button" class="secondary" id="btn-tailor-move-clause-lib" style="font-size:0.74rem;padding:3px 8px;">Clause Library</button>
+                    <button type="button" class="secondary" id="btn-tailor-move-add-bonus" style="font-size:0.74rem;padding:3px 8px;">Add Joining Bonus</button>
+                  </div>
+                </div>
+                <div id="tailor-move-sections-list"></div>
               </div>
             </div>
             ${field('Document title', 'title', 'text', 'Employment Offer Letter', true)}
@@ -2293,10 +3683,12 @@ document.addEventListener('click',async event=>{
             candidate_id: app.candidate_id,
             application_id: app.id,
             requisition_id: app.requisition_id || undefined,
+            template_id: v.template_id || undefined,
             salary: v.salary?.trim() || defaultSalary,
             currency: v.currency?.trim()?.toUpperCase() || defaultCurrency,
             start_date: v.start_date?.trim() || 'Two weeks following signature acceptance',
             expires_days: Number(v.expires_days) || 7,
+            custom_sections: tailoredSections || undefined,
             signers: [{
               name: v.signer_name?.trim() || app.name,
               email: v.signer_email?.trim() || app.email,
@@ -2310,9 +3702,140 @@ document.addEventListener('click',async event=>{
         }, { saveLabel: 'Generate Offer & Send Signature Email' });
         bindValidation('signer_email', checkEmail);
         bindValidation('currency', checkCurrency);
+
+        let tailoredSections = null;
+        const toggleBtn = $('#btn-toggle-tailor-move');
+        const tailorBody = $('#tailor-move-body');
+        const tailorChevron = $('#tailor-move-chevron');
+        const tplSelect = $('#move-offer-tpl-select');
+
+        const renderTailoredList = () => {
+          const listEl = $('#tailor-move-sections-list');
+          if (!listEl || !tailoredSections) return;
+          listEl.innerHTML = tailoredSections.map((s, idx) => {
+            let preview = s.text || s.title || (s.items ? s.items.join('; ') : s.type);
+            return `
+              <div class="studio-section-card" data-tailor-idx="${idx}" style="padding:10px;margin-bottom:8px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                  <div style="display:flex;align-items:center;gap:6px;">
+                    <span class="studio-section-badge studio-badge-${s.type}" style="font-size:0.65rem;">${s.type.replace('_',' ')}</span>
+                    <strong style="font-size:0.8rem;">Section #${idx+1}</strong>
+                  </div>
+                  <div style="display:flex;gap:3px;">
+                    <button type="button" class="secondary" data-tailor-act="up" data-idx="${idx}" ${idx===0?'disabled':''} style="min-height:22px;padding:0 6px;font-size:0.7rem;">Up</button>
+                    <button type="button" class="secondary" data-tailor-act="down" data-idx="${idx}" ${idx===tailoredSections.length-1?'disabled':''} style="min-height:22px;padding:0 6px;font-size:0.7rem;">Down</button>
+                    <button type="button" class="secondary" data-tailor-act="del" data-idx="${idx}" style="min-height:22px;padding:0 6px;font-size:0.7rem;color:var(--negative);">Remove</button>
+                  </div>
+                </div>
+                ${s.type === 'heading' ? `
+                  <input type="text" data-tailor-field="text" data-idx="${idx}" value="${escape(s.text||'')}" style="font-size:0.8rem;padding:4px 8px;font-weight:600;">
+                ` : (s.type === 'paragraph' ? `
+                  <textarea data-tailor-field="text" data-idx="${idx}" rows="2" style="font-size:0.8rem;line-height:1.4;">${escape(s.text||'')}</textarea>
+                ` : (s.type === 'bullet_list' ? `
+                  <textarea data-tailor-field="items" data-idx="${idx}" rows="2" style="font-size:0.8rem;">${escape((s.items||[]).join('\n'))}</textarea>
+                ` : `<small class="muted">${escape(preview)}</small>`))}
+              </div>
+            `;
+          }).join('');
+
+          listEl.querySelectorAll('input, textarea').forEach(el => {
+            el.oninput = () => {
+              const i = Number(el.dataset.idx);
+              const field = el.dataset.tailorField;
+              if (tailoredSections[i]) {
+                if (field === 'items') {
+                  tailoredSections[i].items = el.value.split('\n').map(x => x.trim()).filter(Boolean);
+                } else {
+                  tailoredSections[i][field] = el.value;
+                }
+              }
+            };
+          });
+
+          listEl.querySelectorAll('[data-tailor-act]').forEach(btn => {
+            btn.onclick = () => {
+              const act = btn.dataset.tailorAct;
+              const i = Number(btn.dataset.idx);
+              if (act === 'up' && i > 0) {
+                const tmp = tailoredSections[i];
+                tailoredSections[i] = tailoredSections[i - 1];
+                tailoredSections[i - 1] = tmp;
+              } else if (act === 'down' && i < tailoredSections.length - 1) {
+                const tmp = tailoredSections[i];
+                tailoredSections[i] = tailoredSections[i + 1];
+                tailoredSections[i + 1] = tmp;
+              } else if (act === 'del') {
+                tailoredSections.splice(i, 1);
+              }
+              renderTailoredList();
+            };
+          });
+        };
+
+        const loadTailorSections = async () => {
+          const chosenTplId = tplSelect?.value || templates[0]?.id;
+          if (!chosenTplId) return;
+          const tplData = await api(`offer-templates/${chosenTplId}`).catch(() => null);
+          tailoredSections = tplData?.sections ? JSON.parse(JSON.stringify(tplData.sections)) : [];
+          renderTailoredList();
+        };
+
+        if (toggleBtn) {
+          toggleBtn.onclick = async () => {
+            const isHidden = tailorBody.style.display === 'none';
+            tailorBody.style.display = isHidden ? 'block' : 'none';
+            tailorChevron.textContent = isHidden ? '[ Collapse Customizer ]' : '[ Customize Clauses ]';
+            if (isHidden && !tailoredSections) {
+              await loadTailorSections();
+            }
+          };
+        }
+
+        if (tplSelect) {
+          tplSelect.onchange = async () => {
+            if (tailoredSections) {
+              await loadTailorSections();
+            }
+          };
+        }
+
+        const addBonusBtn = $('#btn-tailor-move-add-bonus');
+        if (addBonusBtn) {
+          addBonusBtn.onclick = () => {
+            if (!tailoredSections) tailoredSections = [];
+            tailoredSections.push(
+              { id: `sec_bonus_${Date.now()}`, type: 'heading', level: 2, text: 'Special Joining Bonus' },
+              { id: `sec_bonus_p_${Date.now()}`, type: 'paragraph', text: 'You are eligible for a special one-time joining bonus of ₹100,000, payable with your first monthly payroll cycle. Should you voluntarily resign within 12 months, this bonus must be repaid in full.' }
+            );
+            renderTailoredList();
+            notice('Added Joining Bonus clause!', 'success');
+          };
+        }
+
+        const addLibBtn = $('#btn-tailor-move-clause-lib');
+        if (addLibBtn) {
+          addLibBtn.onclick = () => {
+            openClauseLibraryModal(clauseSections => {
+              if (!tailoredSections) tailoredSections = [];
+              tailoredSections.push(...clauseSections);
+              renderTailoredList();
+            });
+          };
+        }
+
+        const previewBtn = $('#btn-preview-move-offer');
+        if (previewBtn) {
+          previewBtn.onclick = () => {
+            const tplId = $('#move-offer-tpl-select')?.value;
+            if (!tplId) return;
+            const curSalary = $('#edit-form [name="salary"]')?.value || defaultSalary;
+            const curCurr = $('#edit-form [name="currency"]')?.value || defaultCurrency;
+            openOfferTemplatePreview(tplId, app.candidate_id, app.requisition_id, app.id, curSalary, curCurr, tailoredSections);
+          };
+        }
         return;
       }
-      if(a==='move' && stage==='Hired' && !isBackMove){
+      if(stage==='Hired' && !isBackMove){
         const [apps, candSigs] = await Promise.all([
           api('applications'),
           api(`signatures?application_id=${id}`).catch(() => [])
@@ -2342,6 +3865,173 @@ document.addEventListener('click',async event=>{
         await api(`applications/${id}/stage`,'POST',{stage});
         return stage==='Rejected'?'Application rejected. Status update email sent.':`Application moved to ${stage} successfully. Status update email sent.`;
       },{saveLabel:stage==='Rejected'?'Reject & Notify':'Move & Notify'});
+    }
+
+    if(a==='move'||a==='reject-app'){
+      const stage=a==='move'?b.dataset.stage:'Rejected';
+      const isBackMove = b && typeof b.textContent === 'string' && b.textContent.trim().startsWith('Back to');
+      await executeStageMove(id, stage, isBackMove);
+      return;
+    }
+
+    if(a==='skip-stage'){
+      const [apps, stages] = await Promise.all([api('applications'), api('pipeline')]);
+      const app = apps.find(x => x.id === id);
+      if(!app) throw new Error('Application not found.');
+      const curIdx = stages.indexOf(app.stage);
+      if(curIdx === -1) throw new Error('Unknown current stage.');
+
+      const candidates = stages.slice(curIdx + 2).filter(target => {
+        if (['Hired', 'Rejected', 'Revoked'].includes(target)) return false;
+        const intermediate = stages.slice(curIdx + 1, stages.indexOf(target));
+        if (intermediate.some(s => /(^|\b)(offer|hired)(\b|$)/i.test(s))) return false;
+        if (app.stage === 'Applied' && /pre-onboarding|training/i.test(target)) return false;
+        return true;
+      });
+
+      if (!candidates.length) {
+        notice('No additional forward stages available to skip to.', 'info');
+        return;
+      }
+
+      modal(`Skip Stages — ${escape(app.name)}`, `
+        <div class="form-grid">
+          <div class="full" style="background:var(--surface-alt, #f8fafc);padding:10px 14px;border-radius:6px;border:1px solid var(--line, #e2e8f0);margin-bottom:8px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+              <div><strong>Candidate:</strong> ${escape(app.name)} <span class="muted">(${escape(app.email)})</span></div>
+              <div><strong>Current Stage:</strong> <span class="badge active">${escape(app.stage)}</span></div>
+            </div>
+          </div>
+          <label class="full">
+            <span class="label-heading">Skip to Stage *</span>
+            <select name="target_stage" id="skip-target-stage" required>
+              ${candidates.map(target => {
+                const intermediate = stages.slice(curIdx + 1, stages.indexOf(target));
+                const skippedLabel = intermediate.length ? ` (Bypassing: ${intermediate.join(', ')})` : '';
+                return `<option value="${escape(target)}">${escape(target)}${escape(skippedLabel)}</option>`;
+              }).join('')}
+            </select>
+          </label>
+          <p class="full status-note" style="color:var(--accent);background:var(--tint);padding:10px 12px;border-radius:6px;font-size:0.8rem;margin:0;">
+            Fast-track candidate by skipping intermediate interview or evaluation rounds directly to the selected stage.
+          </p>
+        </div>
+      `, async v => {
+        const targetStage = v.target_stage;
+        if (!targetStage) throw new Error('Please select a destination stage.');
+        const isInterviewLike = /interview/i.test(targetStage) || targetStage === 'Screening Round' || targetStage === 'HR Round';
+        const needsDedicatedModal = isInterviewLike || /pre-onboarding/i.test(targetStage) || targetStage === 'Offer' || targetStage === 'Hired';
+        if (needsDedicatedModal) {
+          setTimeout(() => {
+            executeStageMove(id, targetStage, false);
+          }, 50);
+          return null;
+        }
+        await api(`applications/${id}/stage`, 'POST', { stage: targetStage });
+        return `Application moved to ${targetStage} successfully. Status update email sent.`;
+      }, { saveLabel: 'Skip & Proceed' });
+      return;
+    }
+    if(a==='rate-training'){
+      const [apps, stages] = await Promise.all([api('applications'), api('pipeline')]);
+      const app = apps.find(x => x.id === id);
+      if (!app) throw new Error('Application not found.');
+
+      const existingEval = app.training_evaluation || (await api(`applications/${id}/training-evaluation`).catch(() => ({ evaluation: null }))).evaluation;
+      const defaultRating = existingEval?.rating || 5;
+      const defaultScore = existingEval?.practical_score !== null && existingEval?.practical_score !== undefined ? existingEval.practical_score : '';
+      const defaultNotes = existingEval?.notes || '';
+      const defaultDecision = existingEval?.decision || 'next';
+
+      const nextStageName = stages.includes('Onboarding') ? 'Onboarding' : (stages[stages.indexOf(app.stage) + 1] || 'Onboarding');
+
+      const modalHtml = `
+        <div class="form-grid">
+          <div class="full" style="background:var(--surface-alt,#f8fafc);padding:12px 14px;border-radius:8px;border:1px solid var(--line,#e2e8f0);margin-bottom:8px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:gap;gap:8px;">
+              <div><strong>Candidate:</strong> ${escape(app.name)} <span class="muted">(${escape(app.email)})</span></div>
+              <div><strong>Requisition:</strong> ${escape(app.title)}</div>
+            </div>
+          </div>
+
+          <label class="full">
+            <span class="label-heading">Training Performance Rating (1–5) *</span>
+            <select name="rating" id="training-rating-select" required>
+              <option value="5" ${defaultRating === 5 ? 'selected' : ''}>5 — Outstanding (Exceeded all training benchmarks)</option>
+              <option value="4" ${defaultRating === 4 ? 'selected' : ''}>4 — Very Good (Consistent high performance)</option>
+              <option value="3" ${defaultRating === 3 ? 'selected' : ''}>3 — Competent / Meets Expectations (Cleared training)</option>
+              <option value="2" ${defaultRating === 2 ? 'selected' : ''}>2 — Marginal / Needs Improvement</option>
+              <option value="1" ${defaultRating === 1 ? 'selected' : ''}>1 — Unsatisfactory (Failed key objectives)</option>
+            </select>
+          </label>
+
+          <label class="full">
+            <span class="label-heading">Practical Assessment Score (%) <span class="field-optional">Optional</span></span>
+            <input type="number" name="practical_score" min="0" max="100" step="0.5" value="${escape(defaultScore)}" placeholder="e.g. 88.5">
+          </label>
+
+          <label class="full">
+            <span class="label-heading">Trainer & Evaluation Notes</span>
+            <textarea name="notes" rows="3" placeholder="Summary of capstone project, attendance, team collaboration, and readiness for full onboarding...">${escape(defaultNotes)}</textarea>
+          </label>
+
+          <fieldset class="full" style="border:1px solid var(--line);border-radius:8px;padding:12px 14px;background:var(--surface);">
+            <legend style="font-size:0.85rem;font-weight:600;padding:0 6px;">Evaluation Decision & Action *</legend>
+            <div style="display:flex;flex-direction:column;gap:8px;margin-top:4px;">
+              <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
+                <input type="radio" name="decision" value="next" ${defaultDecision === 'next' ? 'checked' : ''}>
+                <span><strong style="color:var(--positive,#16a34a);">Pass & Advance to ${escape(nextStageName)}</strong> — Candidate cleared pre-onboarding training and moves forward.</span>
+              </label>
+              <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
+                <input type="radio" name="decision" value="rejected" ${defaultDecision === 'rejected' ? 'checked' : ''}>
+                <span><strong style="color:var(--negative,#dc2626);">Did Not Pass (Reject)</strong> — Performance did not meet requirements; candidate application is concluded.</span>
+              </label>
+              ${stages.includes('Revoked') ? `
+                <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
+                  <input type="radio" name="decision" value="revoked" ${defaultDecision === 'revoked' ? 'checked' : ''}>
+                  <span><strong style="color:var(--negative,#dc2626);">Revoke Offer & Disqualify</strong> — Offer is formally revoked and candidate is archived.</span>
+                </label>
+              ` : ''}
+            </div>
+          </fieldset>
+        </div>
+      `;
+
+      modal(`Evaluate Pre-Onboarding Training — ${escape(app.name)}`, modalHtml, async v => {
+        const payload = {
+          rating: Number(v.rating) || 5,
+          practical_score: v.practical_score ? Number(v.practical_score) : null,
+          decision: v.decision || 'next',
+          notes: v.notes?.trim() || '',
+          status: v.decision === 'next' ? 'passed' : 'failed'
+        };
+        const res = await api(`applications/${id}/training-evaluation`, 'POST', payload);
+        const actionLabel = payload.decision === 'next' ? `advanced to ${nextStageName}` : (payload.decision === 'revoked' ? 'revoked' : 'rejected');
+        notice(`Training evaluation recorded (Rating: ${payload.rating}/5). Candidate ${actionLabel}!`, 'success');
+        return `Evaluation saved. Application moved to ${res.application?.stage || actionLabel}.`;
+      }, { saveLabel: 'Submit Training Evaluation & Advance' });
+      return;
+    }
+    if(a==='revoke-app'){
+      modal('Revoke Candidate Offer', `<p>Are you sure you want to <strong>revoke</strong> the offer for this candidate?</p><p class="muted" style="font-size:0.82rem;margin-top:6px;">This will transition the application to the terminal Revoked status and archive active agreements.</p>`, async () => {
+        await api(`applications/${id}/stage`, 'POST', { stage: 'Revoked' });
+        return 'Offer revoked successfully. Candidate application updated to Revoked.';
+      }, { saveLabel: 'Revoke Offer & Close' });
+      return;
+    }
+    if(a==='apply-preset'){
+      const presetName = b.dataset.preset;
+      const presetLabels = {
+        smart_hybrid: 'Smart Hybrid (2 Interview Rounds + Pre-Onboarding Training + Onboarding + Hired/Revoked)',
+        smart_hybrid_3rounds: 'Smart Hybrid (3 Interview Rounds + Pre-Onboarding Training + Onboarding + Hired/Revoked)',
+        standard: 'Standard Pipeline (Applied -> Screening -> Interview -> Offer -> Hired -> Rejected)'
+      };
+      const label = presetLabels[presetName] || presetName;
+      if (!confirm(`Switch pipeline architecture to:\n"${label}"?`)) return;
+      await api('pipeline', 'PUT', { preset: presetName });
+      notice(`Pipeline switched to ${label}!`, 'success');
+      await render();
+      return;
     }
     if(a==='match'){
       const r=await api(`applications/${id}/match`);
@@ -2412,7 +4102,49 @@ document.addEventListener('click',async event=>{
         return 'Review decision recorded successfully.';
       });
     }
-    if(a==='new-interview'){const [apps,users]=await Promise.all([api('applications'),api('interviewers')]);const active=apps.filter(a=>!['Hired','Rejected'].includes(a.stage));if(!active.length||!users.length)throw new Error('An active application and interviewer are required.');const todayMin=getLocalTodayMin();modal('Plan interview',select('Application','application_id',active.map(a=>[a.id,`${a.name} · ${a.title}`]))+select('Interviewer','interviewer_id',users.map(u=>[u.id,u.name]))+field('Date and time (IST)','scheduled_at','datetime-local','',true,`min="${todayMin}"`)+select('Duration','duration_minutes',[['30','30 minutes'],['45','45 minutes (Standard)'],['60','60 minutes'],['90','90 minutes']],'45',false)+field('Meeting link / Video URL (Optional)','meeting_url','url','',false,'placeholder="Auto-generated via Teams when connected, or paste Google Meet / Zoom link"')+field('Competencies, comma separated','competencies','text','Role knowledge, Problem solving')+area('Agenda / Notes (Optional)','notes','',false)+'<p class="status-note">This schedules the interview and creates a Microsoft Teams meeting and candidate invite when configured.</p>',async v=>{const scheduledDate=parseISTDateTime(v.scheduled_at);if(!scheduledDate||!Number.isFinite(scheduledDate.getTime())||scheduledDate.getTime()<Date.now()){throw new Error('Enter a future interview date.');}await api('interviews','POST',{...v,scheduled_at:scheduledDate.toISOString(),timezone:'Asia/Kolkata',competencies:skills(v.competencies),duration_minutes:Number(v.duration_minutes)||45,meeting_url:v.meeting_url?.trim()||undefined,notes:v.notes?.trim()||undefined});return 'Interview scheduled successfully.';});const dateInp=$('#edit-form [name="scheduled_at"]');if(dateInp)dateInp.min=todayMin;}
+    if(a==='new-interview'){
+      const [apps,users]=await Promise.all([api('applications'),api('interviewers')]);
+      const active=apps.filter(a=>!['Hired','Rejected'].includes(a.stage));
+      if(!active.length||!users.length)throw new Error('An active application and interviewer are required.');
+      const todayMin=getLocalTodayMin();
+      modal('Plan interview',`<div class="form-grid">
+        ${select('Application','application_id',active.map(a=>[a.id,`${a.name} · ${a.title}`]))}
+        ${select('Interview Format','interview_type',[['virtual','Virtual / Online (Microsoft Teams / Video Call)'],['in_person','In-Person / Physical (Office / On-Site)']],'virtual')}
+        ${select('Interviewer','interviewer_id',users.map(u=>[u.id,u.name]))}
+        ${field('Date and time (IST)','scheduled_at','datetime-local','',true,`min="${todayMin}"`)}
+        ${select('Duration','duration_minutes',[['30','30 minutes'],['45','45 minutes (Standard)'],['60','60 minutes'],['90','90 minutes']],'45',false)}
+        <div id="row-meeting-url" class="full">
+          ${field('Meeting link / Video URL (Optional)','meeting_url','url','',false,'placeholder="Auto-generated via Teams when connected, or paste Google Meet / Zoom link"')}
+        </div>
+        <div id="row-location" class="full" style="display:none;">
+          ${field('Office / Physical Location','location','text','Mechlin Technologies — Corporate HQ, Mohali',false,'placeholder="e.g. Mechlin Technologies Office, Sector 67, Mohali"')}
+        </div>
+        ${field('Competencies, comma separated','competencies','text','Role knowledge, Problem solving')}
+        ${area('Agenda / Notes (Optional)','notes','',false)}
+        <p class="full status-note" id="interview-format-note">This schedules the interview and creates a Microsoft Teams meeting and candidate invite when configured.</p>
+      </div>`,async v=>{
+        const scheduledDate=parseISTDateTime(v.scheduled_at);
+        if(!scheduledDate||!Number.isFinite(scheduledDate.getTime())||scheduledDate.getTime()<Date.now()){
+          throw new Error('Enter a future interview date.');
+        }
+        const isPhysical=v.interview_type==='in_person';
+        await api('interviews','POST',{
+          ...v,
+          scheduled_at:scheduledDate.toISOString(),
+          timezone:'Asia/Kolkata',
+          competencies:skills(v.competencies),
+          duration_minutes:Number(v.duration_minutes)||45,
+          interview_type:isPhysical?'in_person':'virtual',
+          location:isPhysical?(v.location?.trim()||'Mechlin Technologies — Corporate HQ, Mohali'):undefined,
+          meeting_url:isPhysical?undefined:(v.meeting_url?.trim()||undefined),
+          notes:v.notes?.trim()||undefined
+        });
+        return 'Interview scheduled successfully.';
+      });
+      const dateInp=$('#edit-form [name="scheduled_at"]');
+      if(dateInp)dateInp.min=todayMin;
+      setupInterviewFormatToggle('virtual');
+    }
     if(a==='edit-interview'||a==='reschedule-interview'){
       const interviews=await api('interviews');
       const i=interviews.find(item=>item.id===id)||await api(`interviews/${id}`);
@@ -2426,7 +4158,24 @@ document.addEventListener('click',async event=>{
         interviewerOptions.unshift([i.interviewer_id, `${i.interviewer || 'Assigned interviewer'} (Current)`]);
       }
       const todayMin=getLocalTodayMin();
-      modal('Edit interview',`<div class="form-grid"><p class="full"><strong>Candidate:</strong> ${escape(i.name)} · ${escape(i.title)}</p>${interviewerOptions.length?select('Interviewer','interviewer_id',interviewerOptions,i.interviewer_id):`<p class="full"><strong>Interviewer:</strong> ${escape(i.interviewer)}</p>`}${field('Date and time (IST)','scheduled_at','datetime-local',toLocal(i.scheduled_at),true,`min="${todayMin}"`)}${select('Duration','duration_minutes',[['30','30 minutes'],['45','45 minutes (Standard)'],['60','60 minutes'],['90','90 minutes']],String(i.duration_minutes||45),false)}${field('Meeting link / Video URL (Optional)','meeting_url','url',i.meeting_url||'',false,'placeholder="Auto-generated via Teams when connected, or paste Google Meet / Zoom link"')}${canManage?field('Competencies, comma separated','competencies','text',comps.join(', '),true):''}${area('Agenda / Update notes (Optional)','notes',i.notes||'',false)}<p class="full status-note">This updates the scheduled interview date and time and synchronizes with Microsoft Teams when configured.</p></div>`,async v=>{
+      const currentType = i.interview_type === 'in_person' ? 'in_person' : 'virtual';
+      const currentLocation = i.location || 'Mechlin Technologies — Corporate HQ, Mohali';
+      modal('Edit interview',`<div class="form-grid">
+        <p class="full"><strong>Candidate:</strong> ${escape(i.name)} · ${escape(i.title)}</p>
+        ${select('Interview Format','interview_type',[['virtual','Virtual / Online (Microsoft Teams / Video Call)'],['in_person','In-Person / Physical (Office / On-Site)']],currentType)}
+        ${interviewerOptions.length?select('Interviewer','interviewer_id',interviewerOptions,i.interviewer_id):`<p class="full"><strong>Interviewer:</strong> ${escape(i.interviewer)}</p>`}
+        ${field('Date and time (IST)','scheduled_at','datetime-local',toLocal(i.scheduled_at),true,`min="${todayMin}"`)}
+        ${select('Duration','duration_minutes',[['30','30 minutes'],['45','45 minutes (Standard)'],['60','60 minutes'],['90','90 minutes']],String(i.duration_minutes||45),false)}
+        <div id="row-meeting-url" class="full" ${currentType === 'in_person' ? 'style="display:none;"' : ''}>
+          ${field('Meeting link / Video URL (Optional)','meeting_url','url',i.meeting_url||'',false,'placeholder="Auto-generated via Teams when connected, or paste Google Meet / Zoom link"')}
+        </div>
+        <div id="row-location" class="full" ${currentType !== 'in_person' ? 'style="display:none;"' : ''}>
+          ${field('Office / Physical Location','location','text',currentLocation,false,'placeholder="e.g. Mechlin Technologies Office, Sector 67, Mohali"')}
+        </div>
+        ${canManage?field('Competencies, comma separated','competencies','text',comps.join(', '),true):''}
+        ${area('Agenda / Update notes (Optional)','notes',i.notes||'',false)}
+        <p class="full status-note" id="interview-format-note">${currentType === 'in_person' ? 'This is an in-person interview. No virtual meeting link is used.' : 'This updates the scheduled interview date and time and synchronizes with Microsoft Teams when configured.'}</p>
+      </div>`,async v=>{
         const scheduledDate=parseISTDateTime(v.scheduled_at);
         if(!scheduledDate||!Number.isFinite(scheduledDate.getTime())||scheduledDate.getTime()<Date.now()){
           throw new Error('Enter a future interview date.');
@@ -2436,11 +4185,14 @@ document.addEventListener('click',async event=>{
           updatedComps=skills(v.competencies);
           if(!updatedComps.length)throw new Error('At least one competency is required.');
         }
+        const isPhysical=v.interview_type==='in_person';
         const payload={
           scheduled_at:scheduledDate.toISOString(),
           duration_minutes:Number(v.duration_minutes)||45,
           timezone:'Asia/Kolkata',
-          meeting_url:v.meeting_url?.trim()||undefined,
+          interview_type:isPhysical?'in_person':'virtual',
+          location:isPhysical?(v.location?.trim()||'Mechlin Technologies — Corporate HQ, Mohali'):'',
+          meeting_url:isPhysical?null:(v.meeting_url?.trim()||null),
           notes:v.notes?.trim()||undefined,
           ...(v.interviewer_id?{interviewer_id:v.interviewer_id}:{}),
           ...(updatedComps?{competencies:updatedComps}:{})
@@ -2448,6 +4200,7 @@ document.addEventListener('click',async event=>{
         await api(`interviews/${id}`,'PUT',payload);
         return 'Interview updated successfully.';
       });
+      setupInterviewFormatToggle(currentType);
     }
     if(a==='cancel-interview'){
       const interviews=await api('interviews');
@@ -2541,24 +4294,124 @@ document.addEventListener('click',async event=>{
     if(a==='new-user'){const roles=(await api('me')).roles.filter(r=>r!=='Agency');modal('Add Microsoft 365 user',field('Full name','name')+field('Microsoft email','email','email')+field('Entra object ID','oid')+field('Entra tenant ID','tenant')+select('Role','role',roles,'Employee/Referral')+teamSelect('Team','team','',true)+'<p class="muted">This grants approved access to the exact Entra identity. It does not create a Microsoft account or an ATS password.</p>',async v=>{await api('admin/users','POST',v);return 'User provisioned successfully.';});}
     if(a==='manage-user'){const u=window.currentUsers.find(u=>u.id===id);const roles=(await api('me')).roles.filter(r=>r!=='Agency');const actions=u.status==='pending'?['approve','reject']:u.status==='active'?['update','disable','force-logout']:['reactivate','update'];modal(`Manage ${u.name}`,`<p>${escape(u.email)} · ${badge(u.status)}</p><p class="mono">Entra object: ${escape(u.oid)}</p>`+select('Action','action',actions)+select('Role','role',roles,u.role)+teamSelect('Team','team',u.team||'',true)+'<p class="muted">Access changes revoke all current ATS sessions.</p>',async v=>{await api(`admin/users/${id}/${v.action}`,'POST',v);return `User ${v.action} completed successfully.`;});}
     if(a==='edit-pipeline'){
-      const stages=await api('pipeline');
+      const [stages, presets, apps] = await Promise.all([
+        api('pipeline'),
+        api('pipeline/presets').catch(() => null),
+        api('applications').catch(() => [])
+      ]);
+
+      const stageCounts = {};
+      for (const ap of apps) {
+        if (!['Hired', 'Rejected', 'Revoked'].includes(ap.stage)) {
+          stageCounts[ap.stage] = (stageCounts[ap.stage] || 0) + 1;
+        }
+      }
+      const occupiedStages = Object.entries(stageCounts);
+
+      const occupiedHtml = occupiedStages.length > 0 ? `
+        <div style="margin-top:10px;padding:10px 12px;background:var(--tint);border-radius:6px;border:1px solid var(--accent);font-size:0.8rem;line-height:1.4;">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;flex-wrap:wrap;">
+            <strong style="color:var(--accent);">Active Candidates in Pipeline:</strong>
+            ${occupiedStages.map(([stg, count]) => `<span class="badge" style="background:var(--surface);font-size:0.75rem;">${escape(stg)}: <strong>${count}</strong></span>`).join('')}
+          </div>
+          <span class="muted">These stages have active candidates. If you replace them with a new preset (like Smart Hybrid), candidates will be automatically migrated (e.g. <em>Screening → Screening Round</em>, <em>Interview → Interview Round 1</em>) so no candidate is lost.</span>
+        </div>
+      ` : '';
+
       modal('Edit pipeline',
         `<div class="edit-pipeline-notice" style="margin-bottom:14px;padding:12px;background:var(--surface-alt);border:1px solid var(--line);border-radius:8px;font-size:0.83rem;line-height:1.5;">` +
-          `<strong style="color:var(--ink);">Pipeline Structure Guidelines:</strong><br>` +
           `<span class="muted">• Must begin with <strong>Applied</strong> (initial entry).<br>` +
-          `• Intermediate active stages progress sequentially (e.g. Screening, Interview, Offer).<br>` +
-          `• <strong>Hired</strong> and <strong>Rejected</strong> are automatically preserved as terminal outcomes.</span>` +
+          `• Intermediate interview and evaluation rounds are flexible and can be skipped directly in the pipeline board for fast-tracking candidates.<br>` +
+          `• Major milestones <strong>Offer</strong> and <strong>Hired</strong> (and optional <strong>Revoked</strong>) are preserved.<br>` +
+          `• Supports up to <strong>30 stages</strong> for advanced multi-round recruiting workflows.</span>` +
+          occupiedHtml +
         `</div>` +
-        area('Stages, one per line','stages',stages.join('\n'),true),
+        `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:8px;">` +
+          `<span style="font-size:0.8rem;font-weight:600;color:var(--text);">Pipeline Workflow Presets:</span>` +
+          `<div style="display:flex;gap:6px;flex-wrap:wrap;">` +
+            `<button type="button" class="secondary" id="btn-preset-hybrid" style="font-size:0.75rem;padding:3px 8px;">Smart Hybrid (Default)</button>` +
+            `<button type="button" class="secondary" id="btn-preset-hybrid3" style="font-size:0.75rem;padding:3px 8px;">Smart Hybrid (3 Rounds)</button>` +
+          `</div>` +
+        `</div>` +
+        area('Stages, one per line','stages',stages.join('\n'),true) +
+        `<div style="display:flex;justify-content:space-between;margin-top:6px;font-size:0.78rem;" class="muted">` +
+          `<span id="pipeline-stages-counter">Stages configured: ${stages.length} / 30 max</span>` +
+        `</div>`,
         async v=>{
           let entered=v.stages.split('\n').map(s=>s.trim()).filter(Boolean);
           if(entered[0]!=='Applied') entered.unshift('Applied');
-          entered=entered.filter(s=>!['Hired','Rejected'].includes(s));
-          entered.push('Hired','Rejected');
-          await api('pipeline','PUT',{stages:entered});
+          const hasRevoked = entered.includes('Revoked');
+          entered=entered.filter(s=>!['Hired','Rejected','Revoked'].includes(s));
+          if(hasRevoked){
+            entered.push('Hired','Rejected','Revoked');
+          } else {
+            entered.push('Hired','Rejected');
+          }
+          if(entered.length > 30) throw new Error(`Stages must be a list with at most 30 items (currently has ${entered.length}).`);
+
+          // Calculate automatic remappings for occupied stages
+          const stageRemap = {};
+          for (const [occupiedStage] of occupiedStages) {
+            if (!entered.includes(occupiedStage)) {
+              if (occupiedStage === 'Screening' && entered.includes('Screening Round')) {
+                stageRemap['Screening'] = 'Screening Round';
+              } else if (occupiedStage === 'Interview' && entered.includes('Interview Round 1')) {
+                stageRemap['Interview'] = 'Interview Round 1';
+              } else if (occupiedStage === 'Offer' && entered.includes('HR Round')) {
+                stageRemap['Offer'] = 'HR Round';
+              } else if (occupiedStage === 'Interview Round 1' && entered.includes('Interview')) {
+                stageRemap['Interview Round 1'] = 'Interview';
+              } else {
+                const match = entered.find(s => s.toLowerCase().includes(occupiedStage.toLowerCase()) || occupiedStage.toLowerCase().includes(s.toLowerCase()));
+                if (match) stageRemap[occupiedStage] = match;
+              }
+            }
+          }
+
+          await api('pipeline','PUT',{stages:entered, stage_remap: stageRemap});
           return 'Pipeline updated successfully.';
         }
       );
+
+      const textarea = $('#edit-form [name="stages"]');
+      const counter = $('#pipeline-stages-counter');
+      const updateCounter = () => {
+        if (!textarea || !counter) return;
+        const count = textarea.value.split('\n').map(s => s.trim()).filter(Boolean).length;
+        counter.textContent = `Stages configured: ${count} / 30 max`;
+        counter.style.color = count > 30 ? 'var(--negative)' : 'var(--muted)';
+      };
+
+      if (textarea) {
+        textarea.oninput = updateCounter;
+      }
+
+      const btnHybrid = $('#btn-preset-hybrid');
+      if (btnHybrid) {
+        btnHybrid.onclick = () => {
+          if (textarea) {
+            const list = presets?.smart_hybrid || [
+              'Applied', 'Screening Round', 'Interview Round 1', 'Interview Round 2',
+              'HR Round', 'Pre-Onboarding Training', 'Onboarding', 'Hired', 'Rejected', 'Revoked'
+            ];
+            textarea.value = list.join('\n');
+            updateCounter();
+          }
+        };
+      }
+      const btnHybrid3 = $('#btn-preset-hybrid3');
+      if (btnHybrid3) {
+        btnHybrid3.onclick = () => {
+          if (textarea) {
+            const list = presets?.smart_hybrid_3rounds || [
+              'Applied', 'Screening Round', 'Interview Round 1', 'Interview Round 2',
+              'Interview Round 3', 'HR Round', 'Pre-Onboarding Training', 'Onboarding', 'Hired', 'Rejected', 'Revoked'
+            ];
+            textarea.value = list.join('\n');
+            updateCounter();
+          }
+        };
+      }
     }
     if(a==='new-signature-request'){
       const cand = (await api('candidates')).find(c=>c.id===id)||await api(`candidates/${id}`);
@@ -2566,7 +4419,10 @@ document.addEventListener('click',async event=>{
       const candApps = cand.applications || [];
       const eligibility = signatureEligibility(candApps);
       if (!eligibility.eligible) throw new Error(eligibility.reason);
-      const reqs = await api('requisitions');
+      const [reqs, templates] = await Promise.all([
+        api('requisitions'),
+        api('offer-templates?status=active').catch(() => [])
+      ]);
       const activeApps = eligibility.applications;
       const reqOptions = activeApps.map(app => [app.requisition_id, `${app.title} (${app.stage})`]);
       for (const r of reqs.filter(r=>r.status==='open')) {
@@ -2576,13 +4432,41 @@ document.addEventListener('click',async event=>{
 
       const firstReqId = reqOptions[0]?.[0];
       const initialReq = reqs.find(r => r.id === firstReqId);
-      const initialCurrency = initialReq?.currency || 'USD';
+      const initialCurrency = initialReq?.currency || 'INR';
       const initialSalary = initialReq?.salary_max
         ? Number(initialReq.salary_max).toLocaleString()
         : (initialReq?.salary_min ? Number(initialReq.salary_min).toLocaleString() : '120,000');
 
       modal(`Create Offer & E-Signature Request for ${escape(cand.name)}`, `
         <div class="form-grid">
+          ${templates.length ? `
+            <label class="full">
+              <span class="label-heading">Offer Letter Template</span>
+              <select name="template_id" id="sig-offer-tpl-select">
+                ${templates.map(t => `<option value="${t.id}" ${t.is_default ? 'selected' : ''}>${escape(t.name)} (v${t.version}${t.is_default ? ' — Default' : ''})</option>`).join('')}
+              </select>
+            </label>
+            <div class="full" style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
+              <button type="button" class="button secondary" id="btn-preview-sig-offer" style="font-size:0.82rem;padding:6px 14px;">Preview Offer Letter (A4)</button>
+              <small class="muted">Check A4 pagination and dynamic terms before dispatch.</small>
+            </div>
+          ` : ''}
+          <div class="candidate-tailor-toggle-box full">
+            <div class="candidate-tailor-head" id="btn-toggle-tailor-sig">
+              <strong style="color:var(--accent);font-size:0.86rem;display:flex;align-items:center;gap:6px;">Customize Clauses for ${escape(cand.name)}</strong>
+              <span id="tailor-sig-chevron" style="font-size:0.75rem;color:var(--muted);font-weight:700;">[ Customize Clauses ]</span>
+            </div>
+            <div id="tailor-sig-body" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--line);">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:6px;">
+                <small class="muted">Add a joining bonus, modify notice period, or tailor terms specifically for this candidate.</small>
+                <div style="display:flex;gap:4px;">
+                  <button type="button" class="secondary" id="btn-tailor-sig-clause-lib" style="font-size:0.74rem;padding:3px 8px;">Clause Library</button>
+                  <button type="button" class="secondary" id="btn-tailor-sig-add-bonus" style="font-size:0.74rem;padding:3px 8px;">Add Joining Bonus</button>
+                </div>
+              </div>
+              <div id="tailor-sig-sections-list"></div>
+            </div>
+          </div>
           ${field('Document title', 'title', 'text', 'Employment Offer Letter')}
           ${select('Associated position', 'requisition_id', reqOptions)}
           ${field('Signer legal name', 'signer_name', 'text', cand.name)}
@@ -2608,10 +4492,12 @@ document.addEventListener('click',async event=>{
           candidate_id: cand.id,
           application_id: matchedApp?.id || undefined,
           requisition_id: v.requisition_id || undefined,
+          template_id: v.template_id || undefined,
           salary: v.salary?.trim() || initialSalary,
           currency: targetCurrency,
           start_date: v.start_date?.trim(),
           expires_days: Number(v.expires_days) || 7,
+          custom_sections: tailoredSections || undefined,
           signers: [{
             name: v.signer_name?.trim() || cand.name,
             email: v.signer_email?.trim() || cand.email,
@@ -2624,6 +4510,139 @@ document.addEventListener('click',async event=>{
       });
 
       bindValidation('currency', checkCurrency);
+
+      let tailoredSections = null;
+      const toggleBtn = $('#btn-toggle-tailor-sig');
+      const tailorBody = $('#tailor-sig-body');
+      const tailorChevron = $('#tailor-sig-chevron');
+      const tplSelect = $('#sig-offer-tpl-select');
+
+      const renderTailoredList = () => {
+        const listEl = $('#tailor-sig-sections-list');
+        if (!listEl || !tailoredSections) return;
+        listEl.innerHTML = tailoredSections.map((s, idx) => {
+          let preview = s.text || s.title || (s.items ? s.items.join('; ') : s.type);
+          return `
+            <div class="studio-section-card" data-tailor-idx="${idx}" style="padding:10px;margin-bottom:8px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                <div style="display:flex;align-items:center;gap:6px;">
+                  <span class="studio-section-badge studio-badge-${s.type}" style="font-size:0.65rem;">${s.type.replace('_',' ')}</span>
+                  <strong style="font-size:0.8rem;">Section #${idx+1}</strong>
+                </div>
+                <div style="display:flex;gap:3px;">
+                  <button type="button" class="secondary" data-tailor-act="up" data-idx="${idx}" ${idx===0?'disabled':''} style="min-height:22px;padding:0 6px;font-size:0.7rem;">Up</button>
+                  <button type="button" class="secondary" data-tailor-act="down" data-idx="${idx}" ${idx===tailoredSections.length-1?'disabled':''} style="min-height:22px;padding:0 6px;font-size:0.7rem;">Down</button>
+                  <button type="button" class="secondary" data-tailor-act="del" data-idx="${idx}" style="min-height:22px;padding:0 6px;font-size:0.7rem;color:var(--negative);">Remove</button>
+                </div>
+              </div>
+              ${s.type === 'heading' ? `
+                <input type="text" data-tailor-field="text" data-idx="${idx}" value="${escape(s.text||'')}" style="font-size:0.8rem;padding:4px 8px;font-weight:600;">
+              ` : (s.type === 'paragraph' ? `
+                <textarea data-tailor-field="text" data-idx="${idx}" rows="2" style="font-size:0.8rem;line-height:1.4;">${escape(s.text||'')}</textarea>
+              ` : (s.type === 'bullet_list' ? `
+                <textarea data-tailor-field="items" data-idx="${idx}" rows="2" style="font-size:0.8rem;">${escape((s.items||[]).join('\n'))}</textarea>
+              ` : `<small class="muted">${escape(preview)}</small>`))}
+            </div>
+          `;
+        }).join('');
+
+        listEl.querySelectorAll('input, textarea').forEach(el => {
+          el.oninput = () => {
+            const i = Number(el.dataset.idx);
+            const field = el.dataset.tailorField;
+            if (tailoredSections[i]) {
+              if (field === 'items') {
+                tailoredSections[i].items = el.value.split('\n').map(x => x.trim()).filter(Boolean);
+              } else {
+                tailoredSections[i][field] = el.value;
+              }
+            }
+          };
+        });
+
+        listEl.querySelectorAll('[data-tailor-act]').forEach(btn => {
+          btn.onclick = () => {
+            const act = btn.dataset.tailorAct;
+            const i = Number(btn.dataset.idx);
+            if (act === 'up' && i > 0) {
+              const tmp = tailoredSections[i];
+              tailoredSections[i] = tailoredSections[i - 1];
+              tailoredSections[i - 1] = tmp;
+            } else if (act === 'down' && i < tailoredSections.length - 1) {
+              const tmp = tailoredSections[i];
+              tailoredSections[i] = tailoredSections[i + 1];
+              tailoredSections[i + 1] = tmp;
+            } else if (act === 'del') {
+              tailoredSections.splice(i, 1);
+            }
+            renderTailoredList();
+          };
+        });
+      };
+
+      const loadTailorSections = async () => {
+        const chosenTplId = tplSelect?.value || templates[0]?.id;
+        if (!chosenTplId) return;
+        const tplData = await api(`offer-templates/${chosenTplId}`).catch(() => null);
+        tailoredSections = tplData?.sections ? JSON.parse(JSON.stringify(tplData.sections)) : [];
+        renderTailoredList();
+      };
+
+      if (toggleBtn) {
+        toggleBtn.onclick = async () => {
+          const isHidden = tailorBody.style.display === 'none';
+          tailorBody.style.display = isHidden ? 'block' : 'none';
+          tailorChevron.textContent = isHidden ? '[ Collapse Customizer ]' : '[ Customize Clauses ]';
+          if (isHidden && !tailoredSections) {
+            await loadTailorSections();
+          }
+        };
+      }
+
+      if (tplSelect) {
+        tplSelect.onchange = async () => {
+          if (tailoredSections) {
+            await loadTailorSections();
+          }
+        };
+      }
+
+      const addBonusBtn = $('#btn-tailor-sig-add-bonus');
+      if (addBonusBtn) {
+        addBonusBtn.onclick = () => {
+          if (!tailoredSections) tailoredSections = [];
+          tailoredSections.push(
+            { id: `sec_bonus_${Date.now()}`, type: 'heading', level: 2, text: 'Special Joining Bonus' },
+            { id: `sec_bonus_p_${Date.now()}`, type: 'paragraph', text: 'You are eligible for a special one-time joining bonus of ₹100,000, payable with your first monthly payroll cycle. Should you voluntarily resign within 12 months, this bonus must be repaid in full.' }
+          );
+          renderTailoredList();
+          notice('Added Joining Bonus clause!', 'success');
+        };
+      }
+
+      const addLibBtn = $('#btn-tailor-sig-clause-lib');
+      if (addLibBtn) {
+        addLibBtn.onclick = () => {
+          openClauseLibraryModal(clauseSections => {
+            if (!tailoredSections) tailoredSections = [];
+            tailoredSections.push(...clauseSections);
+            renderTailoredList();
+          });
+        };
+      }
+
+      const previewBtn = $('#btn-preview-sig-offer');
+      if (previewBtn) {
+        previewBtn.onclick = () => {
+          const tplId = $('#sig-offer-tpl-select')?.value;
+          if (!tplId) return;
+          const curReqId = $('#edit-form [name="requisition_id"]')?.value;
+          const matchedApp = activeApps.find(a => a.requisition_id === curReqId);
+          const curSalary = $('#edit-form [name="salary"]')?.value || initialSalary;
+          const curCurr = $('#edit-form [name="currency"]')?.value || initialCurrency;
+          openOfferTemplatePreview(tplId, cand.id, curReqId, matchedApp?.id, curSalary, curCurr, tailoredSections);
+        };
+      }
       const reqSelect = $('#edit-form [name="requisition_id"]');
       if (reqSelect) {
         reqSelect.addEventListener('change', () => {
@@ -2669,7 +4688,7 @@ document.addEventListener('click',async event=>{
         const prevText = b.textContent;
         navigator.clipboard?.writeText?.(fullUrl)?.then(()=>{
           notice('Signing link copied to clipboard!', 'success');
-          b.textContent = '✓ Copied!';
+          b.textContent = 'Copied!';
           setTimeout(() => { b.textContent = prevText; }, 2000);
         })?.catch(()=>{
           prompt('Copy signing link:', fullUrl);
@@ -2687,7 +4706,7 @@ document.addEventListener('click',async event=>{
       try {
         const res = await api(`signatures/${id}/send-email`, 'POST', {});
         notice(res.results?.[0]?.simulated ? 'Invitation email simulated locally (signing link active).' : 'Invitation email resent successfully to candidate!', 'success');
-        b.textContent = '✓ Resent!';
+        b.textContent = 'Resent!';
         setTimeout(() => { b.textContent = prevText; b.disabled = false; delete b.dataset.submitting; }, 2500);
       } catch (err) {
         notice(err.message, 'error');
@@ -3059,7 +5078,7 @@ async function renderSigningPortal(token) {
         <p class="muted" style="margin:0 0 8px;">Recipient: <strong>${signerName}</strong> &lt;${escape(session.signer.email)}&gt; · Role: ${escape(session.signer.role)}</p>
         ${session.request.expires_at ? `
           <div style="font-size:0.82rem;color:var(--text-muted,#475569);margin-bottom:8px;">
-            ⏱️ <strong>Link Validity:</strong> Valid until ${escape(formatDateIST(session.request.expires_at))} (${Math.max(0, Math.ceil((new Date(session.request.expires_at).getTime() - Date.now()) / 86400000))} days remaining)
+            <strong>Link Validity:</strong> Valid until ${escape(formatDateIST(session.request.expires_at))} (${Math.max(0, Math.ceil((new Date(session.request.expires_at).getTime() - Date.now()) / 86400000))} days remaining)
           </div>
         ` : ''}
         <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:10px;">

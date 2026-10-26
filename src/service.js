@@ -19,6 +19,12 @@ import {
   verifyApplicationOfferSignature, getAuthoritativeOfferDetails
 } from './signature/service.js';
 import {
+  listOfferTemplates, getOfferTemplate, createOfferTemplate, updateOfferTemplate,
+  duplicateOfferTemplate, setOfferTemplateStatus, uploadLetterheadAsset,
+  getLetterheadAssetBuffer, previewOfferTemplate, compileTemplateToPdf, seedDefaultTemplatesIfEmpty
+} from './signature/template_service.js';
+import { VARIABLE_REGISTRY } from './signature/variables.js';
+import {
   listAgencies, getAgency, createAgency, updateAgency, setAgencyStatus, addAgencyMember,
   assignRequisitionToAgency, revokeRequisitionFromAgency, publishAgencyFeedback,
   getAgencyDashboard, listAssignedRequisitions, getAssignedRequisition, submitAgencyCandidate,
@@ -75,6 +81,107 @@ const get = (db, table, key) => {
 };
 const publicUser = u => ({ id:u.id, name:u.name, email:u.email, role:u.role, team:u.team, status:u.status, oid:u.oid, tenant:u.tenant, created_at:u.created_at, last_login:u.last_login });
 export const pipeline = db => JSON.parse(db.prepare("SELECT value FROM settings WHERE key='pipeline'").get().value);
+
+export const PIPELINE_PRESETS = {
+  smart_hybrid: [
+    'Applied',
+    'Screening Round',
+    'Interview Round 1',
+    'Interview Round 2',
+    'HR Round',
+    'Pre-Onboarding Training',
+    'Onboarding',
+    'Hired',
+    'Rejected',
+    'Revoked'
+  ],
+  smart_hybrid_3rounds: [
+    'Applied',
+    'Screening Round',
+    'Interview Round 1',
+    'Interview Round 2',
+    'Interview Round 3',
+    'HR Round',
+    'Pre-Onboarding Training',
+    'Onboarding',
+    'Hired',
+    'Rejected',
+    'Revoked'
+  ],
+  standard: [
+    'Applied',
+    'Screening',
+    'Interview',
+    'Offer',
+    'Hired',
+    'Rejected'
+  ]
+};
+
+export function isAllowedStageProgression(fromStage, toStage, stages) {
+  // Terminal stages cannot transition sequentially
+  if (['Hired', 'Rejected', 'Revoked'].includes(fromStage)) {
+    return false;
+  }
+
+  if (['Rejected', 'Revoked'].includes(toStage)) {
+    return true;
+  }
+  const fromIdx = stages.indexOf(fromStage);
+  const toIdx = stages.indexOf(toStage);
+  if (fromIdx === -1 || toIdx === -1) return false;
+
+  // Direct single step forward
+  if (toIdx === fromIdx + 1) return true;
+
+  // Direct single step backward (mistake correction)
+  if (toIdx === fromIdx - 1) return true;
+
+  // Forward transitions (including skipping intermediate non-major stages like interview rounds)
+  if (toIdx > fromIdx) {
+    const intermediateStages = stages.slice(fromIdx + 1, toIdx);
+
+    // Rule 1: Major pipeline gates (Offer, Hired) cannot be bypassed/skipped over
+    if (intermediateStages.some(s => /(^|\b)(offer|hired)(\b|$)/i.test(s.trim()))) {
+      return false;
+    }
+
+    // Rule 2: Cannot skip straight into Hired (must come from immediately preceding stage or post-training onboarding)
+    if (toStage === 'Hired') {
+      if (fromIdx === toIdx - 1) return true;
+      if (/pre-onboarding/i.test(fromStage) && intermediateStages.every(s => /onboarding/i.test(s))) {
+        return true;
+      }
+      return false;
+    }
+
+    // Rule 3: Entry stage 'Applied' cannot jump straight to post-interview training
+    if (fromStage === 'Applied' && /pre-onboarding|training/i.test(toStage)) {
+      return false;
+    }
+
+    // Rule 4: Intermediate interview rounds, screenings, assessments, HR, or training stages are freely skippable
+    // Any forward jump where skipped intermediate stages do not bypass major gates (Offer, Hired) is allowed
+    const isMajor = s => /(^|\b)(offer|hired|rejected|revoked)(\b|$)/i.test(s.trim());
+    if (intermediateStages.every(s => !isMajor(s))) {
+      return true;
+    }
+  }
+
+  // Flexible backward step within interview rounds (e.g. HR Round back to Round 2 or Round 1 for further assessment)
+  if (toIdx < fromIdx) {
+    const isInterviewOrHr = s => /interview|round|technical|assessment|hr/i.test(s);
+    if (isInterviewOrHr(fromStage) && isInterviewOrHr(toStage)) {
+      const intermediateStages = stages.slice(toIdx + 1, fromIdx);
+      if (intermediateStages.every(s => isInterviewOrHr(s))) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
 export function matchSkills(candidate, requisition) {
   return evaluateCandidateMatch(candidate, requisition);
 }
@@ -161,6 +268,7 @@ function appContext(db, user, aid, interviewer = false) {
   return { app, req };
 }
 export function service(db, user, method, path, body = {}, query = new URLSearchParams(), c = {}) {
+  seedDefaultTemplatesIfEmpty(db);
   const parts = path.split('/').filter(Boolean), key = parts[1], action = parts[2];
   if (path === 'appearance' && method === 'GET') return getAppearance(db);
   if (path === 'admin/appearance' && method === 'PUT') return setAppearance(db,user,body);
@@ -251,14 +359,56 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       });
     }
   }
+  if (path === 'pipeline/presets' && method === 'GET') {
+    permit(user, 'jobs');
+    return PIPELINE_PRESETS;
+  }
   if (path === 'pipeline') {
     if (method === 'GET') { permit(user,'jobs'); return pipeline(db); }
     if (method === 'PUT') {
-      permit(user,'admin'); const stages = list(body.stages,'Stages',15);
-      if (stages.length < 3 || stages[0] !== 'Applied' || stages.at(-2) !== 'Hired' || stages.at(-1) !== 'Rejected') throw new HttpError(400,'Start with Applied and end with Hired, then Rejected.');
+      permit(user,'admin');
+      let targetStages = body?.preset && PIPELINE_PRESETS[body.preset] ? PIPELINE_PRESETS[body.preset] : body?.stages;
+      if (!targetStages && Array.isArray(body)) targetStages = body;
+      const stages = list(targetStages, 'Stages', 30);
+      const validEnd = (stages.at(-2) === 'Hired' && stages.at(-1) === 'Rejected') ||
+                       (stages.at(-3) === 'Hired' && stages.at(-2) === 'Rejected' && stages.at(-1) === 'Revoked') ||
+                       (stages.at(-2) === 'Hired' && ['Rejected', 'Revoked'].includes(stages.at(-1)));
+      if (stages.length < 3 || stages[0] !== 'Applied' || !validEnd) {
+        throw new HttpError(400, 'Start with Applied and end with Hired, then Rejected.');
+      }
       const old = pipeline(db);
-      if (old.some(s => !stages.includes(s) && db.prepare('SELECT id FROM applications WHERE stage=?').get(s))) throw new HttpError(409,'Cannot remove a stage in use.');
-      return transaction(db, () => { db.prepare("UPDATE settings SET value=? WHERE key='pipeline'").run(JSON.stringify(stages)); audit(db,user.id,'pipeline.updated','',{stages}); return stages; });
+      const stageRemap = body?.stage_remap || body?.stageRemap || {};
+      const removedStages = old.filter(s => !stages.includes(s));
+
+      const occupiedWithoutRemap = [];
+      for (const s of removedStages) {
+        const count = db.prepare('SELECT count(*) as count FROM applications WHERE stage=?').get(s)?.count || 0;
+        if (count > 0) {
+          const target = stageRemap[s];
+          if (!target || !stages.includes(target)) {
+            occupiedWithoutRemap.push(`${s} (${count} active candidate${count > 1 ? 's' : ''})`);
+          }
+        }
+      }
+
+      if (occupiedWithoutRemap.length > 0) {
+        throw new HttpError(409, `Cannot remove stages with active candidates: ${occupiedWithoutRemap.join(', ')}. Keep these stages in your pipeline, or remap existing candidates.`);
+      }
+
+      return transaction(db, () => {
+        for (const [oldStage, newStage] of Object.entries(stageRemap)) {
+          if (old.includes(oldStage) && stages.includes(newStage)) {
+            const appsInStage = db.prepare('SELECT id FROM applications WHERE stage=?').all(oldStage);
+            for (const app of appsInStage) {
+              db.prepare('UPDATE applications SET stage=? WHERE id=?').run(newStage, app.id);
+              db.prepare('INSERT INTO stage_events VALUES(?,?,?,?,?,?)').run(id(), app.id, oldStage, newStage, user.id, now());
+            }
+          }
+        }
+        db.prepare("UPDATE settings SET value=? WHERE key='pipeline'").run(JSON.stringify(stages));
+        audit(db, user.id, 'pipeline.updated', '', { stages, stageRemap });
+        return stages;
+      });
     }
   }
   if (parts[0] === 'requisitions') {
@@ -799,7 +949,23 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
   }
   if (parts[0] === 'applications') {
     permit(user,'recruit','review');
-    if (method === 'GET' && !key) return db.prepare(`SELECT a.*,c.name,c.email,c.skills,r.title,r.team FROM applications a JOIN candidates c ON c.id=a.candidate_id JOIN requisitions r ON r.id=a.requisition_id ORDER BY a.created_at DESC`).all().filter(a => inTeam(user,a.team));
+    if (method === 'GET' && !key) {
+      const apps = db.prepare(`SELECT a.*,c.name,c.email,c.skills,r.title,r.team FROM applications a JOIN candidates c ON c.id=a.candidate_id JOIN requisitions r ON r.id=a.requisition_id ORDER BY a.created_at DESC`).all().filter(a => inTeam(user,a.team));
+      if (!apps.length) return [];
+      try {
+        const evals = db.prepare(`SELECT * FROM training_evaluations ORDER BY created_at DESC`).all();
+        const evalMap = new Map();
+        for (const e of evals) {
+          if (!evalMap.has(e.application_id)) evalMap.set(e.application_id, e);
+        }
+        return apps.map(a => {
+          const ev = evalMap.get(a.id);
+          return ev ? { ...a, training_evaluation: ev, training_rating: ev.rating, training_decision: ev.decision } : a;
+        });
+      } catch {
+        return apps;
+      }
+    }
     if (method === 'POST' && !key) {
       permit(user,'recruit'); const candidate = get(db,'candidates',body.candidate_id), req = get(db,'requisitions',body.requisition_id);
       requireTeam(user,candidate.team); requireTeam(user,req.team);
@@ -859,6 +1025,86 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
           return resolveFraudReview(db, user, app.candidate_id, body);
         }
         return getOrRunFraudReview(db, app.candidate_id, { application_id: app.id, refresh: true });
+      }
+    }
+    if (key && (action === 'training-evaluation' || action === 'training')) {
+      const { app, req } = appContext(db, user, key);
+      if (method === 'GET') {
+        permit(user, 'recruit', 'review');
+        const evalRow = db.prepare(`
+          SELECT te.*, u.name AS evaluator_name, u.email AS evaluator_email
+          FROM training_evaluations te
+          JOIN users u ON u.id = te.evaluator_id
+          WHERE te.application_id = ?
+          ORDER BY te.created_at DESC LIMIT 1
+        `).get(app.id);
+        return { evaluation: evalRow || null };
+      }
+      if (method === 'POST') {
+        permit(user, 'recruit', 'admin');
+        const rating = integer(body.rating, 'Rating', 1, 5);
+        const practicalScore = body.practical_score !== undefined && body.practical_score !== '' && body.practical_score !== null
+          ? Number(body.practical_score)
+          : null;
+        if (practicalScore !== null && (!Number.isFinite(practicalScore) || practicalScore < 0 || practicalScore > 100)) {
+          throw new HttpError(400, 'Practical score must be a number between 0 and 100.');
+        }
+        const decision = ['next', 'rejected', 'revoked'].includes(body.decision) ? body.decision : 'next';
+        const status = ['passed', 'failed', 'in_progress'].includes(body.status)
+          ? body.status
+          : (decision === 'next' ? 'passed' : 'failed');
+        const notes = text(body.notes || '', 'Training notes', 2000, false);
+
+        const evalId = id();
+        const nowStr = now();
+        const stages = pipeline(db);
+
+        let targetStage = null;
+        if (decision === 'next') {
+          const curIdx = stages.indexOf(app.stage);
+          if (stages.includes('Onboarding')) {
+            targetStage = 'Onboarding';
+          } else if (curIdx !== -1 && curIdx + 1 < stages.length && !['Hired', 'Rejected', 'Revoked'].includes(stages[curIdx + 1])) {
+            targetStage = stages[curIdx + 1];
+          } else {
+            targetStage = 'Onboarding';
+          }
+        } else if (decision === 'revoked') {
+          targetStage = stages.includes('Revoked') ? 'Revoked' : 'Rejected';
+        } else {
+          targetStage = 'Rejected';
+        }
+
+        const result = transaction(db, () => {
+          db.prepare(`
+            INSERT INTO training_evaluations(id, application_id, candidate_id, evaluator_id, rating, practical_score, status, decision, notes, created_at, updated_at)
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(evalId, app.id, app.candidate_id, user.id, rating, practicalScore, status, decision, notes, nowStr, nowStr);
+
+          if (targetStage && stages.includes(targetStage) && app.stage !== targetStage) {
+            db.prepare('UPDATE applications SET stage=? WHERE id=?').run(targetStage, app.id);
+            db.prepare("UPDATE referrals SET status=?, updated_at=? WHERE application_id=? AND status!='Withdrawn'").run(targetStage, nowStr, app.id);
+            db.prepare('INSERT INTO stage_events VALUES(?,?,?,?,?,?)').run(id(), app.id, app.stage, targetStage, user.id, nowStr);
+          }
+
+          audit(db, user.id, 'application.training_evaluated', app.id, {
+            rating, practical_score: practicalScore, decision, status, target_stage: targetStage
+          });
+
+          const savedEval = db.prepare(`
+            SELECT te.*, u.name AS evaluator_name, u.email AS evaluator_email
+            FROM training_evaluations te
+            JOIN users u ON u.id = te.evaluator_id
+            WHERE te.id = ?
+          `).get(evalId);
+
+          return {
+            evaluation: savedEval,
+            application: get(db, 'applications', app.id)
+          };
+        });
+
+        return result;
       }
     }
     if (key && (action === 'hrms-handoff' || action === 'handoff') && method === 'POST') {
@@ -947,8 +1193,8 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
         }
       }
       const isAdmin = can(user, 'admin');
-      const isTerminal = ['Hired','Rejected'].includes(app.stage);
-      const isSequential = body.stage === 'Rejected' || stages.indexOf(body.stage) === stages.indexOf(app.stage)+1 || (!isTerminal && stages.indexOf(body.stage) === stages.indexOf(app.stage)-1);
+      const isTerminal = ['Hired','Rejected','Revoked'].includes(app.stage);
+      const isSequential = isAllowedStageProgression(app.stage, body.stage, stages);
       const hiredCount = db.prepare("SELECT count(*) n FROM applications WHERE requisition_id=? AND stage='Hired'").get(req.id).n;
       const isOverHeadcount = body.stage === 'Hired' && hiredCount >= req.headcount;
 
@@ -1147,16 +1393,21 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       const competencies = list(body.competencies,'Competencies',10); if (!competencies.length) throw new HttpError(400,'At least one competency is required.');
       const duration = body.duration_minutes !== undefined ? integer(body.duration_minutes, 'Duration', 15, 480) : 45;
       const timezone = body.timezone ? text(body.timezone, 'Timezone', 100, false) : 'Asia/Kolkata';
+      const interviewType = body.interview_type === 'in_person' ? 'in_person' : 'virtual';
+      const location = body.location !== undefined ? text(body.location, 'Location', 500, false) : (interviewType === 'in_person' ? 'Mechlin Technologies Office' : '');
       const notes = body.notes ? text(body.notes, 'Notes', 5000, false) : '';
-      const customMeetingUrl = body.meeting_url ? text(body.meeting_url, 'Meeting URL', 1000, false) : null;
+      const customMeetingUrl = interviewType === 'in_person' ? null : (body.meeting_url ? text(body.meeting_url, 'Meeting URL', 1000, false) : null);
       const cand = get(db, 'candidates', app.candidate_id);
-      const title = body.title ? text(body.title, 'Title', 200, false) : `Interview: ${cand.name} — ${req.title}`;
+      const existingInterviews = db.prepare('SELECT count(*) n FROM interviews WHERE application_id=?').get(app.id).n;
+      const roundNumber = body.round_number ? integer(body.round_number, 'Round Number', 1, 20) : (existingInterviews + 1);
+      const round = body.round ? text(body.round, 'Round', 100, false) : `Round ${roundNumber}`;
+      const title = body.title ? text(body.title, 'Title', 200, false) : `${round}: ${cand.name} — ${req.title}`;
       const iid = id();
       transaction(db, () => {
-        db.prepare('INSERT INTO interviews(id,application_id,interviewer_id,scheduled_at,competencies,title,duration_minutes,timezone,notes,status,calendar_status,meeting_url,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)').run(
-          iid, app.id, interviewer.id, scheduled.toISOString(), JSON.stringify(competencies), title, duration, timezone, notes, 'planned', customMeetingUrl ? 'manual_link' : 'not_synced', customMeetingUrl, now()
+        db.prepare('INSERT INTO interviews(id,application_id,interviewer_id,scheduled_at,competencies,title,duration_minutes,timezone,notes,status,calendar_status,meeting_url,round,round_number,interview_type,location,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(
+          iid, app.id, interviewer.id, scheduled.toISOString(), JSON.stringify(competencies), title, duration, timezone, notes, 'planned', customMeetingUrl ? 'manual_link' : 'not_synced', customMeetingUrl, round, roundNumber, interviewType, location, now()
         );
-        audit(db, user.id, 'interview.planned', iid, { scheduled_at: scheduled.toISOString(), interviewer_id: interviewer.id, duration_minutes: duration, timezone, meeting_url: customMeetingUrl });
+        audit(db, user.id, 'interview.planned', iid, { scheduled_at: scheduled.toISOString(), interviewer_id: interviewer.id, duration_minutes: duration, timezone, meeting_url: customMeetingUrl, round, round_number: roundNumber, interview_type: interviewType, location });
       });
       const calConfigured = isCalendarConfigured(c, db) || Boolean(c?.calendarAdapter);
       const emailConfigured = (isEmailConfigured(db) || Boolean(c?.communicationAdapter)) && body.send_invitation !== false;
@@ -1165,9 +1416,10 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
           let meetingUrl = customMeetingUrl;
           if (calConfigured) {
             const calResult = await syncScheduleMeeting({
-              db, user, interviewId: iid, scheduledAt: scheduled.toISOString(), durationMinutes: duration, timezone, title, notes, candidate: cand, req, interviewer, transport: c?.calendarAdapter?.transport || c?.transport || fetch, config: c
+              db, user, interviewId: iid, scheduledAt: scheduled.toISOString(), durationMinutes: duration, timezone, title, notes, candidate: cand, req, interviewer, transport: c?.calendarAdapter?.transport || c?.transport || fetch, config: c,
+              interviewType, location
             });
-            meetingUrl = calResult.meeting_url || customMeetingUrl;
+            meetingUrl = interviewType === 'in_person' ? null : (calResult.meeting_url || customMeetingUrl);
           }
           if (meetingUrl && meetingUrl !== customMeetingUrl) {
             db.prepare('UPDATE interviews SET meeting_url = ? WHERE id = ?').run(meetingUrl, iid);
@@ -1185,6 +1437,8 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
                 interviewer_name: interviewer.name,
                 meeting_url: meetingUrl || undefined,
                 notes: notes || undefined,
+                interview_type: interviewType,
+                location,
                 idempotency_key: `interview_invite_${iid}`
               }, commAdapter);
             } catch (emailErr) {
@@ -1238,13 +1492,15 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       const notes = body.notes !== undefined ? text(body.notes, 'Notes', 5000, false) : (interview.notes || '');
       const title = body.title !== undefined ? text(body.title, 'Title', 200, false) : (interview.title || '');
       const cand = get(db, 'candidates', app.candidate_id);
-      const customMeetingUrl = body.meeting_url !== undefined ? (body.meeting_url ? text(body.meeting_url, 'Meeting URL', 1000, false) : null) : interview.meeting_url;
+      const interviewType = body.interview_type !== undefined ? (body.interview_type === 'in_person' ? 'in_person' : 'virtual') : (interview.interview_type || 'virtual');
+      const location = body.location !== undefined ? text(body.location, 'Location', 500, false) : (interview.location || (interviewType === 'in_person' ? 'Mechlin Technologies Office' : ''));
+      const customMeetingUrl = interviewType === 'in_person' ? null : (body.meeting_url !== undefined ? (body.meeting_url ? text(body.meeting_url, 'Meeting URL', 1000, false) : null) : interview.meeting_url);
 
       transaction(db, () => {
-        db.prepare('UPDATE interviews SET scheduled_at=?, interviewer_id=?, competencies=?, duration_minutes=?, timezone=?, notes=?, title=?, meeting_url=? WHERE id=?').run(
-          scheduled.toISOString(), interviewerId, JSON.stringify(competencies), duration, timezone, notes, title, customMeetingUrl, key
+        db.prepare('UPDATE interviews SET scheduled_at=?, interviewer_id=?, competencies=?, duration_minutes=?, timezone=?, notes=?, title=?, meeting_url=?, interview_type=?, location=? WHERE id=?').run(
+          scheduled.toISOString(), interviewerId, JSON.stringify(competencies), duration, timezone, notes, title, customMeetingUrl, interviewType, location, key
         );
-        audit(db, user.id, 'interview.updated', key, { scheduled_at: scheduled.toISOString(), interviewer_id: interviewerId, duration_minutes: duration, meeting_url: customMeetingUrl });
+        audit(db, user.id, 'interview.updated', key, { scheduled_at: scheduled.toISOString(), interviewer_id: interviewerId, duration_minutes: duration, meeting_url: customMeetingUrl, interview_type: interviewType, location });
       });
 
       const calConfigured = isCalendarConfigured(c, db) || Boolean(c?.calendarAdapter);
@@ -1254,9 +1510,10 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
           let meetingUrl = customMeetingUrl;
           if (calConfigured) {
             const calResult = await syncRescheduleMeeting({
-              db, user, interviewId: key, scheduledAt: scheduled.toISOString(), durationMinutes: duration, timezone, title, notes, candidate: cand, req, interviewer: assignedInterviewer, transport: c?.calendarAdapter?.transport || c?.transport || fetch, config: c
+              db, user, interviewId: key, scheduledAt: scheduled.toISOString(), durationMinutes: duration, timezone, title, notes, candidate: cand, req, interviewer: assignedInterviewer, transport: c?.calendarAdapter?.transport || c?.transport || fetch, config: c,
+              interviewType, location
             });
-            meetingUrl = calResult.meeting_url || customMeetingUrl;
+            meetingUrl = interviewType === 'in_person' ? null : (calResult.meeting_url || customMeetingUrl);
           }
           if (meetingUrl && meetingUrl !== customMeetingUrl) {
             db.prepare('UPDATE interviews SET meeting_url = ? WHERE id = ?').run(meetingUrl, key);
@@ -1274,6 +1531,8 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
                 interviewer_name: assignedInterviewer.name,
                 meeting_url: meetingUrl || undefined,
                 notes: notes || undefined,
+                interview_type: interviewType,
+                location,
                 idempotency_key: `interview_update_${key}_${scheduled.getTime()}`
               }, commAdapter);
             } catch (emailErr) {
@@ -1562,7 +1821,10 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
         expiresDays: body.expires_days || body.expiresDays || 7,
         salary: body.salary,
         currency: body.currency,
-        startDate: body.start_date || body.startDate
+        startDate: body.start_date || body.startDate,
+        templateId: body.template_id || body.templateId,
+        templateVariables: body.template_variables || body.templateVariables || {},
+        customSections: body.custom_sections || body.customSections || null
       }, {
         origin: c?.origin,
         communicationAdapter: c?.communicationAdapter
@@ -1587,6 +1849,100 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
     if (key && action === 'cancel' && method === 'POST') {
       permit(user, 'recruit', 'admin');
       return cancelSignatureRequest(db, user, key, { reason: body.reason });
+    }
+  }
+  if (parts[0] === 'offer-variables' && method === 'GET') {
+    permit(user, 'recruit', 'review', 'admin');
+    return { variables: VARIABLE_REGISTRY };
+  }
+  if (parts[0] === 'offer-letter-assets') {
+    if (method === 'POST' && !key) {
+      permit(user, 'recruit', 'admin');
+      let assetBuffer = body.buffer;
+      if (!assetBuffer && (body.fileBase64 || body.file_base64)) {
+        assetBuffer = Buffer.from(body.fileBase64 || body.file_base64, 'base64');
+      } else if (!assetBuffer && body.data) {
+        assetBuffer = Buffer.from(body.data, 'base64');
+      } else if (!assetBuffer && body.file_buffer) {
+        assetBuffer = Buffer.isBuffer(body.file_buffer) ? body.file_buffer : Buffer.from(body.file_buffer, 'base64');
+      }
+      return uploadLetterheadAsset(db, user, {
+        name: body.name || null,
+        buffer: assetBuffer,
+        filename: body.filename || 'letterhead.png',
+        format: body.format || null,
+        scaling: body.scaling || null,
+        pageTarget: body.pageTarget || body.page_target || null
+      });
+    }
+    if (key && method === 'GET') {
+      permit(user, 'recruit', 'review', 'admin');
+      const asset = getLetterheadAssetBuffer(db, user, key);
+      return {
+        isRaw: true,
+        buffer: asset.buffer,
+        contentType: asset.mimeType,
+        filename: asset.filename
+      };
+    }
+  }
+  if (parts[0] === 'offer-templates') {
+    if (method === 'GET' && !key) {
+      permit(user, 'recruit', 'review', 'admin');
+      return listOfferTemplates(db, user, { status: query.get('status') });
+    }
+    if (method === 'POST' && !key) {
+      permit(user, 'recruit', 'admin');
+      return createOfferTemplate(db, user, body);
+    }
+    if (key && !action && method === 'GET') {
+      permit(user, 'recruit', 'review', 'admin');
+      return getOfferTemplate(db, user, key);
+    }
+    if (key && !action && method === 'PUT') {
+      permit(user, 'recruit', 'admin');
+      return updateOfferTemplate(db, user, key, body);
+    }
+    if (key && action === 'duplicate' && method === 'POST') {
+      permit(user, 'recruit', 'admin');
+      return duplicateOfferTemplate(db, user, key, body);
+    }
+    if (key && action === 'status' && method === 'POST') {
+      permit(user, 'recruit', 'admin');
+      return setOfferTemplateStatus(db, user, key, body.status, body.is_default);
+    }
+    if (((key && action === 'preview') || key === 'preview') && method === 'POST') {
+      permit(user, 'recruit', 'review', 'admin');
+      return previewOfferTemplate(db, user, key === 'preview' ? 'preview' : key, {
+        ...body,
+        customSections: body.custom_sections || body.customSections || body.sections || null,
+        pageConfig: body.page_config || body.pageConfig || null,
+        headerConfig: body.header_config || body.headerConfig || null,
+        footerConfig: body.footer_config || body.footerConfig || null,
+        backgroundConfig: body.background_config || body.backgroundConfig || null
+      });
+    }
+    if (key && action === 'preview.pdf' && method === 'GET') {
+      permit(user, 'recruit', 'review', 'admin');
+      const tpl = getOfferTemplate(db, user, key);
+      const candId = query.get('candidate_id') || query.get('candidateId');
+      const appId = query.get('application_id') || query.get('applicationId');
+      const reqId = query.get('requisition_id') || query.get('requisitionId');
+      const salary = query.get('salary');
+      const currency = query.get('currency');
+      const compiled = compileTemplateToPdf(db, tpl, {
+        candidateId: candId,
+        applicationId: appId,
+        requisitionId: reqId,
+        offerData: { salary, currency },
+        user
+      });
+      return {
+        isRaw: true,
+        buffer: compiled.pdfBuffer,
+        contentType: 'application/pdf',
+        filename: `${tpl.name.replace(/\s+/g, '_')}_preview.pdf`
+      };
     }
   }
   if (parts[0] === 'agencies') {

@@ -78,6 +78,8 @@ export async function syncScheduleMeeting({
   candidate,
   req,
   interviewer,
+  interviewType = 'virtual',
+  location = '',
   transport = fetch,
   config = {}
 }) {
@@ -91,13 +93,15 @@ export async function syncScheduleMeeting({
     };
   }
 
+  const isPhysical = interviewType === 'in_person';
+
   // Idempotency check: if interview already has a calendar event, do not create duplicate
   const existing = db.prepare('SELECT calendar_event_id, meeting_url, calendar_status FROM interviews WHERE id = ?').get(interviewId);
   if (existing?.calendar_event_id && existing?.calendar_status === 'synced') {
     return {
       synced: true,
       calendar_status: 'synced',
-      meeting_url: existing.meeting_url,
+      meeting_url: isPhysical ? null : existing.meeting_url,
       calendar_event_id: existing.calendar_event_id,
       idempotent_replay: true
     };
@@ -110,7 +114,7 @@ export async function syncScheduleMeeting({
   );
 
   if (isDemo && transport === fetch) {
-    const demoMeetingUrl = `https://teams.microsoft.com/l/meetup-join/orbit-demo-meeting-${interviewId}`;
+    const demoMeetingUrl = isPhysical ? null : `https://teams.microsoft.com/l/meetup-join/orbit-demo-meeting-${interviewId}`;
     const demoEventId = `teams-evt-demo-${interviewId}`;
     db.prepare(`
       UPDATE interviews
@@ -121,6 +125,8 @@ export async function syncScheduleMeeting({
     audit(db, user?.id || 'system', 'calendar.event_created', interviewId, {
       event_id: demoEventId,
       meeting_url: demoMeetingUrl,
+      interview_type: isPhysical ? 'in_person' : 'virtual',
+      location: isPhysical ? (location || 'Mechlin Technologies Office') : undefined,
       organizer: conf.organizerEmail,
       simulated: true
     });
@@ -141,6 +147,8 @@ export async function syncScheduleMeeting({
     <p>Candidate: <strong>${escapeHtml(candidate.name)}</strong> (${escapeHtml(candidate.email)})</p>
     <p>Interviewer: <strong>${escapeHtml(interviewer.name)}</strong> (${escapeHtml(interviewer.email)})</p>
     <p>Duration: ${Number(durationMinutes) || 45} minutes</p>
+    <p>Format: <strong>${isPhysical ? 'In-Person / Physical Interview' : 'Virtual / Online (Microsoft Teams)'}</strong></p>
+    ${isPhysical ? `<p>Location / Venue: <strong>${escapeHtml(location || 'Mechlin Technologies Office')}</strong><br><small>No online meeting link is required for this in-person interview.</small></p>` : ''}
     ${notes ? `<p><strong>Notes:</strong><br>${escapeHtml(notes)}</p>` : ''}
     <p>Scheduled via Orbit Talent Acquisition System.</p>
   `;
@@ -165,25 +173,30 @@ export async function syncScheduleMeeting({
         { email: candidate.email, name: candidate.name, type: 'required' },
         { email: interviewer.email, name: interviewer.name, type: 'required' }
       ],
+      isOnlineMeeting: !isPhysical,
+      location: isPhysical ? (location || 'Mechlin Technologies Office') : '',
       transport
     });
 
+    const finalJoinUrl = isPhysical ? null : event.joinUrl;
     db.prepare(`
       UPDATE interviews
       SET meeting_url = ?, calendar_event_id = ?, calendar_status = 'synced'
       WHERE id = ?
-    `).run(event.joinUrl, event.id, interviewId);
+    `).run(finalJoinUrl, event.id, interviewId);
 
     audit(db, user?.id || 'system', 'calendar.event_created', interviewId, {
       event_id: event.id,
-      meeting_url: event.joinUrl,
+      meeting_url: finalJoinUrl,
+      interview_type: isPhysical ? 'in_person' : 'virtual',
+      location: isPhysical ? (location || 'Mechlin Technologies Office') : undefined,
       organizer: conf.organizerEmail
     });
 
     return {
       synced: true,
       calendar_status: 'synced',
-      meeting_url: event.joinUrl,
+      meeting_url: finalJoinUrl,
       calendar_event_id: event.id
     };
   } catch (err) {
@@ -223,6 +236,8 @@ export async function syncRescheduleMeeting({
   candidate,
   req,
   interviewer,
+  interviewType,
+  location,
   transport = fetch,
   config = {}
 }) {
@@ -234,7 +249,11 @@ export async function syncRescheduleMeeting({
     };
   }
 
-  const current = db.prepare('SELECT calendar_event_id, meeting_url FROM interviews WHERE id = ?').get(interviewId);
+  const current = db.prepare('SELECT calendar_event_id, meeting_url, interview_type, location FROM interviews WHERE id = ?').get(interviewId);
+  const resolvedType = interviewType !== undefined ? interviewType : (current?.interview_type || 'virtual');
+  const resolvedLocation = location !== undefined ? location : (current?.location || '');
+  const isPhysical = resolvedType === 'in_person';
+
   if (!current?.calendar_event_id) {
     // If not previously scheduled on Graph, attempt to schedule it now
     return syncScheduleMeeting({
@@ -249,6 +268,8 @@ export async function syncRescheduleMeeting({
       candidate,
       req,
       interviewer,
+      interviewType: resolvedType,
+      location: resolvedLocation,
       transport,
       config
     });
@@ -261,7 +282,7 @@ export async function syncRescheduleMeeting({
   );
 
   if (isDemo && transport === fetch) {
-    const demoMeetingUrl = current.meeting_url || `https://teams.microsoft.com/l/meetup-join/orbit-demo-meeting-${interviewId}`;
+    const demoMeetingUrl = isPhysical ? null : (current.meeting_url || `https://teams.microsoft.com/l/meetup-join/orbit-demo-meeting-${interviewId}`);
     db.prepare(`
       UPDATE interviews
       SET calendar_status = 'synced', meeting_url = ?
@@ -271,6 +292,8 @@ export async function syncRescheduleMeeting({
     audit(db, user?.id || 'system', 'calendar.event_updated', interviewId, {
       event_id: current.calendar_event_id,
       meeting_url: demoMeetingUrl,
+      interview_type: resolvedType,
+      location: resolvedLocation,
       simulated: true
     });
 
@@ -290,6 +313,8 @@ export async function syncRescheduleMeeting({
     <p>Candidate: <strong>${escapeHtml(candidate.name)}</strong> (${escapeHtml(candidate.email)})</p>
     <p>Interviewer: <strong>${escapeHtml(interviewer.name)}</strong> (${escapeHtml(interviewer.email)})</p>
     <p>Duration: ${Number(durationMinutes) || 45} minutes</p>
+    <p>Format: <strong>${isPhysical ? 'In-Person / Physical Interview' : 'Virtual / Online (Microsoft Teams)'}</strong></p>
+    ${isPhysical ? `<p>Location / Venue: <strong>${escapeHtml(resolvedLocation || 'Mechlin Technologies Office')}</strong><br><small>No online meeting link is required for this in-person interview.</small></p>` : ''}
     ${notes ? `<p><strong>Update Notes:</strong><br>${escapeHtml(notes)}</p>` : ''}
     <p>Updated via Orbit Talent Acquisition System.</p>
   `;
@@ -315,24 +340,29 @@ export async function syncRescheduleMeeting({
         { email: candidate.email, name: candidate.name, type: 'required' },
         { email: interviewer.email, name: interviewer.name, type: 'required' }
       ],
+      isOnlineMeeting: !isPhysical,
+      location: isPhysical ? (resolvedLocation || 'Mechlin Technologies Office') : '',
       transport
     });
 
+    const finalJoinUrl = isPhysical ? null : (event.joinUrl || current.meeting_url);
     db.prepare(`
       UPDATE interviews
-      SET calendar_status = 'synced'
+      SET calendar_status = 'synced', meeting_url = ?
       WHERE id = ?
-    `).run(interviewId);
+    `).run(finalJoinUrl, interviewId);
 
     audit(db, user?.id || 'system', 'calendar.event_updated', interviewId, {
       event_id: current.calendar_event_id,
-      meeting_url: event.joinUrl || current.meeting_url
+      meeting_url: finalJoinUrl,
+      interview_type: resolvedType,
+      location: resolvedLocation
     });
 
     return {
       synced: true,
       calendar_status: 'synced',
-      meeting_url: event.joinUrl || current.meeting_url,
+      meeting_url: finalJoinUrl,
       calendar_event_id: current.calendar_event_id
     };
   } catch (err) {
