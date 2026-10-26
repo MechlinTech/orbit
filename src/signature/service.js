@@ -16,6 +16,7 @@ import { generateStyledSignaturePng } from './renderer.js';
 import { isEmailConfigured, sendCandidateCommunication } from '../communication/service.js';
 import { CommunicationAdapter } from '../adapters.js';
 import { renderTemplate } from '../communication/templates.js';
+import { getOfferTemplate, compileTemplateToPdf } from './template_service.js';
 
 export function hashToken(token) {
   return createHash('sha256').update(String(token)).digest('hex');
@@ -316,7 +317,10 @@ export async function createSignatureRequest(db, user, {
   expiresDays = 7,
   salary,
   currency,
-  startDate
+  startDate,
+  templateId = null,
+  templateVariables = {},
+  customSections = null
 } = {}, options = {}) {
   permit(user, 'recruit', 'admin');
 
@@ -362,9 +366,45 @@ export async function createSignatureRequest(db, user, {
 
   let finalSalary = salary || null;
   let finalStartDate = startDate || null;
+  let templateSnapshot = null;
+  let activeTemplateId = templateId || null;
 
-  if (!pdfBuffer) {
-    if (documentType === 'offer') {
+  if (!pdfBuffer && documentType === 'offer') {
+    if (activeTemplateId === 'default') {
+      try {
+        const defaultTpl = db.prepare("SELECT id FROM offer_letter_templates WHERE is_default = 1 AND status = 'active' LIMIT 1").get();
+        if (defaultTpl) activeTemplateId = defaultTpl.id;
+      } catch {}
+    }
+
+    if (activeTemplateId && activeTemplateId !== 'default') {
+      try {
+        const tpl = getOfferTemplate(db, user, activeTemplateId);
+        if (tpl && (tpl.status === 'active' || tpl.status === 'draft')) {
+          const compiled = compileTemplateToPdf(db, tpl, {
+            candidateId,
+            applicationId,
+            requisitionId,
+            offerData: {
+              salary: finalSalary,
+              currency: finalCurrency,
+              start_date: finalStartDate,
+              expires_days: expiresDays
+            },
+            user,
+            customVariables: templateVariables,
+            customSections: customSections || null
+          });
+          pdfBuffer = compiled.pdfBuffer;
+          templateSnapshot = compiled.templateSnapshot;
+          filename = `${(candidate?.name || 'Candidate').replace(/\s+/g, '_')}_Offer_Letter.pdf`;
+        }
+      } catch (tplErr) {
+        if (templateId) throw tplErr;
+      }
+    }
+
+    if (!pdfBuffer) {
       finalSalary = salary || (req?.salary_max ? String(req.salary_max) : '100,000');
       // Format clean display salary without duplicate currency symbols
       const displaySalary = String(finalSalary).replace(/^(?:INR|USD|EUR|GBP|CAD|AUD|₹|\$|€|£)\s*/i, '').trim();
@@ -378,13 +418,11 @@ export async function createSignatureRequest(db, user, {
         recruiterName: user.name || 'Talent Acquisition Team'
       });
       filename = `${(candidate?.name || 'Candidate').replace(/\s+/g, '_')}_Offer_Letter.pdf`;
-    } else {
-      throw new HttpError(400, 'Original document buffer is required for custom documents.');
     }
   }
 
   // Validate PDF magic bytes
-  if (!pdfBuffer.subarray(0, 4).equals(Buffer.from([0x25, 0x50, 0x44, 0x46]))) {
+  if (!pdfBuffer || !pdfBuffer.subarray(0, 4).equals(Buffer.from([0x25, 0x50, 0x44, 0x46]))) {
     throw new HttpError(400, 'Invalid document format. Only valid PDF files are supported.');
   }
 
@@ -414,15 +452,17 @@ export async function createSignatureRequest(db, user, {
       INSERT INTO signature_requests(
         id, title, document_id, candidate_id, application_id, requisition_id,
         status, original_document_hash, created_by, expires_at, created_at, updated_at,
-        salary, currency, start_date
+        salary, currency, start_date, template_id, template_snapshot
       )
-      VALUES(?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES(?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       requestId, safeTitle, docId, candidateId || null, applicationId || null, requisitionId || null,
       savedDoc.sha256, user.id, expiresAt, nowStr, nowStr,
       finalSalary ? String(finalSalary) : null,
       finalCurrency,
-      finalStartDate ? String(finalStartDate) : null
+      finalStartDate ? String(finalStartDate) : null,
+      activeTemplateId || null,
+      templateSnapshot ? JSON.stringify(templateSnapshot) : null
     );
 
     // 3. Insert signers and generate single-use security tokens

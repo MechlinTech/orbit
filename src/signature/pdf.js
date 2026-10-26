@@ -478,8 +478,9 @@ export function buildPdfDocument(pages = []) {
       xobjectsStr = ` /XObject << ${entries} >>`;
     }
 
-    // Page object with all font resources
-    appendObj(pId, `<< /Type /Page /Parent ${pagesObjId} 0 R /MediaBox [0 0 612 792] /Contents ${cId} 0 R /Resources << /Font << /F1 ${fontObjId} 0 R /F2 ${fontBoldObjId} 0 R /F3 ${fontSerifBoldItalicObjId} 0 R /F4 ${fontSerifItalicObjId} 0 R /F5 ${fontSansBoldObliqueObjId} 0 R /F6 ${fontMonoBoldObliqueObjId} 0 R >>${xobjectsStr} >> >>`);
+    // Page object with all font resources (defaulting to standard A4 portrait 595x842 pt)
+    const mediaBoxStr = page.mediaBox ? `[${page.mediaBox.join(' ')}]` : (page.width && page.height ? `[0 0 ${page.width} ${page.height}]` : '[0 0 595 842]');
+    appendObj(pId, `<< /Type /Page /Parent ${pagesObjId} 0 R /MediaBox ${mediaBoxStr} /Contents ${cId} 0 R /Resources << /Font << /F1 ${fontObjId} 0 R /F2 ${fontBoldObjId} 0 R /F3 ${fontSerifBoldItalicObjId} 0 R /F4 ${fontSerifItalicObjId} 0 R /F5 ${fontSansBoldObliqueObjId} 0 R /F6 ${fontMonoBoldObliqueObjId} 0 R >>${xobjectsStr} >> >>`);
 
     // Content stream object
     const streamHeader = Buffer.from(`<< /Length ${cBuf.buffer.length} /Filter /FlateDecode >>\nstream\n`);
@@ -527,13 +528,13 @@ export function generateOfferLetterPdf({
   requisitionTitle = 'Software Engineer',
   team = 'Engineering',
   salary = '120,000',
-  currency = 'USD',
+  currency = 'INR',
   startDate = 'Two weeks following signature acceptance',
   recruiterName = 'Talent Acquisition Team',
   companyName = 'Mechlin Technologies'
 } = {}) {
   const todayStr = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
-  const cleanCurrency = String(currency || 'USD').trim().toUpperCase();
+  const cleanCurrency = String(currency || 'INR').trim().toUpperCase();
   const cleanDisplaySalary = String(salary || '0').replace(/^(?:INR|USD|EUR|GBP|CAD|AUD|₹|\$|€|£)\s*/i, '').trim();
 
   const streamText = `
