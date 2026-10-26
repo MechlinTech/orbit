@@ -70,6 +70,8 @@ export async function createTeamsMeetingEvent({
   endsAt,
   timeZone = 'Asia/Kolkata',
   attendees = [],
+  isOnlineMeeting = true,
+  location = '',
   transport = fetch
 }) {
   if (!organizerEmail) {
@@ -99,8 +101,9 @@ export async function createTeamsMeetingEvent({
       },
       type: a.type || 'required'
     })),
-    isOnlineMeeting: true,
-    onlineMeetingProvider: 'teamsForBusiness'
+    isOnlineMeeting: isOnlineMeeting !== false,
+    ...(isOnlineMeeting !== false ? { onlineMeetingProvider: 'teamsForBusiness' } : {}),
+    ...(location ? { location: { displayName: location } } : {})
   };
 
     const outlookTz = (timeZone === 'Asia/Kolkata' || timeZone === 'Asia/Calcutta' || timeZone === 'IST') ? 'India Standard Time' : (timeZone || 'UTC');
@@ -124,7 +127,7 @@ export async function createTeamsMeetingEvent({
   }
 
   const data = await res.json();
-  const joinUrl = data.onlineMeeting?.joinUrl || data.webLink || null;
+  const joinUrl = isOnlineMeeting !== false ? (data.onlineMeeting?.joinUrl || data.webLink || null) : null;
 
   return {
     id: data.id,
@@ -149,6 +152,8 @@ export async function updateTeamsMeetingEvent({
   endsAt,
   timeZone = 'Asia/Kolkata',
   attendees,
+  isOnlineMeeting,
+  location,
   transport = fetch
 }) {
   if (!organizerEmail || !eventId) {
@@ -180,6 +185,15 @@ export async function updateTeamsMeetingEvent({
       type: a.type || 'required'
     }));
   }
+  if (isOnlineMeeting !== undefined) {
+    payload.isOnlineMeeting = isOnlineMeeting;
+    if (isOnlineMeeting) {
+      payload.onlineMeetingProvider = 'teamsForBusiness';
+    }
+  }
+  if (location !== undefined) {
+    payload.location = location ? { displayName: location } : { displayName: '' };
+  }
 
     const outlookTz = (timeZone === 'Asia/Kolkata' || timeZone === 'Asia/Calcutta' || timeZone === 'IST') ? 'India Standard Time' : (timeZone || 'UTC');
     const res = await transport(eventEndpoint, {
@@ -204,7 +218,7 @@ export async function updateTeamsMeetingEvent({
   const data = await res.json().catch(() => ({}));
   return {
     id: data.id || eventId,
-    joinUrl: data.onlineMeeting?.joinUrl || null,
+    joinUrl: isOnlineMeeting === false ? null : (data.onlineMeeting?.joinUrl || null),
     webLink: data.webLink || null
   };
 }
