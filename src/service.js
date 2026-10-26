@@ -13,7 +13,11 @@ import { isAiMatchingConfigured, matchWithAi } from './matching/ai.js';
 import { getOrRunFraudReview, resolveFraudReview } from './fraud/service.js';
 import { draftJobDescription } from './ai/draft.js';
 import { getAvailableAiProviders } from './ai/provider.js';
-import { createSignatureRequest, getSignatureRequest, listSignatureRequests, cancelSignatureRequest, downloadSignatureDocument, resendSignatureInvitation } from './signature/service.js';
+import {
+  createSignatureRequest, getSignatureRequest, listSignatureRequests,
+  cancelSignatureRequest, downloadSignatureDocument, resendSignatureInvitation,
+  verifyApplicationOfferSignature, getAuthoritativeOfferDetails
+} from './signature/service.js';
 import {
   listAgencies, getAgency, createAgency, updateAgency, setAgencyStatus, addAgencyMember,
   assignRequisitionToAgency, revokeRequisitionFromAgency, publishAgencyFeedback,
@@ -867,14 +871,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       return (async () => {
         const hrmsAdapter = c?.hrmsAdapter || new HrmsAdapter({ db, transport: c?.transport });
         const cand = db.prepare('SELECT * FROM candidates WHERE id = ?').get(app.candidate_id);
-        const completedOffer = db.prepare(`
-          SELECT r.id AS request_id, d.storage_path, r.signed_document_id
-          FROM signature_requests r
-          LEFT JOIN signature_documents d ON d.id = r.signed_document_id
-          WHERE (r.application_id = ? OR (r.candidate_id = ? AND r.candidate_id IS NOT NULL))
-            AND r.status = 'completed'
-          ORDER BY r.updated_at DESC LIMIT 1
-        `).get(key, app.candidate_id);
+        const offerDetails = getAuthoritativeOfferDetails(db, key, app.candidate_id, req?.id, req);
 
         const resumeMeta = db.prepare(`
           SELECT id, storage_id, filename, file_format, file_size, mime_type
@@ -884,8 +881,8 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
         `).get(app.candidate_id);
 
         const appOrigin = c?.origin || process.env.APP_ORIGIN || 'http://localhost:3000';
-        const signedDocUrl = (completedOffer?.storage_path && completedOffer?.request_id)
-          ? `${appOrigin}/api/signatures/${completedOffer.request_id}/document?version=signed`
+        const signedDocUrl = (offerDetails.storagePath && offerDetails.requestId)
+          ? `${appOrigin}/api/signatures/${offerDetails.requestId}/document?version=signed`
           : null;
 
         const resumeStoragePath = resumeMeta?.storage_id
@@ -901,15 +898,30 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
           download_url: `${appOrigin}/api/candidates/${cand.id}/resume`
         } : null;
 
+        const offerCurrency = offerDetails.currency || req?.currency || 'USD';
+
         const handoffResult = await hrmsAdapter.handoff({
           hireId: key,
           approvedFields: {
             candidate: cand,
             requisition: req,
             offer: {
-              annual_salary: req?.salary_min,
+              annual_salary: offerDetails.salary,
+              salary: offerDetails.salary,
+              currency: offerCurrency,
+              currency_code: offerCurrency,
+              salary_currency: offerCurrency,
+              ...(offerDetails.joiningDate ? { joining_date: offerDetails.joiningDate } : {}),
               signed_document_url: signedDocUrl
             },
+            ...(offerDetails.salary !== null && offerDetails.salary !== undefined ? { salary: offerDetails.salary } : {}),
+            currency: offerCurrency,
+            currency_code: offerCurrency,
+            salary_currency: offerCurrency,
+            ...(offerDetails.joiningDate ? {
+              joining_date: offerDetails.joiningDate,
+              date_of_joining: offerDetails.joiningDate
+            } : {}),
             resume: resumeInfo
           },
           idempotencyKey: `hrms_manual_${key}_${Date.now()}`
@@ -928,6 +940,12 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
     if (method === 'POST' && action === 'stage') {
       permit(user,'recruit'); const {app,req} = appContext(db,user,key), stages = pipeline(db);
       if (!stages.includes(body.stage)) throw new HttpError(400,'Unknown pipeline stage.');
+      if (body.stage === 'Hired') {
+        const sigCheck = verifyApplicationOfferSignature(db, key, app.candidate_id, req.id);
+        if (!sigCheck.verified) {
+          throw new HttpError(409, sigCheck.reason);
+        }
+      }
       const isAdmin = can(user, 'admin');
       const isTerminal = ['Hired','Rejected'].includes(app.stage);
       const isSequential = body.stage === 'Rejected' || stages.indexOf(body.stage) === stages.indexOf(app.stage)+1 || (!isTerminal && stages.indexOf(body.stage) === stages.indexOf(app.stage)-1);
@@ -1030,14 +1048,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
             try {
               const hrmsAdapter = c?.hrmsAdapter || new HrmsAdapter({ db, transport: c?.transport });
               const cand = db.prepare('SELECT * FROM candidates WHERE id = ?').get(app.candidate_id);
-              const completedOffer = db.prepare(`
-                SELECT r.id AS request_id, d.storage_path, r.signed_document_id
-                FROM signature_requests r
-                LEFT JOIN signature_documents d ON d.id = r.signed_document_id
-                WHERE (r.application_id = ? OR (r.candidate_id = ? AND r.candidate_id IS NOT NULL))
-                  AND r.status = 'completed'
-                ORDER BY r.updated_at DESC LIMIT 1
-              `).get(key, app.candidate_id);
+              const offerDetails = getAuthoritativeOfferDetails(db, key, app.candidate_id, req?.id, req);
 
               const resumeMeta = db.prepare(`
                 SELECT id, storage_id, filename, file_format, file_size, mime_type
@@ -1047,8 +1058,8 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
               `).get(app.candidate_id);
 
               const appOrigin = c?.origin || process.env.APP_ORIGIN || 'http://localhost:3000';
-              const signedDocUrl = (completedOffer?.storage_path && completedOffer?.request_id)
-                ? `${appOrigin}/api/signatures/${completedOffer.request_id}/document?version=signed`
+              const signedDocUrl = (offerDetails.storagePath && offerDetails.requestId)
+                ? `${appOrigin}/api/signatures/${offerDetails.requestId}/document?version=signed`
                 : null;
 
               const resumeStoragePath = resumeMeta?.storage_id
@@ -1064,15 +1075,30 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
                 download_url: `${appOrigin}/api/candidates/${cand.id}/resume`
               } : null;
 
+              const offerCurrency = offerDetails.currency || req?.currency || 'USD';
+
               const handoffResult = await hrmsAdapter.handoff({
                 hireId: key,
                 approvedFields: {
                   candidate: cand,
                   requisition: req,
                   offer: {
-                    annual_salary: req?.salary_min,
+                    annual_salary: offerDetails.salary,
+                    salary: offerDetails.salary,
+                    currency: offerCurrency,
+                    currency_code: offerCurrency,
+                    salary_currency: offerCurrency,
+                    ...(offerDetails.joiningDate ? { joining_date: offerDetails.joiningDate } : {}),
                     signed_document_url: signedDocUrl
                   },
+                  ...(offerDetails.salary !== null && offerDetails.salary !== undefined ? { salary: offerDetails.salary } : {}),
+                  currency: offerCurrency,
+                  currency_code: offerCurrency,
+                  salary_currency: offerCurrency,
+                  ...(offerDetails.joiningDate ? {
+                    joining_date: offerDetails.joiningDate,
+                    date_of_joining: offerDetails.joiningDate
+                  } : {}),
                   resume: resumeInfo
                 },
                 idempotencyKey: `hrms_handoff_${key}`

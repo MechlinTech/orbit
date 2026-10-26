@@ -730,6 +730,7 @@ async function openDemoModal(isSwitch=false){
       loadSavedPages();
       const nav=getNavList();
       current=getSavedNav(nav);
+      cleanAccessQuery();
       return `Signed in as ${me.name}.`;
     }
   });
@@ -762,12 +763,21 @@ async function openDemoModal(isSwitch=false){
   };
   if(roleSelect&&teamSelectEl){roleSelect.onchange=updateRoleState;updateRoleState();}
 }
+const cleanAccessQuery = () => {
+  try {
+    if (typeof location !== 'undefined' && new URLSearchParams(location.search).has('access')) {
+      const u = new URL(location.href);
+      u.searchParams.delete('access');
+      history.replaceState(null, '', u.pathname + (u.search ? u.search : '') + (u.hash || ''));
+    }
+  } catch {}
+};
 function login() {
   const status=new URLSearchParams(location.search).get('access');
   const messages={pending:'Access pending approval. Your request has been sent to the ATS administrators. Sign in again after approval.',rejected:'Your access request was rejected. Contact your ATS administrator.',disabled:'Your access has been disabled. Contact your ATS administrator.'};
   const isDemoEnabled=document.documentElement.dataset.demoLogin==='true';
   applyTheme(appearance.theme);
-  $('#app').innerHTML=`<div class="login"><section class="login-brand"><div>${brand()}</div><div class="login-message"><p class="eyebrow">People. Possibility. Orbit.</p><h1>Great teams<br>start with<br><em>great connections.</em></h1><p>A shared space for every step of your next great hire.</p><div class="login-steps"><span>Discover</span><span>Connect</span><span>Hire</span></div></div><p class="login-footer">A Mechlin product · Built for our people</p></section><main class="login-form" id="main"><div class="login-card"><span class="workspace-label">MECHLIN WORKSPACE</span><h1>Welcome to Orbit</h1><p class="muted">Your team’s next chapter starts here.</p>${messages[status]?`<div class="notice-inline">${messages[status]}</div>`:''}<a class="button microsoft-signin" href="/auth/login"><span class="microsoft-mark" aria-hidden="true"></span>Sign in with Microsoft 365</a><p class="muted">Use your Mechlin work account. New team members need administrator approval.</p>${isDemoEnabled?`<div class="demo-login-divider"><span>OR QA TESTING</span></div><button type="button" class="button secondary demo-signin-button" data-action="demo-login-modal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" style="margin-right:8px;"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M9 3a4 4 0 1 0 0 8a4 4 0 0 0 0-8 M17 4a4 4 0 0 1 0 8 M22 21v-2a4 4 0 0 0-3-4"/></svg>Demo / QA Login</button>`:''}<div class="login-access-note">${icon('Administration')}<span>Private workspace. Approved access only.</span></div></div></main></div>`;
+  $('#app').innerHTML=`<div class="login"><section class="login-brand"><div>${brand()}</div><div class="login-message"><p class="eyebrow">People. Possibility. Orbit.</p><h1>Great teams<br>start with<br><em>great connections.</em></h1><p>A shared space for every step of your next great hire.</p><div class="login-steps"><span>Discover</span><span>Connect</span><span>Hire</span></div></div><p class="login-footer">A Mechlin product · Built for our people</p></section><main class="login-form" id="main"><div class="login-card"><span class="workspace-label">MECHLIN WORKSPACE</span><h1>Welcome to Orbit</h1><p class="muted">Your team’s next chapter starts here.</p>${messages[status]?`<div class="notice-inline">${messages[status]}${status==='pending'?' <a href="/" style="color:inherit;text-decoration:underline;margin-left:8px;font-weight:600;">Check status</a>':''}</div>`:''}<a class="button microsoft-signin" href="/auth/login"><span class="microsoft-mark" aria-hidden="true"></span>Sign in with Microsoft 365</a><p class="muted">Use your Mechlin work account. New team members need administrator approval.</p>${isDemoEnabled?`<div class="demo-login-divider"><span>OR QA TESTING</span></div><button type="button" class="button secondary demo-signin-button" data-action="demo-login-modal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" style="margin-right:8px;"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M9 3a4 4 0 1 0 0 8a4 4 0 0 0 0-8 M17 4a4 4 0 0 1 0 8 M22 21v-2a4 4 0 0 0-3-4"/></svg>Demo / QA Login</button>`:''}<div class="login-access-note">${icon('Administration')}<span>Private workspace. Approved access only.</span></div></div></main></div>`;
 }
 function shell() {
   const nav=getNavList();
@@ -877,7 +887,7 @@ async function render() {
   const version=++renderVersion;let html='';
   const heading=(subtitle,action='')=>`<div class="heading"><div><p class="eyebrow">${isAgencyUser()?'EXTERNAL RECRUITER PORTAL':current==='Overview'?`YOUR TEAM. YOUR NEXT CHAPTER.`:allows('admin')&&['Settings','Administration','Audit log','Pipeline settings'].includes(current)?'WORKSPACE MANAGEMENT':'TALENT ACQUISITION'}</p><h1>${current}</h1><p class="muted">${subtitle}</p></div>${action}</div>`;
   try {
-    const config=await api('appearance');if(version!==renderVersion||!me)return;appearance=config;applyTheme(config.theme);shell();
+    const config=await api('appearance');if(version!==renderVersion||!me)return;appearance=config;applyTheme(config.theme);cleanAccessQuery();shell();
     if(current==='Overview') {
       const [stats,reqs]=await Promise.all([api('analytics'),api('requisitions')]);
       html=heading(`Welcome back, ${escape(me.name.split(' ')[0])}. Let’s move great people forward.`,allows('recruit')?button('+ Add candidate','new-candidate'):'')+`<div class="metrics">${[['Open requisitions',stats.openRequisitions,'Requisitions','Ready for your next hire'],['Approved headcount',stats.approvedHeadcount,'Referrals','Positions approved to fill'],['Candidates',stats.candidates,'Candidates','People in your talent pool'],['Awaiting approval',stats.pendingApprovals,'Administration','Requisitions awaiting a decision']].map(([label,count,i,note],n)=>`<div class="metric metric-${n}"><div class="metric-top"><span>${label}</span><span class="metric-icon">${icon(i)}</span></div><strong>${count}</strong><small>${note}</small></div>`).join('')}</div><div class="split"><section class="panel"><div class="panel-head"><div><h2>Hiring momentum</h2><p class="muted">A snapshot of your recruitment pipeline</p></div><span class="subtle-label">Current applications</span></div>${Object.entries(stats.stageCounts).map(([stage,count],n)=>`<div class="bar-row stage-${n}"><span>${escape(stage)}</span><progress value="${count}" max="${Math.max(1,...Object.values(stats.stageCounts))}" aria-label="${escape(stage)}"></progress><strong>${count}</strong></div>`).join('')}</section><section class="panel panel-attention"><div class="panel-head"><div><h2>Needs your attention</h2><p class="muted">Keep the next hire moving</p></div><span class="count-pill">${stats.pendingApprovals}</span></div><div class="attention-list" id="attention-list">${reqs.filter(r=>r.status.startsWith('pending')).map(r=>`<div class="attention-card"><div class="attention-title">${icon('Requisitions')}<strong>${escape(r.title)}</strong></div><p class="muted">${escape(r.team)} · ${r.headcount} opening(s)</p><div class="attention-bottom">${badge(r.status)}${button('View role','req-details',r.id,'class="text-button"')}</div></div>`).join('')||empty('All caught up. No pending requisitions.')}</div><p class="panel-footnote">Approvals keep hiring aligned with your team’s plans.</p></section></div><section class="panel"><div class="panel-head"><div><h2>Recent requisitions</h2><p class="muted">The roles shaping your next chapter</p></div>${button('View all roles','navigate','','class="text-button" data-view="Requisitions"')}</div>${reqTable(reqs.slice(0,5))}</section>`;
@@ -2302,6 +2312,32 @@ document.addEventListener('click',async event=>{
         bindValidation('currency', checkCurrency);
         return;
       }
+      if(a==='move' && stage==='Hired' && !isBackMove){
+        const [apps, candSigs] = await Promise.all([
+          api('applications'),
+          api(`signatures?application_id=${id}`).catch(() => [])
+        ]);
+        const app = apps.find(x => x.id === id);
+        if(!app) throw new Error('Application not found.');
+        const sigs = Array.isArray(candSigs) && candSigs.length
+          ? candSigs
+          : await api(`candidates/${app.candidate_id}/signatures`).catch(() => []);
+        const completedOffer = (Array.isArray(sigs) ? sigs : []).find(s =>
+          (s.application_id === id || (!s.application_id && s.candidate_id === app.candidate_id)) &&
+          s.status === 'completed'
+        );
+        if(!completedOffer){
+          const pendingOffer = (Array.isArray(sigs) ? sigs : []).find(s =>
+            (s.application_id === id || (!s.application_id && s.candidate_id === app.candidate_id)) &&
+            s.status === 'pending'
+          );
+          const errorMsg = pendingOffer
+            ? 'Offer letter is awaiting candidate signature. The candidate must sign the offer letter before proceeding.'
+            : 'The candidate must sign the offer letter before proceeding.';
+          notice(errorMsg, 'error');
+          return;
+        }
+      }
       modal('Change application stage',`<p>Move this application to <strong>${escape(stage)}</strong>?</p><p class="muted" style="font-size:0.82rem;margin-top:6px;">A status update email will be automatically sent to the candidate.</p>`,async ()=>{
         await api(`applications/${id}/stage`,'POST',{stage});
         return stage==='Rejected'?'Application rejected. Status update email sent.':`Application moved to ${stage} successfully. Status update email sent.`;
@@ -2538,25 +2574,42 @@ document.addEventListener('click',async event=>{
       }
       if (!reqOptions.length) reqOptions.push(['', 'General Position (No active requisition)']);
 
+      const firstReqId = reqOptions[0]?.[0];
+      const initialReq = reqs.find(r => r.id === firstReqId);
+      const initialCurrency = initialReq?.currency || 'USD';
+      const initialSalary = initialReq?.salary_max
+        ? Number(initialReq.salary_max).toLocaleString()
+        : (initialReq?.salary_min ? Number(initialReq.salary_min).toLocaleString() : '120,000');
+
       modal(`Create Offer & E-Signature Request for ${escape(cand.name)}`, `
         <div class="form-grid">
           ${field('Document title', 'title', 'text', 'Employment Offer Letter')}
           ${select('Associated position', 'requisition_id', reqOptions)}
           ${field('Signer legal name', 'signer_name', 'text', cand.name)}
           ${field('Signer email', 'signer_email', 'email', cand.email)}
-          ${field('Annual base salary', 'salary', 'text', '120,000')}
-          ${field('Currency', 'currency', 'text', 'USD')}
+          ${field('Annual base salary', 'salary', 'text', initialSalary)}
+          ${field('Currency', 'currency', 'text', initialCurrency)}
           ${field('Anticipated start date', 'start_date', 'text', 'Two weeks following signature acceptance')}
           ${field('Expiration in days', 'expires_days', 'number', '7')}
           <p class="full status-note">Orbit will generate an official Offer of Employment PDF, attach cryptographic SHA-256 integrity verification, and generate a secure signing session token.</p>
         </div>
       `, async v => {
+        const currErr = checkCurrency(v.currency);
+        if (currErr) {
+          const el = $('#currency-error'); if (el) el.textContent = currErr;
+          const inp = $('#edit-form [name="currency"]'); if (inp) { inp.setCustomValidity(currErr); inp.reportValidity(); }
+          throw new Error(currErr);
+        }
+        const matchedApp = activeApps.find(a => a.requisition_id === v.requisition_id);
+        const selectedReq = reqs.find(r => r.id === v.requisition_id);
+        const targetCurrency = v.currency?.trim()?.toUpperCase() || selectedReq?.currency || initialCurrency;
         const payload = {
           title: v.title?.trim() || 'Employment Offer Letter',
           candidate_id: cand.id,
+          application_id: matchedApp?.id || undefined,
           requisition_id: v.requisition_id || undefined,
-          salary: v.salary?.trim() || '120,000',
-          currency: v.currency?.trim()?.toUpperCase() || 'USD',
+          salary: v.salary?.trim() || initialSalary,
+          currency: targetCurrency,
           start_date: v.start_date?.trim(),
           expires_days: Number(v.expires_days) || 7,
           signers: [{
@@ -2569,6 +2622,25 @@ document.addEventListener('click',async event=>{
         notice('Offer signature request created successfully!', 'success');
         return 'Signature request created successfully.';
       });
+
+      bindValidation('currency', checkCurrency);
+      const reqSelect = $('#edit-form [name="requisition_id"]');
+      if (reqSelect) {
+        reqSelect.addEventListener('change', () => {
+          const sel = reqs.find(r => r.id === reqSelect.value);
+          if (sel) {
+            const cInput = $('#edit-form [name="currency"]');
+            if (cInput && sel.currency) {
+              cInput.value = sel.currency;
+              cInput.dispatchEvent(new Event('input'));
+            }
+            const sInput = $('#edit-form [name="salary"]');
+            if (sInput && sel.salary_max) {
+              sInput.value = Number(sel.salary_max).toLocaleString();
+            }
+          }
+        });
+      }
     }
     if(a==='cancel-signature-request'){
       if (!confirm('Are you sure you want to cancel this signature request?')) return;
@@ -3440,6 +3512,7 @@ window.addEventListener('online',()=>notice('Connection restored.','success'));
     loadSavedPages();
     const nav=getNavList();
     current=getSavedNav(nav);
+    cleanAccessQuery();
     await render();
   }catch{
     login();
