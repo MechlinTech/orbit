@@ -5,8 +5,10 @@
  */
 
 import { randomBytes, createHash } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
+import zlib from 'node:zlib';
 import { id, now, audit, transaction } from '../db.js';
-import { HttpError, requirePermission as permit, inTeam, can, text as validateText, email as validateEmail } from '../policy.js';
+import { HttpError, requirePermission as permit, inTeam, can, text as validateText, email as validateEmail, currencies } from '../policy.js';
 import { SignatureStorageManager } from './storage.js';
 import { validateTypedSignature, validateSignatureImage, validateDrawnSignature } from './validator.js';
 import { generateOfferLetterPdf, stampSignedPdf } from './pdf.js';
@@ -329,10 +331,23 @@ export async function createSignatureRequest(db, user, {
   let candidate = null;
   let req = null;
 
+  if (applicationId) {
+    const appRecord = db.prepare('SELECT * FROM applications WHERE id = ?').get(applicationId);
+    if (appRecord) {
+      if (!candidateId && appRecord.candidate_id) candidateId = appRecord.candidate_id;
+      if (!requisitionId && appRecord.requisition_id) requisitionId = appRecord.requisition_id;
+    }
+  }
+
   if (candidateId) {
     candidate = db.prepare('SELECT * FROM candidates WHERE id = ?').get(candidateId);
     if (!candidate) throw new HttpError(404, 'Candidate not found.');
     if (!can(user, 'admin')) requireTeam(user, candidate.team);
+  }
+
+  if (!requisitionId && candidateId) {
+    const candApp = db.prepare('SELECT requisition_id FROM applications WHERE candidate_id = ? ORDER BY created_at DESC LIMIT 1').get(candidateId);
+    if (candApp?.requisition_id) requisitionId = candApp.requisition_id;
   }
 
   if (requisitionId) {
@@ -341,14 +356,24 @@ export async function createSignatureRequest(db, user, {
     if (!can(user, 'admin')) requireTeam(user, req.team);
   }
 
+  const detectedSalaryCurrency = salary ? cleanCurrencyCode(salary, null) : null;
+  const rawCurrency = currency || detectedSalaryCurrency || req?.currency || 'USD';
+  const finalCurrency = cleanCurrencyCode(rawCurrency, req?.currency || 'USD');
+
+  let finalSalary = salary || null;
+  let finalStartDate = startDate || null;
+
   if (!pdfBuffer) {
     if (documentType === 'offer') {
+      finalSalary = salary || (req?.salary_max ? String(req.salary_max) : '100,000');
+      // Format clean display salary without duplicate currency symbols
+      const displaySalary = String(finalSalary).replace(/^(?:INR|USD|EUR|GBP|CAD|AUD|₹|\$|€|£)\s*/i, '').trim();
       pdfBuffer = generateOfferLetterPdf({
         candidateName: candidate?.name || 'Candidate',
         requisitionTitle: req?.title || 'Open Position',
         team: req?.team || user.team || 'General',
-        salary: salary || (req?.salary_max ? String(req.salary_max) : '100,000'),
-        currency: currency || req?.currency || 'USD',
+        salary: displaySalary,
+        currency: finalCurrency,
         startDate: startDate || 'Two weeks following signature acceptance',
         recruiterName: user.name || 'Talent Acquisition Team'
       });
@@ -388,12 +413,16 @@ export async function createSignatureRequest(db, user, {
     db.prepare(`
       INSERT INTO signature_requests(
         id, title, document_id, candidate_id, application_id, requisition_id,
-        status, original_document_hash, created_by, expires_at, created_at, updated_at
+        status, original_document_hash, created_by, expires_at, created_at, updated_at,
+        salary, currency, start_date
       )
-      VALUES(?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)
+      VALUES(?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       requestId, safeTitle, docId, candidateId || null, applicationId || null, requisitionId || null,
-      savedDoc.sha256, user.id, expiresAt, nowStr, nowStr
+      savedDoc.sha256, user.id, expiresAt, nowStr, nowStr,
+      finalSalary ? String(finalSalary) : null,
+      finalCurrency,
+      finalStartDate ? String(finalStartDate) : null
     );
 
     // 3. Insert signers and generate single-use security tokens
@@ -930,3 +959,261 @@ function requireTeam(user, team) {
   if (user.role === 'System Admin') return;
   if (!inTeam(user, team)) throw new HttpError(403, 'Team mismatch: access denied.');
 }
+
+/**
+ * Normalizes an offer letter start date to YYYY-MM-DD format without timezone shifts.
+ * Returns null if no specific calendar date is specified (e.g. 'Two weeks following signature acceptance').
+ */
+export function parseOfferJoiningDate(startDateStr) {
+  if (!startDateStr || typeof startDateStr !== 'string') return null;
+  const trimmed = startDateStr.trim();
+  if (!trimmed) return null;
+
+  // Ignore non-date descriptive phrases
+  if (/two\s+weeks|acceptance|tbd|immediate|pending|upon\s+signature/i.test(trimmed)) {
+    return null;
+  }
+
+  // 1. Direct YYYY-MM-DD or YYYY/MM/DD (preserves exact date without timezone shift)
+  const ymd = trimmed.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+  if (ymd) {
+    const y = ymd[1];
+    const m = String(ymd[2]).padStart(2, '0');
+    const d = String(ymd[3]).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+
+  // 2. DD-MM-YYYY or DD/MM/YYYY
+  const dmy = trimmed.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
+  if (dmy) {
+    const d = String(dmy[1]).padStart(2, '0');
+    const m = String(dmy[2]).padStart(2, '0');
+    const y = dmy[3];
+    return `${y}-${m}-${d}`;
+  }
+
+  // 3. Textual date parsing (e.g. "November 15, 2026" or "15 Nov 2026")
+  const monthNames = {
+    jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
+    jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12'
+  };
+  const namedMonthMatch = trimmed.match(/([a-z]{3,})[a-z]*\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})/i) ||
+                          trimmed.match(/(\d{1,2})(?:st|nd|rd|th)?\s+([a-z]{3,})[a-z]*,?\s+(\d{4})/i);
+  if (namedMonthMatch) {
+    let monthStr, dayStr, yearStr;
+    if (isNaN(Number(namedMonthMatch[1]))) {
+      monthStr = namedMonthMatch[1].slice(0, 3).toLowerCase();
+      dayStr = namedMonthMatch[2];
+      yearStr = namedMonthMatch[3];
+    } else {
+      dayStr = namedMonthMatch[1];
+      monthStr = namedMonthMatch[2].slice(0, 3).toLowerCase();
+      yearStr = namedMonthMatch[3];
+    }
+    if (monthNames[monthStr]) {
+      return `${yearStr}-${monthNames[monthStr]}-${String(dayStr).padStart(2, '0')}`;
+    }
+  }
+
+  const parsed = Date.parse(trimmed);
+  if (!isNaN(parsed)) {
+    const dt = new Date(parsed);
+    const y = dt.getUTCFullYear();
+    const m = String(dt.getUTCMonth() + 1).padStart(2, '0');
+    const d = String(dt.getUTCDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+
+  return null;
+}
+
+/**
+ * Cleans and converts a salary string or number to a finite numeric value.
+ */
+export function cleanSalaryValue(val) {
+  if (val === null || val === undefined || val === '') return null;
+  if (typeof val === 'number') return Number.isFinite(val) ? val : null;
+  const s = String(val).replace(/[^0-9.]/g, '');
+  if (!s) return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Normalizes currency codes from raw input strings, symbols, or requisition records.
+ * Supports symbols like ₹, $, €, £, and standard 3-letter codes.
+ */
+export function cleanCurrencyCode(val, fallback = 'USD') {
+  if (val === null || val === undefined) return fallback;
+  const s = String(val).trim();
+  if (!s) return fallback;
+
+  if (/^₹|^rs\.?|^inr/i.test(s)) return 'INR';
+  if (/^\$|^usd/i.test(s)) return 'USD';
+  if (/^€|^eur/i.test(s)) return 'EUR';
+  if (/^£|^gbp/i.test(s)) return 'GBP';
+  if (/^c\$|^cad/i.test(s)) return 'CAD';
+  if (/^a\$|^aud/i.test(s)) return 'AUD';
+  if (/^¥|^jpy/i.test(s)) return 'JPY';
+
+  const m = s.toUpperCase().match(/[A-Z]{3}/);
+  if (m && currencies.includes(m[0])) return m[0];
+  if (m) return m[0];
+
+  return fallback;
+}
+
+/**
+ * Verifies that the application has a successfully completed and verified offer-letter signature.
+ * Returns { verified: true, request, signers } or { verified: false, status, reason }.
+ */
+export function verifyApplicationOfferSignature(db, applicationId, candidateId = null, requisitionId = null) {
+  const requests = db.prepare(`
+    SELECT r.*, d.storage_path, d.is_signed, d.sha256_hash AS doc_hash
+    FROM signature_requests r
+    LEFT JOIN signature_documents d ON d.id = r.signed_document_id
+    WHERE (r.application_id = ? OR (r.application_id IS NULL AND r.candidate_id = ? AND (r.requisition_id = ? OR r.requisition_id IS NULL)))
+    ORDER BY r.created_at DESC, r.updated_at DESC
+  `).all(applicationId, candidateId, requisitionId);
+
+  if (!requests.length) {
+    return {
+      verified: false,
+      reason: 'No offer letter found for this candidate. The candidate must sign the offer letter before proceeding.'
+    };
+  }
+
+  const latest = requests[0];
+
+  if (latest.status === 'pending') {
+    return {
+      verified: false,
+      status: 'pending',
+      reason: 'Offer letter is pending signature. The candidate must sign the offer letter before proceeding.'
+    };
+  }
+  if (latest.status === 'declined') {
+    return {
+      verified: false,
+      status: 'declined',
+      reason: 'Offer letter was declined. The candidate must sign the offer letter before proceeding.'
+    };
+  }
+  if (latest.status === 'expired') {
+    return {
+      verified: false,
+      status: 'expired',
+      reason: 'Offer letter has expired. The candidate must sign the offer letter before proceeding.'
+    };
+  }
+  if (latest.status === 'cancelled') {
+    return {
+      verified: false,
+      status: 'cancelled',
+      reason: 'Offer letter was cancelled. The candidate must sign the offer letter before proceeding.'
+    };
+  }
+  if (latest.status === 'partially_signed' || latest.status === 'draft' || latest.status === 'viewed') {
+    return {
+      verified: false,
+      status: latest.status,
+      reason: 'Offer letter signature is incomplete. The candidate must sign the offer letter before proceeding.'
+    };
+  }
+  if (latest.status !== 'completed') {
+    return {
+      verified: false,
+      status: latest.status,
+      reason: 'The candidate must sign the offer letter before proceeding.'
+    };
+  }
+
+  // Verify backend records integrity: signed document
+  if (!latest.signed_document_id || latest.is_signed !== 1 || !latest.signed_document_hash) {
+    return {
+      verified: false,
+      reason: 'Offer letter signed document verification failed. The candidate must sign the offer letter before proceeding.'
+    };
+  }
+
+  // Verify backend records integrity: signers
+  const signers = db.prepare('SELECT * FROM signature_signers WHERE request_id = ?').all(latest.id);
+  if (!signers.length || !signers.every(s => s.status === 'signed' && s.signed_at && s.consent_confirmed === 1)) {
+    return {
+      verified: false,
+      reason: 'Candidate signature verification incomplete. The candidate must sign the offer letter before proceeding.'
+    };
+  }
+
+  return {
+    verified: true,
+    request: latest,
+    signers
+  };
+}
+
+/**
+ * Retrieves authoritative approved candidate offer details (salary, joining date, signed document URL).
+ */
+export function getAuthoritativeOfferDetails(db, applicationId, candidateId = null, requisitionId = null, fallbackReq = null) {
+  const completedOffer = db.prepare(`
+    SELECT r.id AS request_id, r.signed_document_id, r.salary, r.currency, r.start_date,
+           d.storage_path, d.sha256_hash AS doc_hash
+    FROM signature_requests r
+    LEFT JOIN signature_documents d ON d.id = r.signed_document_id
+    WHERE (r.application_id = ? OR (r.application_id IS NULL AND r.candidate_id = ? AND (r.requisition_id = ? OR r.requisition_id IS NULL)))
+      AND r.status = 'completed'
+    ORDER BY r.updated_at DESC, r.created_at DESC
+    LIMIT 1
+  `).get(applicationId, candidateId, requisitionId);
+
+  let rawSalary = completedOffer?.salary || null;
+  let rawStartDate = completedOffer?.start_date || null;
+  let rawCurrency = completedOffer?.currency || null;
+
+  if ((!rawSalary || !rawStartDate || !rawCurrency) && completedOffer?.storage_path && existsSync(completedOffer.storage_path)) {
+    try {
+      const pdfBuf = readFileSync(completedOffer.storage_path);
+      let pdfContent = pdfBuf.toString('utf8');
+      let idx = 0;
+      while ((idx = pdfBuf.indexOf('stream', idx)) !== -1) {
+        const end = pdfBuf.indexOf('endstream', idx);
+        const start = pdfBuf.indexOf(0x0a, idx) + 1;
+        try {
+          const decompressed = zlib.inflateSync(pdfBuf.subarray(start, end)).toString('utf8');
+          pdfContent += '\n' + decompressed;
+        } catch {}
+        idx = end + 9;
+      }
+      if (!rawSalary) {
+        const salMatch = pdfContent.match(/Annual Base Salary:\s*(?:[A-Z]{3}|[^\s0-9()]+)?\s*([0-9,.]+)/i);
+        if (salMatch) rawSalary = salMatch[1];
+      }
+      if (!rawStartDate) {
+        const dateMatch = pdfContent.match(/Anticipated Start Date:\s*([^\r\n)]+)/i);
+        if (dateMatch) rawStartDate = dateMatch[1]?.trim();
+      }
+      if (!rawCurrency) {
+        const currMatch = pdfContent.match(/Annual Base Salary:\s*([A-Z]{3})/i);
+        if (currMatch) rawCurrency = currMatch[1]?.trim()?.toUpperCase();
+      }
+    } catch {}
+  }
+
+  const cleanedSalary = cleanSalaryValue(rawSalary);
+  const finalSalary = cleanedSalary !== null ? cleanedSalary : (fallbackReq?.salary_min !== undefined ? fallbackReq.salary_min : null);
+  const joiningDate = parseOfferJoiningDate(rawStartDate);
+  const finalCurrency = cleanCurrencyCode(rawCurrency || fallbackReq?.currency || 'USD', fallbackReq?.currency || 'USD');
+
+  return {
+    salary: finalSalary,
+    currency: finalCurrency,
+    currencyCode: finalCurrency,
+    joiningDate,
+    rawStartDate,
+    storagePath: completedOffer?.storage_path || null,
+    requestId: completedOffer?.request_id || null,
+    signedDocId: completedOffer?.signed_document_id || null
+  };
+}
+

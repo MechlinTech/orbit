@@ -97,7 +97,8 @@ export function openDb(path = 'data/talentos.sqlite') {
       application_id TEXT REFERENCES applications(id), requisition_id TEXT REFERENCES requisitions(id),
       status TEXT NOT NULL CHECK(status IN ('draft','pending','viewed','partially_signed','completed','declined','expired','cancelled')),
       original_document_hash TEXT NOT NULL, signed_document_hash TEXT, created_by TEXT NOT NULL REFERENCES users(id),
-      expires_at TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+      expires_at TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+      salary TEXT, currency TEXT, start_date TEXT);
     CREATE INDEX IF NOT EXISTS idx_signature_requests_candidate ON signature_requests(candidate_id);
     CREATE INDEX IF NOT EXISTS idx_signature_requests_application ON signature_requests(application_id);
     CREATE TABLE IF NOT EXISTS signature_signers(
@@ -227,6 +228,9 @@ export function openDb(path = 'data/talentos.sqlite') {
   try { db.exec('ALTER TABLE interviews ADD COLUMN calendar_event_id TEXT;'); } catch {}
   try { db.exec('ALTER TABLE interviews ADD COLUMN calendar_status TEXT DEFAULT "not_synced";'); } catch {}
   addColumn('signature_signers', 'raw_token TEXT');
+  addColumn('signature_requests', 'salary TEXT');
+  addColumn('signature_requests', 'currency TEXT');
+  addColumn('signature_requests', 'start_date TEXT');
   return db;
 }
 export function audit(db, actor, event, target = '', detail = {}) {
