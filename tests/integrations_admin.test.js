@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fixture, user, testConfig, reqBody, candidateBody } from './helpers.js';
+import { fixture, user, testConfig, reqBody, candidateBody, addSignedOffer } from './helpers.js';
 import { service } from '../src/service.js';
 import { HrmsAdapter, AdapterNotConfigured } from '../src/adapters.js';
 import { encryptSecret, decryptSecret, isMasked, MASKED_VALUE } from '../src/integrations/crypto.js';
@@ -653,6 +653,7 @@ test('Stage transition to Hired dispatches automated HRMS handoff when syncEnabl
   await call(f, f.recruiter, 'POST', `applications/${app.id}/stage`, { stage: 'Offer' });
 
   // Move to Hired with mock transport
+  addSignedOffer(f.db, app.id, cand, req, { salary: 135000, startDate: '2026-11-15' });
   await call(f, f.recruiter, 'POST', `applications/${app.id}/stage`, {
     stage: 'Hired'
   }, new URLSearchParams(), { ...f.config, transport: mockTransport });
