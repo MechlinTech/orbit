@@ -10,7 +10,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fixture, reqBody, candidateBody, testConfig } from './helpers.js';
+import { fixture, reqBody, candidateBody, testConfig, addSignedOffer } from './helpers.js';
 import { service } from '../src/service.js';
 import { can } from '../src/policy.js';
 import {
@@ -381,6 +381,7 @@ test('Mandatory Test 4: Status tracking and confidentiality', async () => {
   agencySubs = service(db, agencyUser, 'GET', 'agency/submissions');
   assert.equal(agencySubs.find(s => s.id === sub.id).status, 'Shortlisted');
 
+  addSignedOffer(db, sub.application_id, { id: sub.candidate_id, name: 'Chris Nolan', email: 'chris.nolan@example.com' }, req);
   service(db, recruiter, 'POST', `applications/${sub.application_id}/stage`, { stage: 'Hired' });
   agencySubs = service(db, agencyUser, 'GET', 'agency/submissions');
   assert.equal(agencySubs.find(s => s.id === sub.id).status, 'Selected');

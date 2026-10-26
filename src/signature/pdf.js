@@ -533,6 +533,8 @@ export function generateOfferLetterPdf({
   companyName = 'Mechlin Technologies'
 } = {}) {
   const todayStr = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const cleanCurrency = String(currency || 'USD').trim().toUpperCase();
+  const cleanDisplaySalary = String(salary || '0').replace(/^(?:INR|USD|EUR|GBP|CAD|AUD|₹|\$|€|£)\s*/i, '').trim();
 
   const streamText = `
 BT
@@ -598,7 +600,7 @@ ET
 BT
 /F1 10 Tf
 64 465 Td
-(- Annual Base Salary: ${escapePdfText(currency)} ${escapePdfText(salary)}) Tj
+(- Annual Base Salary: ${escapePdfText(cleanCurrency)} ${escapePdfText(cleanDisplaySalary)}) Tj
 ET
 
 BT
