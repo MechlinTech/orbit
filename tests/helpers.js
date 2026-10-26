@@ -6,7 +6,7 @@ export const testConfig=()=>config({APP_ORIGIN:'http://localhost:3000',ENTRA_TEN
 export function user(db,role='Recruiter',team='Engineering',status='active'){
   const uid=id();db.prepare('INSERT INTO users(id,email,name,oid,tenant,role,team,status,created_at) VALUES(?,?,?,?,?,?,?,?,?)').run(uid,`${uid}@example.com`,role,uid,tenant,role,team,status,now());return db.prepare('SELECT * FROM users WHERE id=?').get(uid);
 }
-export const fixture=()=>{const db=openDb(':memory:');return {db,admin:user(db,'System Admin'),recruiter:user(db),manager:user(db,'Hiring Manager'),finance:user(db,'Finance Approver'),interviewer:user(db,'Interviewer')};};
+export const fixture=()=>{const db=openDb(':memory:');db.prepare("UPDATE settings SET value=? WHERE key='pipeline'").run('["Applied","Screening","Interview","Offer","Hired","Rejected"]');return {db,admin:user(db,'System Admin'),recruiter:user(db),manager:user(db,'Hiring Manager'),finance:user(db,'Finance Approver'),interviewer:user(db,'Interviewer')};};
 export const reqBody={title:'Senior Software Engineer',team:'Engineering',headcount:1,salary_min:90000,salary_max:140000,currency:'USD',description:'Build reliable internal systems.',skills:['JavaScript','SQL']};
 export const candidateBody={name:'Avery Chen',email:'avery@example.com',team:'Engineering',phone:'',skills:['SQL'],resume_text:'SQL engineer',source:'Direct'};
 

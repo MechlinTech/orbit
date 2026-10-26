@@ -200,6 +200,8 @@ export async function sendCandidateCommunication(db, user, body, adapter) {
     interviewer_name: body.interviewer_name || '',
     notes: body.notes || body.custom_notes || '',
     meeting_url: body.meeting_url || '',
+    interview_type: body.interview_type || 'virtual',
+    location: body.location || '',
     ...(body.variables || {})
   };
 

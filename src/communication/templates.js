@@ -92,6 +92,17 @@ function interviewSchedule(vars = {}) {
 }
 
 function interviewMeetingHtml(vars = {}) {
+  const isPhysical = vars.interview_type === 'in_person' || vars.format === 'in_person' || vars.format === 'physical';
+  if (isPhysical) {
+    const loc = vars.location || 'Mechlin Technologies Office';
+    return `
+      <div style="background-color: #f8fafc; border: 1px solid #cbd5e1; border-left: 4px solid #0284c7; border-radius: 8px; padding: 16px; margin: 20px 0;">
+        <p style="margin: 0 0 6px 0; font-size: 14px; font-weight: 600; color: #0f172a;">Interview Format: In-Person / Physical Interview</p>
+        <p style="margin: 0 0 6px 0; font-size: 14px; color: #334155;"><strong>Location / Venue:</strong> ${escapeHtml(loc)}</p>
+        <p style="margin: 0; font-size: 13px; color: #64748b;">Please arrive at the venue 10 minutes prior to your scheduled time with a valid government photo ID for security entry. No online meeting link is required for this on-site evaluation.</p>
+      </div>
+    `;
+  }
   if (vars.meeting_url) {
     return `
       <div style="margin: 20px 0; text-align: center;">
@@ -108,6 +119,11 @@ function interviewMeetingHtml(vars = {}) {
 }
 
 function interviewMeetingText(vars = {}) {
+  const isPhysical = vars.interview_type === 'in_person' || vars.format === 'in_person' || vars.format === 'physical';
+  if (isPhysical) {
+    const loc = vars.location || 'Mechlin Technologies Office';
+    return `Interview Format: In-Person / Physical Interview\nLocation / Venue: ${loc}\nPlease arrive 10 minutes prior with a valid government photo ID. No online meeting link is required for this on-site evaluation.`;
+  }
   return vars.meeting_url
     ? `Microsoft Teams Meeting Link:\n${vars.meeting_url}`
     : 'Joining instructions: Your recruiter will send the Microsoft Teams meeting link before your interview. If you have not received it 24 hours before the scheduled time, please reply to this email and we will resend it.';
@@ -170,6 +186,7 @@ The Mechlin Talent Team`;
       const schedule = interviewSchedule(vars);
       const scheduledAt = schedule.scheduledAt;
       const interviewer = vars.interviewer_name || 'Our hiring team';
+      const isPhysical = vars.interview_type === 'in_person' || vars.format === 'in_person' || vars.format === 'physical';
       const notes = vars.notes ? `<p style="font-size: 14px; background: #f8fafc; border-left: 3px solid #0f172a; padding: 12px; margin: 16px 0;"><strong>Details & Preparation:</strong><br>${escapeHtml(vars.notes)}</p>` : '';
       const meetingButton = interviewMeetingHtml(vars);
       const title = `Interview Invitation: ${reqTitle}`;
@@ -186,7 +203,8 @@ The Mechlin Talent Team`;
             <p style="margin: 0 0 8px 0; font-size: 14px;"><strong>Date & Time:</strong> ${escapeHtml(scheduledAt)}</p>
             <p style="margin: 0 0 8px 0; font-size: 14px;"><strong>Duration:</strong> ${schedule.duration} minutes</p>
             <p style="margin: 0 0 8px 0; font-size: 14px;"><strong>Timezone:</strong> ${escapeHtml(schedule.timezone)}</p>
-            <p style="margin: 0; font-size: 14px;"><strong>Interviewer:</strong> ${escapeHtml(interviewer)}</p>
+            <p style="margin: 0 0 8px 0; font-size: 14px;"><strong>Interviewer:</strong> ${escapeHtml(interviewer)}</p>
+            <p style="margin: 0; font-size: 14px;"><strong>Format:</strong> ${isPhysical ? 'In-Person / Physical' : 'Virtual / Online (Microsoft Teams)'}</p>
           </div>
           ${meetingButton}
           ${notes}
@@ -204,6 +222,7 @@ Interview Details:
 - Duration: ${schedule.duration} minutes
 - Timezone: ${schedule.timezone}
 - Interviewer: ${interviewer}
+- Format: ${isPhysical ? 'In-Person / Physical' : 'Virtual / Online (Microsoft Teams)'}
 ${interviewMeetingText(vars)}${vars.notes ? `\n\nDetails & Preparation:\n${vars.notes}` : ''}
 
 If this time does not work for your schedule or if you require any accessibility accommodations, please let us know as soon as possible.
@@ -228,6 +247,7 @@ The Mechlin Talent Team`;
       const schedule = interviewSchedule(vars);
       const scheduledAt = schedule.scheduledAt;
       const interviewer = vars.interviewer_name || 'Our hiring team';
+      const isPhysical = vars.interview_type === 'in_person' || vars.format === 'in_person' || vars.format === 'physical';
       const reason = vars.notes ? `<p style="font-size: 14px; background: #f8fafc; border-left: 3px solid #0f172a; padding: 12px; margin: 16px 0;"><strong>Update Note:</strong><br>${escapeHtml(vars.notes)}</p>` : '';
       const meetingButton = interviewMeetingHtml(vars);
       const title = `Interview Updated: ${reqTitle}`;
@@ -244,7 +264,8 @@ The Mechlin Talent Team`;
             <p style="margin: 0 0 8px 0; font-size: 14px;"><strong>Updated Date & Time:</strong> ${escapeHtml(scheduledAt)}</p>
             <p style="margin: 0 0 8px 0; font-size: 14px;"><strong>Duration:</strong> ${schedule.duration} minutes</p>
             <p style="margin: 0 0 8px 0; font-size: 14px;"><strong>Timezone:</strong> ${escapeHtml(schedule.timezone)}</p>
-            <p style="margin: 0; font-size: 14px;"><strong>Interviewer:</strong> ${escapeHtml(interviewer)}</p>
+            <p style="margin: 0 0 8px 0; font-size: 14px;"><strong>Interviewer:</strong> ${escapeHtml(interviewer)}</p>
+            <p style="margin: 0; font-size: 14px;"><strong>Format:</strong> ${isPhysical ? 'In-Person / Physical' : 'Virtual / Online (Microsoft Teams)'}</p>
           </div>
           ${meetingButton}
           ${reason}
@@ -261,6 +282,7 @@ Updated Details:
 - Duration: ${schedule.duration} minutes
 - Timezone: ${schedule.timezone}
 - Interviewer: ${interviewer}
+- Format: ${isPhysical ? 'In-Person / Physical' : 'Virtual / Online (Microsoft Teams)'}
 ${interviewMeetingText(vars)}${vars.notes ? `\n\nUpdate Note:\n${vars.notes}` : ''}
 
 Please reach out if you have any questions or if you need to adjust this schedule.

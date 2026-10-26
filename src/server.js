@@ -55,7 +55,7 @@ export function createApp({db = openDb(process.env.DATABASE_PATH), c = config(),
     const requestId = crypto.randomUUID();
     res.setHeader('X-Request-ID',requestId);
     res.setHeader('X-Content-Type-Options','nosniff'); res.setHeader('Referrer-Policy','no-referrer');
-    res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+    res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; frame-src 'self' blob: data:; object-src 'self' blob: data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
     res.setHeader('Permissions-Policy','camera=(), microphone=(), geolocation=()');
     res.setHeader('Cache-Control','no-store');
     if (c.origin.startsWith('https:')) res.setHeader('Strict-Transport-Security','max-age=31536000');
@@ -138,6 +138,7 @@ export function createApp({db = openDb(process.env.DATABASE_PATH), c = config(),
 
         if (sigAction === 'sign' && req.method === 'GET' && isDoc) {
           const doc = downloadSignatureDocument(db, token, '', 'signed');
+          res.setHeader('Content-Security-Policy', "default-src 'self'; frame-ancestors 'self'");
           res.writeHead(200, {
             'Content-Type': 'application/pdf',
             'Content-Disposition': `inline; filename="${doc.filename || 'document.pdf'}"`,
@@ -218,8 +219,8 @@ export function createApp({db = openDb(process.env.DATABASE_PATH), c = config(),
         let body = {};
         if (req.method !== 'GET') {
           if (req.headers.origin !== c.origin || req.headers['x-csrf-token'] !== user.csrf) throw new HttpError(403,'Request validation failed. Refresh and retry.');
-          const isUpload = path === '/api/resume/upload' || path === '/api/agency/resume/upload';
-          const maxLimit = isUpload ? c.maxResumeSizeBytes : 131072;
+          const isUpload = path === '/api/resume/upload' || path === '/api/agency/resume/upload' || path === '/api/offer-letter-assets';
+          const maxLimit = isUpload ? Math.max(c.maxResumeSizeBytes || 10485760, 10485760) : 131072;
           const contentType = String(req.headers['content-type'] || '');
           if (!contentType.startsWith('application/json') && !(isUpload && contentType.startsWith('multipart/form-data'))) {
             throw new HttpError(415, 'JSON is required.');
@@ -260,6 +261,7 @@ export function createApp({db = openDb(process.env.DATABASE_PATH), c = config(),
         }
         const result = await service(db,user,req.method,path.slice(5),body,url.searchParams,c);
         if (result && result.isRaw) {
+          res.setHeader('Content-Security-Policy', "default-src 'self'; frame-ancestors 'self'");
           res.writeHead(200, {
             'Content-Type': result.contentType || 'application/pdf',
             'Content-Disposition': `inline; filename="${result.filename || 'document.pdf'}"`,

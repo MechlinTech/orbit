@@ -433,7 +433,7 @@ test('HTTP API: complete interview scheduling, Teams meeting generation, resched
 
   // Verify email invitation was sent with Teams join link
   assert.ok(deliveredEmails.length >= 1);
-  const inviteEmail = deliveredEmails.find(e => e.to.includes('morgan.blake@example.com'));
+  const inviteEmail = deliveredEmails.find(e => e.to.includes('morgan.blake@example.com') && /Interview invitation/.test(e.subject));
   assert.ok(inviteEmail);
   assert.match(inviteEmail.subject, /Interview invitation/);
   assert.match(inviteEmail.html, /Join Microsoft Teams Meeting/);
