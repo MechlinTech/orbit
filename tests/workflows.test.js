@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { service,matchSkills } from '../src/service.js';
 import { can,roles } from '../src/policy.js';
 import { audit } from '../src/db.js';
-import { fixture,user,reqBody,candidateBody } from './helpers.js';
+import { fixture,user,reqBody,candidateBody,addSignedOffer } from './helpers.js';
 const call=(f,u,m,p,b)=>service(f.db,u,m,p,b);
 const markInterviewReady=(f,interview)=>f.db.prepare('UPDATE interviews SET scheduled_at=? WHERE id=?').run(new Date(Date.now()-60000).toISOString(),interview.id);
 function hiringFixture(){const f=fixture();f.req=call(f,f.recruiter,'POST','requisitions',reqBody);call(f,f.recruiter,'POST',`requisitions/${f.req.id}/submit`);call(f,f.manager,'POST',`requisitions/${f.req.id}/approve`,{});call(f,f.finance,'POST',`requisitions/${f.req.id}/approve`,{});f.candidate=call(f,f.recruiter,'POST','candidates',candidateBody);f.app=call(f,f.recruiter,'POST','applications',{candidate_id:f.candidate.id,requisition_id:f.req.id});return f;}
@@ -14,7 +14,7 @@ test('candidate duplicates are case insensitive and safe against SQL injection',
 test('team isolation protects reads, writes and record IDs',()=>{const f=hiringFixture(),other=user(f.db,'Recruiter','Sales');assert.equal(call(f,other,'GET','candidates').length,0);assert.equal(call(f,other,'GET','applications').length,0);assert.throws(()=>call(f,other,'POST',`applications/${f.app.id}/stage`,{stage:'Screening'}));assert.throws(()=>call(f,other,'POST','candidates',candidateBody));f.db.close();});
 test('roles deny admin access, financial approval and candidate access by default',()=>{const f=fixture();for(const role of roles.filter(r=>r!=='System Admin')){const u=user(f.db,role);assert.throws(()=>call(f,u,'GET','admin/users'));}for(const role of ['Employee/Referral','Interviewer','Finance Approver','Agency']){const u=user(f.db,role);assert.throws(()=>call(f,u,'GET','candidates'));}assert.equal(can(user(f.db,'Agency'),'jobs'),false);f.db.close();});
 test('manual user provisioning requires Entra IDs and rejects optional agency role',()=>{const f=fixture();assert.throws(()=>call(f,f.admin,'POST','admin/users',{email:'new@example.com',name:'New',role:'Recruiter',team:'Engineering'}));assert.throws(()=>call(f,f.admin,'POST','admin/users',{email:'new@example.com',name:'New',role:'Agency'}));assert.equal(call(f,f.admin,'POST','admin/users',{email:'new@example.com',name:'New',role:'Recruiter',team:'Engineering',oid:'44444444-4444-4444-4444-444444444444',tenant:'11111111-1111-1111-1111-111111111111'}).status,'active');f.db.close();});
-test('pipeline records transitions, prevents skipping and enforces terminal stages/headcount',()=>{const f=hiringFixture();assert.throws(()=>call(f,f.recruiter,'POST',`applications/${f.app.id}/stage`,{stage:'Hired'}));for(const stage of ['Screening','Interview','Offer','Hired'])call(f,f.recruiter,'POST',`applications/${f.app.id}/stage`,{stage});assert.throws(()=>call(f,f.recruiter,'POST',`applications/${f.app.id}/stage`,{stage:'Rejected'}));const c=call(f,f.recruiter,'POST','candidates',{...candidateBody,email:'second@example.com'}),a=call(f,f.recruiter,'POST','applications',{candidate_id:c.id,requisition_id:f.req.id});for(const stage of ['Screening','Interview','Offer'])call(f,f.recruiter,'POST',`applications/${a.id}/stage`,{stage});assert.throws(()=>call(f,f.recruiter,'POST',`applications/${a.id}/stage`,{stage:'Hired'}));assert.equal(f.db.prepare('SELECT count(*) n FROM stage_events').get().n,7);f.db.close();});
+test('pipeline records transitions, prevents skipping and enforces terminal stages/headcount',()=>{const f=hiringFixture();assert.throws(()=>call(f,f.recruiter,'POST',`applications/${f.app.id}/stage`,{stage:'Hired'}));for(const stage of ['Screening','Interview','Offer'])call(f,f.recruiter,'POST',`applications/${f.app.id}/stage`,{stage});addSignedOffer(f.db,f.app.id,f.candidate,f.req);call(f,f.recruiter,'POST',`applications/${f.app.id}/stage`,{stage:'Hired'});assert.throws(()=>call(f,f.recruiter,'POST',`applications/${f.app.id}/stage`,{stage:'Rejected'}));const c=call(f,f.recruiter,'POST','candidates',{...candidateBody,email:'second@example.com'}),a=call(f,f.recruiter,'POST','applications',{candidate_id:c.id,requisition_id:f.req.id});for(const stage of ['Screening','Interview','Offer'])call(f,f.recruiter,'POST',`applications/${a.id}/stage`,{stage});assert.throws(()=>call(f,f.recruiter,'POST',`applications/${a.id}/stage`,{stage:'Hired'}));assert.equal(f.db.prepare('SELECT count(*) n FROM stage_events').get().n,7);f.db.close();});
 test('pipeline configuration rejects removal of occupied stages',()=>{const f=hiringFixture();call(f,f.recruiter,'POST',`applications/${f.app.id}/stage`,{stage:'Screening'});assert.throws(()=>call(f,f.admin,'PUT','pipeline',{stages:['Applied','Hired','Rejected']}));assert.throws(()=>call(f,f.recruiter,'PUT','pipeline',{stages:['Applied','Hired','Rejected']}));assert.deepEqual(call(f,f.admin,'PUT','pipeline',{stages:['Applied','Screening','Assessment','Interview','Offer','Hired','Rejected']}).slice(0,3),['Applied','Screening','Assessment']);f.db.close();});
 test('matching explanation uses explicit skills and handles absent job criteria',()=>{const f=hiringFixture(),r=call(f,f.recruiter,'GET',`applications/${f.app.id}/match`);assert.equal(r.score,50);assert.deepEqual(r.missing,['JavaScript']);assert.equal(matchSkills(f.candidate,{skills:'[]'}).score,null);f.db.close();});
 test('interview assignment, structured scorecard, feedback blinding and immutable submission',()=>{const f=hiringFixture(),second=user(f.db,'Interviewer'),unassigned=user(f.db,'Interviewer');const schedule=u=>{const i=call(f,f.recruiter,'POST','interviews',{application_id:f.app.id,interviewer_id:u.id,scheduled_at:new Date(Date.now()+86400000).toISOString(),competencies:['Technical','Communication']});markInterviewReady(f,i);return i;};const one=schedule(f.interviewer),two=schedule(second),score={ratings:{Technical:4,Communication:3},recommendation:'Yes',notes:'Solved the exercise and explained the tradeoffs.'};call(f,f.interviewer,'POST',`interviews/${one.id}/scorecards`,score);assert.throws(()=>call(f,f.interviewer,'POST',`interviews/${one.id}/scorecards`,score));assert.throws(()=>call(f,second,'POST',`interviews/${one.id}/scorecards`,score));assert.throws(()=>call(f,unassigned,'GET',`interviews/${one.id}/scorecards`));let view=call(f,second,'GET',`interviews/${two.id}/scorecards`);assert.equal(view.blinded,true);assert.equal(view.scorecards.length,0);call(f,second,'POST',`interviews/${two.id}/scorecards`,score);view=call(f,second,'GET',`interviews/${two.id}/scorecards`);assert.equal(view.blinded,false);assert.equal(view.scorecards.length,2);f.db.close();});
@@ -467,16 +467,20 @@ test('requisition editing updates requisition details and enforces approval stat
   assert.equal(openUpdated.headcount,5);
 
   // Move candidate to Hired
-  for(const stage of ['Screening','Interview','Offer','Hired']){
+  for(const stage of ['Screening','Interview','Offer']){
     call(hf,hf.recruiter,'POST',`applications/${hf.app.id}/stage`,{stage});
   }
+  addSignedOffer(hf.db, hf.app.id, hf.candidate, hf.req);
+  call(hf,hf.recruiter,'POST',`applications/${hf.app.id}/stage`,{stage:'Hired'});
 
   // Add a second hired candidate
   const c2=call(hf,hf.recruiter,'POST','candidates',{...candidateBody,email:'second.hired@example.com'});
   const a2=call(hf,hf.recruiter,'POST','applications',{candidate_id:c2.id,requisition_id:hf.req.id});
-  for(const stage of ['Screening','Interview','Offer','Hired']){
+  for(const stage of ['Screening','Interview','Offer']){
     call(hf,hf.recruiter,'POST',`applications/${a2.id}/stage`,{stage});
   }
+  addSignedOffer(hf.db, a2.id, c2, hf.req);
+  call(hf,hf.recruiter,'POST',`applications/${a2.id}/stage`,{stage:'Hired'});
 
   // Attempt to reduce headcount below 2 hired candidates
   assert.throws(
@@ -706,6 +710,7 @@ test('System Admin permission enhancements, overrides, proxy scorecard, and team
   // 8. Pipeline admin override
   // Move candidate2 to Offer, then to Hired
   call(f.admin, 'POST', `applications/${app2.id}/stage`, { stage: 'Offer' });
+  addSignedOffer(f.db, app2.id, cand2, reqOverride);
   call(f.admin, 'POST', `applications/${app2.id}/stage`, { stage: 'Hired' });
   // Candidate2 is now in terminal stage Hired
   // Non-admin cannot move terminal candidate
