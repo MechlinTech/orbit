@@ -104,8 +104,15 @@ export function createApp({db = openDb(process.env.DATABASE_PATH), c = config(),
         if (url.searchParams.has('error')) throw new HttpError(401,'Microsoft sign-in was cancelled or denied.');
         const code = url.searchParams.get('code'); if (!code || code.length > 10000) throw new HttpError(400,'Missing authorization code.');
         const identity = await exchangeCode(code,state,c,transport), user = acceptIdentity(db,identity,c); actor = user.id;
-        if (user.status !== 'active') return redirect(`/?access=${user.status}`);
-        const session = createSession(db,user,c); res.setHeader('Set-Cookie',[cookie('oauth_state','',0),cookie('session',session.value,c.sessionSeconds)]); return redirect('/');
+        if (user.status !== 'active') {
+          const pendingSig = hash(`${user.id}:${c.secret || c.tenant || 'orbit-secret'}`);
+          res.setHeader('Set-Cookie', [
+            cookie('oauth_state', '', 0),
+            cookie('pending_auth', `${user.id}:${pendingSig}`, 86400 * 7)
+          ]);
+          return redirect(`/?access=${user.status}`);
+        }
+        const session = createSession(db,user,c); res.setHeader('Set-Cookie',[cookie('oauth_state','',0),cookie('pending_auth','',0),cookie('session',session.value,c.sessionSeconds)]); return redirect('/');
       }
       if (path === '/auth/demo' && req.method === 'GET') {
         return json(200, { demoLogin: Boolean(c.demoLogin), roles: DEMO_ROLES, teams: DEMO_TEAMS });
@@ -184,7 +191,28 @@ export function createApp({db = openDb(process.env.DATABASE_PATH), c = config(),
         }
       }
       if (path.startsWith('/api/')) {
-        const user = sessionUser(db,cookies.session); actor = user.id;
+        let user;
+        try {
+          user = sessionUser(db,cookies.session);
+        } catch (err) {
+          if (cookies.pending_auth) {
+            const [uid, sig] = (cookies.pending_auth || '').split(':');
+            const expectedSig = hash(`${uid}:${c.secret || c.tenant || 'orbit-secret'}`);
+            if (uid && sig === expectedSig) {
+              const u = db.prepare('SELECT * FROM users WHERE id=?').get(uid);
+              if (u && u.status === 'active') {
+                const session = createSession(db, u, c);
+                res.setHeader('Set-Cookie', [
+                  cookie('pending_auth', '', 0),
+                  cookie('session', session.value, c.sessionSeconds)
+                ]);
+                user = { ...u, csrf: session.csrf };
+              }
+            }
+          }
+          if (!user) throw err;
+        }
+        actor = user.id;
         if (!['GET','POST','PUT','DELETE'].includes(req.method)) throw new HttpError(405,'Method not allowed.');
         if (req.method === 'DELETE' && !/^\/api\/(?:(?:referrals|candidates|requisitions)\/[^/]+|agencies\/[^/]+\/(?:requisitions|assignments)\/[^/]+)$/.test(path)) throw new HttpError(405,'Method not allowed.');
         let body = {};
@@ -228,7 +256,7 @@ export function createApp({db = openDb(process.env.DATABASE_PATH), c = config(),
           return json(200, { ok: true, user: { id: nextUser.id, name: nextUser.name, email: nextUser.email, role: nextUser.role, team: nextUser.team }, csrf: nextSession.csrf });
         }
         if (path === '/api/logout' && req.method === 'POST') {
-          db.prepare('DELETE FROM sessions WHERE token_hash=?').run(hash(cookies.session)); audit(db,user.id,'auth.logout',user.id); res.setHeader('Set-Cookie',cookie('session','',0)); return json(200,{ok:true});
+          db.prepare('DELETE FROM sessions WHERE token_hash=?').run(hash(cookies.session)); audit(db,user.id,'auth.logout',user.id); res.setHeader('Set-Cookie',[cookie('session','',0),cookie('pending_auth','',0)]); return json(200,{ok:true});
         }
         const result = await service(db,user,req.method,path.slice(5),body,url.searchParams,c);
         if (result && result.isRaw) {
@@ -242,6 +270,33 @@ export function createApp({db = openDb(process.env.DATABASE_PATH), c = config(),
         return json(200, result);
       }
       if ((files[path] || path.startsWith('/sign/')) && req.method === 'GET') {
+        if (path === '/') {
+          if (cookies.pending_auth) {
+            const [uid, sig] = (cookies.pending_auth || '').split(':');
+            const expectedSig = hash(`${uid}:${c.secret || c.tenant || 'orbit-secret'}`);
+            if (uid && sig === expectedSig) {
+              const u = db.prepare('SELECT * FROM users WHERE id=?').get(uid);
+              if (u && u.status === 'active') {
+                const session = createSession(db, u, c);
+                res.setHeader('Set-Cookie', [
+                  cookie('pending_auth', '', 0),
+                  cookie('session', session.value, c.sessionSeconds)
+                ]);
+                return redirect('/');
+              } else if (u && u.status !== 'pending' && url.searchParams.get('access') !== u.status) {
+                return redirect(`/?access=${u.status}`);
+              }
+            }
+          }
+          if (cookies.session && url.searchParams.has('access')) {
+            try {
+              const u = sessionUser(db, cookies.session);
+              if (u && u.status === 'active') {
+                return redirect('/');
+              }
+            } catch {}
+          }
+        }
         const [file,type] = path.startsWith('/sign/') ? files['/'] : files[path];
         const content=readFileSync(resolve(publicDir,file));
         res.writeHead(200,{'Content-Type':type.startsWith('image/')?type:`${type}; charset=utf-8`});

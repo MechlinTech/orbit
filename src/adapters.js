@@ -10,7 +10,7 @@ import { getGraphAccessToken, createTeamsMeetingEvent, updateTeamsMeetingEvent, 
 import { isAiMatchingConfigured, matchWithAi } from './matching/ai.js';
 import { analyzeFraudRisk } from './fraud/detector.js';
 import { draftJobDescription } from './ai/draft.js';
-import { createSignatureRequest } from './signature/service.js';
+import { createSignatureRequest, cleanCurrencyCode } from './signature/service.js';
 import { getEffectiveIntegrationConfig } from './integrations/storage.js';
 import { existsSync, readFileSync } from 'node:fs';
 import { validateSafeUrl } from './integrations/registry.js';
@@ -323,6 +323,19 @@ export class HrmsAdapter {
 
     const cleanBase = this.baseUrl.replace(/\/+$/, '');
     const cleanPath = this.resourcePath.startsWith('/') ? this.resourcePath : `/${this.resourcePath}`;
+    const candidate = approvedFields.candidate || {};
+    const requisition = approvedFields.requisition || {};
+    const offer = approvedFields.offer || {};
+
+    const rawCurrency = approvedFields.currency
+      || approvedFields.currency_code
+      || approvedFields.salary_currency
+      || offer.currency
+      || offer.currency_code
+      || offer.salary_currency
+      || requisition.currency
+      || 'USD';
+    const currency = cleanCurrencyCode(rawCurrency, requisition.currency || 'USD');
 
     // Handle Native Supabase BaaS Mode
     if (this.isSupabase()) {
@@ -334,10 +347,6 @@ export class HrmsAdapter {
       const documentsUrl = `${cleanBase}${restBasePath}/employee_documents?on_conflict=employee_id,document_type_id`;
       const referralsUrl = `${cleanBase}${restBasePath}/referrals`;
 
-      const candidate = approvedFields.candidate || {};
-      const requisition = approvedFields.requisition || {};
-      const offer = approvedFields.offer || {};
-
       const fullName = approvedFields.full_name || approvedFields.fullName || candidate.name || approvedFields.name || 'New Hire';
       const email = approvedFields.company_email || approvedFields.email || candidate.email || '';
       const personalEmail = approvedFields.personal_email || candidate.email || approvedFields.email || null;
@@ -346,9 +355,29 @@ export class HrmsAdapter {
       const designationOfferLetter = approvedFields.designation_offer_letter || approvedFields.designation || offer.designation || position;
       const departmentId = approvedFields.department_id || requisition.department_id || null;
       const managerId = approvedFields.manager_id || requisition.manager_id || null;
-      const salary = approvedFields.salary || offer.annual_salary || requisition.salary_min || null;
-      const monthlyCtc = approvedFields.monthly_ctc || (salary ? String(Math.round(Number(salary) / 12)) : null);
-      const dateOfJoining = approvedFields.date_of_joining || approvedFields.joining_date || offer.joining_date || null;
+      const rawSalary = approvedFields.salary !== undefined ? approvedFields.salary : (offer.annual_salary !== undefined ? offer.annual_salary : requisition.salary_min);
+      const cleanSalary = (val) => {
+        if (val === null || val === undefined || val === '') return null;
+        if (typeof val === 'number') return Number.isFinite(val) ? val : null;
+        const s = String(val).replace(/[^0-9.]/g, '');
+        if (!s) return null;
+        const n = Number(s);
+        return Number.isFinite(n) ? n : null;
+      };
+      const salary = cleanSalary(rawSalary);
+      const monthlyCtc = approvedFields.monthly_ctc || (salary !== null ? String(Math.round(Number(salary) / 12)) : null);
+      const rawJoiningDate = approvedFields.date_of_joining || approvedFields.joining_date || offer.joining_date || offer.start_date || null;
+      const parseJoiningDate = (v) => {
+        if (!v || typeof v !== 'string') return null;
+        const t = v.trim();
+        if (!t || /two\s+weeks|acceptance|tbd|immediate|pending/i.test(t)) return null;
+        const m = t.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+        if (m) return `${m[1]}-${String(m[2]).padStart(2, '0')}-${String(m[3]).padStart(2, '0')}`;
+        const dmy = t.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
+        if (dmy) return `${dmy[3]}-${String(dmy[2]).padStart(2, '0')}-${String(dmy[1]).padStart(2, '0')}`;
+        return t;
+      };
+      const dateOfJoining = parseJoiningDate(rawJoiningDate);
 
       // Resolve department UUID if team name is provided
       const KNOWN_DEPARTMENTS = {
@@ -393,27 +422,60 @@ export class HrmsAdapter {
       if (managerId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(managerId))) {
         userRow.manager_id = managerId;
       }
-      if (salary !== null && salary !== undefined && salary !== '') userRow.salary = Number(salary);
+      if (salary !== null && salary !== undefined && salary !== '') {
+        userRow.salary = Number(salary);
+        userRow.annual_salary = Number(salary);
+      }
       if (monthlyCtc) userRow.monthly_ctc = String(monthlyCtc);
-      if (dateOfJoining) userRow.date_of_joining = dateOfJoining;
+      if (dateOfJoining) {
+        userRow.date_of_joining = dateOfJoining;
+        userRow.joining_date = dateOfJoining;
+      }
+      if (currency) {
+        userRow.currency = currency;
+        userRow.currency_code = currency;
+        userRow.salary_currency = currency;
+      }
 
       return withRetries(async () => {
-        const userRes = await this.transport(userUrl, {
+        let userRes = await this.transport(userUrl, {
           method: 'POST',
           headers: this.getSupabaseHeaders(),
           body: JSON.stringify(userRow),
           signal: AbortSignal.timeout(this.timeoutMs)
         });
 
+        let createdUser = {};
         if (!userRes.ok) {
           const errText = await userRes.text().catch(() => '');
-          const err = new Error(`Supabase HRMS user creation failed with HTTP ${userRes.status}: ${errText.slice(0, 150)}`);
-          err.status = userRes.status;
-          throw err;
+          if (userRes.status === 400 && (errText.includes('currency') || errText.includes('annual_salary') || errText.includes('joining_date'))) {
+            const strippedRow = { ...userRow };
+            delete strippedRow.currency;
+            delete strippedRow.currency_code;
+            delete strippedRow.salary_currency;
+            delete strippedRow.annual_salary;
+            delete strippedRow.joining_date;
+            userRes = await this.transport(userUrl, {
+              method: 'POST',
+              headers: this.getSupabaseHeaders(),
+              body: JSON.stringify(strippedRow),
+              signal: AbortSignal.timeout(this.timeoutMs)
+            });
+            if (!userRes.ok) {
+              const retryErrText = await userRes.text().catch(() => '');
+              const err = new Error(`Supabase HRMS user creation failed with HTTP ${userRes.status}: ${retryErrText.slice(0, 150)}`);
+              err.status = userRes.status;
+              throw err;
+            }
+          } else {
+            const err = new Error(`Supabase HRMS user creation failed with HTTP ${userRes.status}: ${errText.slice(0, 150)}`);
+            err.status = userRes.status;
+            throw err;
+          }
         }
 
         const createdData = await userRes.json().catch(() => ({}));
-        const createdUser = Array.isArray(createdData) ? (createdData[0] || {}) : createdData;
+        createdUser = Array.isArray(createdData) ? (createdData[0] || {}) : createdData;
         const employeeId = createdUser.id || null;
 
         // If signed document URL is available, attach to employee_documents
@@ -552,6 +614,9 @@ export class HrmsAdapter {
           hireId,
           employeeId,
           providerReference: employeeId || `hrms_${hireId}`,
+          currency,
+          currencyCode: currency,
+          salary,
           data: createdUser,
           document: attachedDocument,
           resume: attachedResume
@@ -578,7 +643,17 @@ export class HrmsAdapter {
 
     const payload = {
       hireId,
-      approvedFields,
+      approvedFields: {
+        ...approvedFields,
+        currency,
+        currency_code: currency,
+        salary_currency: currency,
+        offer: {
+          ...offer,
+          currency,
+          currency_code: currency
+        }
+      },
       idempotencyKey,
       timestamp: new Date().toISOString()
     };
@@ -604,6 +679,8 @@ export class HrmsAdapter {
         status: 'accepted',
         hireId,
         providerReference: data.id || data.reference || `hrms_${hireId}`,
+        currency,
+        currencyCode: currency,
         data
       };
     }, { maxRetries: this.maxRetries });
