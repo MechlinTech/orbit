@@ -10,26 +10,27 @@ import { testIntegrationConnection } from './testing.js';
 import { getRegistryItem } from './registry.js';
 
 /**
- * Enforces strict System Admin authorization for all integration management functions.
+ * Enforces integration permissions. System Admin retains access through the
+ * legacy admin token for direct service calls; request routes use granular
+ * permissions and are authoritative.
  */
-function requireAdmin(user) {
-  if (!user || user.role !== 'System Admin' || user.status !== 'active') {
-    throw new HttpError(403, 'System Admin access required to manage integrations.');
-  }
+function requireIntegrationAccess(user, ...permissions) {
+  if (!user || user.status !== 'active') throw new HttpError(403, 'Integration access required.');
+  permit(user, ...permissions, 'admin');
 }
 
 export function listIntegrationsForAdmin(db, user) {
-  requireAdmin(user);
+  requireIntegrationAccess(user, 'integrations.read', 'integrations.configure', 'integrations.secrets.manage');
   return listIntegrationSummaries(db);
 }
 
 export function getIntegrationForAdmin(db, user, id) {
-  requireAdmin(user);
+  requireIntegrationAccess(user, 'integrations.read', 'integrations.configure', 'integrations.secrets.manage');
   return getIntegrationDetails(db, id);
 }
 
 export function updateIntegrationForAdmin(db, user, id, payload = {}) {
-  requireAdmin(user);
+  requireIntegrationAccess(user, 'integrations.configure');
   getRegistryItem(id); // ensure exists
 
   return saveIntegrationConfig(db, id, {
@@ -41,7 +42,7 @@ export function updateIntegrationForAdmin(db, user, id, payload = {}) {
 }
 
 export async function testIntegrationForAdmin(db, user, id, payload = {}, transport = fetch) {
-  requireAdmin(user);
+  requireIntegrationAccess(user, 'integrations.configure');
   getRegistryItem(id); // ensure exists
 
   const result = await testIntegrationConnection(db, id, {
@@ -62,7 +63,7 @@ export async function testIntegrationForAdmin(db, user, id, payload = {}, transp
 }
 
 export function toggleIntegrationForAdmin(db, user, id, payload = {}) {
-  requireAdmin(user);
+  requireIntegrationAccess(user, 'integrations.configure');
   const enabled = Boolean(payload.enabled);
   return toggleIntegrationStatus(db, id, enabled, user.id);
 }

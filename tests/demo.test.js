@@ -23,7 +23,7 @@ async function createTestServer(t, customConfig = {}) {
   return f;
 }
 
-test('Demo config: environment gating enables demo login by default unless explicitly disabled with ENABLE_DEMO_LOGIN=false', () => {
+test('Demo config: enabled by default outside production and always disabled in production unless explicitly opted in', () => {
   const devConf = config({ APP_ORIGIN: 'http://localhost:3000', NODE_ENV: 'development' });
   assert.equal(devConf.demoLogin, true, 'Demo login should be enabled by default in non-production');
 
@@ -41,7 +41,7 @@ test('Demo config: environment gating enables demo login by default unless expli
     ENTRA_CLIENT_SECRET: 'prod-secret',
     ALLOWED_DOMAINS: 'mechlin.com'
   });
-  assert.equal(prodDefault.demoLogin, true, 'Demo login is enabled by default for now across environments');
+  assert.equal(prodDefault.demoLogin, false, 'Demo login must default to disabled in production');
 
   const prodExplicitDisabled = config({
     APP_ORIGIN: 'https://orbit.mechlin.com',
@@ -53,6 +53,17 @@ test('Demo config: environment gating enables demo login by default unless expli
     ENABLE_DEMO_LOGIN: 'false'
   });
   assert.equal(prodExplicitDisabled.demoLogin, false, 'ENABLE_DEMO_LOGIN=false disables demo login in production');
+
+  const prodExplicitEnabled = config({
+    APP_ORIGIN: 'https://orbit.mechlin.com',
+    NODE_ENV: 'production',
+    ENTRA_TENANT_ID: '11111111-1111-1111-1111-111111111111',
+    ENTRA_CLIENT_ID: '22222222-2222-2222-2222-222222222222',
+    ENTRA_CLIENT_SECRET: 'prod-secret',
+    ALLOWED_DOMAINS: 'mechlin.com',
+    ENABLE_DEMO_LOGIN: 'true'
+  });
+  assert.equal(prodExplicitEnabled.demoLogin, true, 'Production QA environments can explicitly opt in');
 });
 
 test('Demo roles and teams: only existing supported roles and teams are available', () => {

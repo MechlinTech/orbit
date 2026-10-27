@@ -589,6 +589,38 @@ try{
   await click("document.querySelector('#close-modal')");
   await waitFor("!document.querySelector('dialog').open");
 
+  const recruiterRow = `Array.from(document.querySelectorAll('tr[data-role-name]')).find(row => row.querySelector('td strong')?.textContent === 'Recruiter')`;
+  await click(`document.querySelector('[data-action="admin-tab"][data-id="roles"]')`);
+  await waitFor(`${recruiterRow} !== undefined`);
+  const recruiterPermissionCount = await evaluate(`Number((${recruiterRow}).children[4].textContent)`);
+  await click(`(${recruiterRow}).querySelector('[data-action="edit-role"]')`);
+  await waitFor("document.querySelector('dialog').open && document.querySelector('#modal-body h2')?.textContent==='Edit role permissions'");
+  check('System Recruiter permissions are editable while identity and scope stay protected', await evaluate(`(()=>{
+    const box=document.querySelector('#modal [data-permission][value="settings.read"]');
+    return Boolean(box && !box.disabled && document.querySelector('#modal [name="name"]').readOnly && document.querySelector('#modal [name="scope"]').disabled);
+  })()`));
+  await evaluate(`{
+    const box=document.querySelector('#modal [data-permission][value="settings.read"]');
+    box.checked=true;
+    box.dispatchEvent(new Event('change',{bubbles:true}));
+  }`);
+  check('System role permission selection reaches the form payload', await evaluate(`document.querySelector('#role-permission-values').value.split(',').includes('settings.read')`));
+  await evaluate("document.querySelector('#edit-form').requestSubmit()");
+  await waitFor(`!document.querySelector('dialog').open && Number((${recruiterRow}).children[4].textContent)===${recruiterPermissionCount + 1}`);
+  check('System role permission update reports success and refreshes the role row', await evaluate("document.body.innerText.includes('System role permissions updated')"));
+
+  await click(`(${recruiterRow}).querySelector('[data-action="edit-role"]')`);
+  await waitFor("document.querySelector('dialog').open && document.querySelector('#modal-body h2')?.textContent==='Edit role permissions'");
+  check('Saved system role permissions reload correctly when reopening the editor', await evaluate(`document.querySelector('#modal [data-permission][value="settings.read"]').checked`));
+  await evaluate(`{
+    const box=document.querySelector('#modal [data-permission][value="settings.read"]');
+    box.checked=false;
+    box.dispatchEvent(new Event('change',{bubbles:true}));
+  }`);
+  await evaluate("document.querySelector('#edit-form').requestSubmit()");
+  await waitFor(`!document.querySelector('dialog').open && Number((${recruiterRow}).children[4].textContent)===${recruiterPermissionCount}`);
+  check('Removing a system role permission persists and refreshes the role row', await evaluate(`Number((${recruiterRow}).children[4].textContent)===${recruiterPermissionCount}`));
+
   await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
   await click(`document.querySelector('[data-nav="Overview"]')`);await waitFor("document.querySelector('.metrics')!==null");
   check('mobile dashboard fits viewport',await evaluate('document.documentElement.scrollWidth<=window.innerWidth'));

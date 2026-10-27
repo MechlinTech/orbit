@@ -2,9 +2,46 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { systemRoleDefinitions } from './policy.js';
 
 export const id = () => randomUUID();
 export const now = () => new Date().toISOString();
+
+/**
+ * Seed and reconcile the protected built-in roles. System roles are part of
+ * the authorization boundary, so their definitions always follow the shipped
+ * registry. Custom roles are never touched and existing user assignments are
+ * preserved by matching the historical users.role name.
+ */
+function seedSystemRoles(db) {
+  const timestamp = now();
+  const selectRole = db.prepare('SELECT * FROM rbac_roles WHERE name=?');
+  const insertRole = db.prepare(`INSERT INTO rbac_roles(id,name,description,scope,is_system,version,created_at,updated_at)
+    VALUES(?,?,?,?,1,1,?,?)`);
+  const updateDefinition = db.prepare('UPDATE rbac_roles SET description=?, scope=?, is_system=1 WHERE id=?');
+  const clearPermissions = db.prepare('DELETE FROM rbac_role_permissions WHERE role_id=?');
+  const insertPermission = db.prepare('INSERT OR IGNORE INTO rbac_role_permissions(role_id,permission) VALUES(?,?)');
+  const assignExisting = db.prepare('UPDATE users SET role_id=? WHERE role_id IS NULL AND role=?');
+
+  for (const [name, definition] of Object.entries(systemRoleDefinitions)) {
+    let role = selectRole.get(name);
+    if (!role) {
+      const roleId = id();
+      insertRole.run(roleId, name, definition.description, definition.scope, timestamp, timestamp);
+      role = selectRole.get(name);
+    } else {
+      updateDefinition.run(definition.description, definition.scope, role.id);
+    }
+    // Reconcile shipped defaults only until an administrator customizes this
+    // role. Once customized, saved grants must survive restarts and upgrades.
+    if (!role.permissions_customized) {
+      clearPermissions.run(role.id);
+      for (const permission of definition.permissions) insertPermission.run(role.id, permission);
+    }
+    assignExisting.run(role.id, name);
+  }
+}
+
 export function openDb(path = 'data/talentos.sqlite') {
   let db;
   try {
@@ -197,6 +234,17 @@ export function openDb(path = 'data/talentos.sqlite') {
     CREATE INDEX IF NOT EXISTS idx_training_eval_cand ON training_evaluations(candidate_id);
     CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
     INSERT OR IGNORE INTO settings VALUES('pipeline','["Applied","Screening Round","Interview Round 1","Interview Round 2","HR Round","Pre-Onboarding Training","Onboarding","Hired","Rejected","Revoked"]');
+    CREATE TABLE IF NOT EXISTS rbac_roles(
+      id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+      description TEXT NOT NULL DEFAULT '', scope TEXT NOT NULL DEFAULT 'team'
+        CHECK(scope IN ('organization','team','assigned','none')),
+      is_system INTEGER NOT NULL DEFAULT 0, archived_at TEXT, version INTEGER NOT NULL DEFAULT 1,
+      permissions_customized INTEGER NOT NULL DEFAULT 0,
+      created_by TEXT REFERENCES users(id), created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS rbac_role_permissions(
+      role_id TEXT NOT NULL REFERENCES rbac_roles(id) ON DELETE CASCADE,
+      permission TEXT NOT NULL, PRIMARY KEY(role_id, permission));
+    CREATE INDEX IF NOT EXISTS idx_rbac_role_permissions_permission ON rbac_role_permissions(permission);
     INSERT OR IGNORE INTO schema_migrations VALUES(1,datetime('now'));`);
   try { db.exec('ALTER TABLE scorecards ADD COLUMN proxy_for TEXT REFERENCES users(id);'); } catch {}
   try { db.exec('ALTER TABLE scorecards ADD COLUMN proxy_reason TEXT;'); } catch {}
@@ -247,6 +295,11 @@ export function openDb(path = 'data/talentos.sqlite') {
     addColumn(table, 'deleted_by TEXT REFERENCES users(id)');
     addColumn(table, 'updated_at TEXT');
   }
+  addColumn('users', 'role_id TEXT REFERENCES rbac_roles(id)');
+  addColumn('rbac_roles', 'permissions_customized INTEGER NOT NULL DEFAULT 0');
+  seedSystemRoles(db);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_users_role_id ON users(role_id);');
+
 
   try { db.exec('ALTER TABLE interviews ADD COLUMN title TEXT DEFAULT "";'); } catch {}
   try { db.exec('ALTER TABLE interviews ADD COLUMN duration_minutes INTEGER DEFAULT 45;'); } catch {}
