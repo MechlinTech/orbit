@@ -15,7 +15,7 @@ Use `node --env-file=.env src/server.js` locally, systemd `EnvironmentFile`, or 
 | ALLOWED_DOMAINS | empty | Comma-separated exact email domains; required in production |
 | ALLOWED_GROUP_IDS | empty | Optional comma-separated group object IDs; at least one must appear in validated claims |
 | SESSION_SECONDS | `28800` | Absolute session lifetime, integer from 300 to 86400 |
-| ENABLE_DEMO_LOGIN | `true` | Set `false` to disable demo/QA login button and endpoints |
+| ENABLE_DEMO_LOGIN | `true` outside production | Set `false` to disable the demo/QA login button and endpoints. Production defaults to disabled and requires explicit `true` to opt in. |
 | MAX_RESUME_SIZE_BYTES | `5242880` | Maximum upload size for PDF/DOCX resumes (default 5 MB) |
 | RESUME_STORAGE_DIR | `data/resumes` | Local directory for quarantined and approved resume files |
 | ANTIVIRUS_PROVIDER | `none` | Antivirus provider (`clamav` or `none`) |

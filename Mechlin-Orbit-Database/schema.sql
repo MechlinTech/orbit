@@ -46,11 +46,27 @@ CREATE TABLE settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE stage_events(id TEXT PRIMARY KEY, application_id TEXT NOT NULL REFERENCES applications(id),
       from_stage TEXT NOT NULL, to_stage TEXT NOT NULL, actor TEXT NOT NULL REFERENCES users(id), at TEXT NOT NULL);
 
+CREATE TABLE rbac_roles(
+      id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE COLLATE NOCASE, description TEXT NOT NULL DEFAULT '',
+      scope TEXT NOT NULL CHECK(scope IN ('organization','team','assigned','none')),
+      is_system INTEGER NOT NULL DEFAULT 0 CHECK(is_system IN (0,1)),
+      version INTEGER NOT NULL DEFAULT 1, permissions_customized INTEGER NOT NULL DEFAULT 0,
+      created_by TEXT REFERENCES users(id),
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL, archived_at TEXT, archived_by TEXT REFERENCES users(id));
+
+CREATE TABLE rbac_role_permissions(
+      role_id TEXT NOT NULL REFERENCES rbac_roles(id) ON DELETE CASCADE,
+      permission TEXT NOT NULL, PRIMARY KEY(role_id, permission));
+
 CREATE TABLE users(
       id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE COLLATE NOCASE, name TEXT NOT NULL,
-      oid TEXT UNIQUE, tenant TEXT, role TEXT NOT NULL DEFAULT 'Employee/Referral', team TEXT NOT NULL DEFAULT '',
+      oid TEXT UNIQUE, tenant TEXT, role TEXT NOT NULL DEFAULT 'Employee/Referral', role_id TEXT REFERENCES rbac_roles(id),
+      team TEXT NOT NULL DEFAULT '',
       status TEXT NOT NULL CHECK(status IN ('pending','active','rejected','disabled')), version INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL, last_login TEXT);
+
+CREATE INDEX IF NOT EXISTS idx_users_role_id ON users(role_id);
+CREATE INDEX IF NOT EXISTS idx_rbac_roles_name ON rbac_roles(name);
 
 CREATE TRIGGER audit_no_delete BEFORE DELETE ON audit BEGIN SELECT RAISE(ABORT,'Audit is append-only'); END;
 

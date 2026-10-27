@@ -1,6 +1,6 @@
 const $ = s => document.querySelector(s);
 const escape = v => String(v ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-let me, csrf, permissions = [], current = 'Overview', renderVersion = 0, reqPage = 1, candidateQuery = '';
+let me, csrf, permissions = [], grants = [], adminTab = 'users', auditFilters = { event: '', q: '', from: '', to: '' }, current = 'Overview', renderVersion = 0, reqPage = 1, candidateQuery = '';
 const pageState = { Requisitions: 1, Candidates: 1, Interviews: 1, Referrals: 1, Administration: 1, 'Audit log': 1, Agencies: 1, 'Portal Dashboard': 1, 'Assigned Roles': 1, Submissions: 1, 'Agency Team': 1, 'Offer Templates': 1 };
 const isAgencyMember = () => Boolean(me?.agency || ['Agency Admin','Agency Recruiter'].includes(me?.role));
 const isAgencyUser = () => Boolean(isAgencyMember() || me?.role === 'Agency' || me?.user?.isAgency || me?.isAgency);
@@ -10,18 +10,37 @@ const getNavList = () => {
   if (isAgencyMember()) {
     return ['Portal Dashboard', 'Assigned Roles', 'Submissions', ...(isAgencyAdmin() ? ['Agency Team'] : [])];
   }
+  const canManageAccess = allows('users.read') || allows('roles.read') || allows('roles.create') || allows('roles.update') || allows('roles.assign') || allows('permissions.read');
   return [
-    ...(allows('analytics') ? ['Overview'] : []),
-    ...(allows('jobs') ? ['Requisitions'] : []),
-    ...(allows('review') || allows('recruit') ? ['Candidates', 'Pipeline'] : []),
-    ...(allows('review') || allows('recruit') || allows('interview') ? ['Interviews'] : []),
-    ...(allows('refer') ? ['Referrals'] : []),
-    ...(allows('recruit') || allows('admin') ? ['Offer Templates'] : []),
-    ...(allows('admin') || allows('recruit') ? ['Agencies'] : []),
-    ...(allows('admin') ? ['Administration', 'Settings', 'Audit log', 'Pipeline settings'] : []),
-    ...(allows('admin') && me?.role === 'System Admin' ? ['Integrations'] : [])
+    ...(allows('analytics') || allows('analytics.read') ? ['Overview'] : []),
+    ...(allows('jobs') || allows('jobs.read') ? ['Requisitions'] : []),
+    ...(allows('review') || allows('recruit') || allows('candidates.read') || allows('applications.read') ? ['Candidates', 'Pipeline'] : []),
+    ...(allows('review') || allows('recruit') || allows('interview') || allows('interviews.read') ? ['Interviews'] : []),
+    ...(allows('refer') || allows('referrals.read') ? ['Referrals'] : []),
+    ...(allows('offers.templates.read') || allows('offers.read') ? ['Offer Templates'] : []),
+    ...(allows('agencies.read') ? ['Agencies'] : []),
+    ...(canManageAccess ? ['Administration'] : []),
+    ...(allows('settings.read') || allows('settings.update') ? ['Settings'] : []),
+    ...(allows('audit.read') ? ['Audit log'] : []),
+    ...(allows('pipeline.configure') ? ['Pipeline settings'] : []),
+    ...(allows('integrations.read') || allows('integrations.configure') || allows('integrations.secrets.manage') ? ['Integrations'] : [])
   ];
 };
+// Every routable view is listed here so direct URL access can be checked
+// against the same server-provided permission set that builds the navigation.
+const knownViews = ['Overview','Requisitions','Candidates','Pipeline','Interviews','Referrals','Offer Templates','Agencies','Administration','Settings','Audit log','Pipeline settings','Integrations','Agency portal','Portal Dashboard','Assigned Roles','Submissions','Agency Team'];
+let deniedView = '';
+const resolveRouteName = raw => {
+  const value = String(raw || '').replace(/^#\/?/, '').split('?')[0].trim();
+  if (!value) return null;
+  let decoded = value;
+  try { decoded = decodeURIComponent(value); } catch {}
+  const key = decoded.toLowerCase();
+  return knownViews.find(v => v.toLowerCase() === key || v.toLowerCase().replace(/\s+/g, '-') === key) || decoded;
+};
+const requestedRoute = () => resolveRouteName(location.hash);
+const routeAllowed = view => Boolean(view && getNavList().includes(view));
+const accessDeniedHtml = view => `<div class="heading"><div><p class="eyebrow">ACCESS CONTROL</p><h1>Access denied</h1><p class="muted">Your role does not permit this page.</p></div></div><section class="panel" role="alert" aria-live="assertive"><div class="empty"><p><strong>${escape(view || 'This page')}</strong> is not available for the <strong>${escape(me?.role || 'current')}</strong> role${me?.team?` in ${escape(me.team)}`:''}.</p><p class="muted">If you believe you need access, contact your System Administrator. Permissions are enforced on the server, not just in this interface.</p>${button(`Return to ${getNavList()[0] || 'your workspace'}`, 'navigate', '', `class="primary" data-view="${escape(getNavList()[0] || 'Overview')}"`)}</div></section>`;
 const parseNavFromHash = (nav) => {
   const raw = location.hash.replace(/^#\/?/, '').trim();
   if (!raw) return null;
@@ -114,7 +133,8 @@ const icon=name=>`<svg class="ui-icon" width="20" height="20" viewBox="0 0 24 24
 const initials=name=>escape(String(name).split(/\s+/).filter(Boolean).slice(0,2).map(n=>n[0]).join('').toUpperCase());
 const applyTheme=theme=>{document.documentElement.dataset.theme=theme;document.querySelector('meta[name="theme-color"]').content=theme==='midnight'?'#0b1322':'#111f35';};
 const brand=()=>`<div class="company-logo"><img src="/mechlin-logo.webp" alt="Mechlin Technologies" width="174" height="40"></div><div class="product-brand"><span class="orbit-symbol" aria-hidden="true"></span><span>Orbit<small>Talent workspace</small></span></div>`;
-const allows = p => permissions.includes(p);
+const allows = p => permissions.includes(p) || grants.includes(p);
+const canEditRolePermissions = role => allows('roles.update') && (!role?.is_system || role?.permissions_editable === true);
 const notice = (() => {
   const TOAST_DURATION = 2000;
   let activeToast = null;
@@ -288,6 +308,15 @@ async function api(path,method='GET',body) {
   }
   if(!response.ok){if(response.status===401 && me){me=null;login();}throw new Error(data?.error || `Request failed (HTTP ${response.status}).`);}
   return data;
+}
+function applyMeData(data){
+  me={ ...data.user, agency: data.agency, permissionGroups: data.permissionGroups||[], permissionRegistry: data.permissionRegistry||[], roleScope: data.roleScope, roleDefinition: data.roleDefinition };
+  csrf=data.csrf;
+  permissions=data.permissions||[];
+  grants=data.grants||[];
+}
+async function refreshCurrentUser(){
+  applyMeData(await api('me'));
 }
 const badge = value => `<span class="badge ${escape(String(value).split('_')[0])}">${escape(String(value).replaceAll('_',' '))}</span>`;
 const empty = message => `<div class="empty">${escape(message)}</div>`;
@@ -711,8 +740,123 @@ function deleteDialog(kind, record, impact, path, success) {
   });
 }
 $('#close-modal').onclick=closeModal;
-$('#modal').addEventListener('click',e=>{const r=$('#modal').getBoundingClientRect();if(e.clientY<r.top||e.clientY>r.bottom||e.clientX<r.left||e.clientX>r.right)closeModal();});
-$('#modal').addEventListener('close',()=>{const n=$('#notice');if(n&&n.parentElement!==document.body)document.body.appendChild(n);const body=$('#modal-body');if(body)body.innerHTML='';});
+$('#modal').addEventListener('click',e=>{if(e.target===$('#modal'))closeModal();});
+$('#modal').addEventListener('close',()=>{const n=$('#notice');if(n&&n.parentElement!==document.body)document.body.appendChild(n);if($('#modal').open)return;const body=$('#modal-body');if(body)body.innerHTML='';});
+function permissionActionBucket(id) {
+  const action = String(id || '').split('.').slice(1).join('.');
+  if (/^(read|read_all|assigned\.read|personal\.read|resume\.read|communications\.read|consent\.read|fraud\.read|compensation\.read|feedback\.read|templates\.read|submissions\.read)$/.test(action) || action.endsWith('.read')) return 'Read';
+  if (action === 'create' || action === 'schedule' || action === 'request') return 'Create';
+  if (action === 'delete' || action === 'deactivate' || action === 'cancel' || action === 'withdraw' || action === 'archive') return 'Delete';
+  if (/^(update|configure|submit|evaluate|process|assign|match|upload)$/.test(action) || action.endsWith('.update') || action.endsWith('.manage') || action.endsWith('.send') || action.endsWith('.upload')) return 'Edit';
+  return 'Other';
+}
+function rolePermissionEditor(selected, readOnly) {
+  const selectedSet = new Set(selected || []);
+  const groups = me?.permissionGroups || [];
+  const columns = ['Read', 'Create', 'Edit', 'Delete', 'Other'];
+  const groupHtml = groups.map(group => {
+    const buckets = Object.fromEntries(columns.map(column => [column, []]));
+    group.permissions.forEach(permission => buckets[permissionActionBucket(permission.id)].push(permission));
+    const cells = columns.map(column => {
+      const items = buckets[column];
+      if (!items.length) return '<td class="perm-empty">—</td>';
+      return `<td>${items.map(permission => `<label class="perm-toggle"><input type="checkbox" role="switch" aria-checked="${selectedSet.has(permission.id) ? 'true' : 'false'}" aria-label="${escape(permission.name)}" data-permission value="${escape(permission.id)}" ${selectedSet.has(permission.id) ? 'checked' : ''} ${readOnly ? 'disabled' : ''}><span><span class="perm-name">${escape(permission.name)}</span><small class="perm-desc">${escape(permission.description)}</small></span><span class="perm-switch" aria-hidden="true"><span class="perm-knob"></span></span></label>`).join('')}</td>`;
+    }).join('');
+    return `<tr class="permission-group" data-module="${escape(group.module)}"><th scope="row">${escape(group.module)}</th>${cells}</tr>`;
+  }).join('');
+  const cols = `<colgroup><col class="perm-col-group">${columns.map(() => '<col class="perm-col">').join('')}</colgroup>`;
+  return `<div class="permission-editor"><div class="permission-toolbar"><span id="role-permission-count" class="muted">${selectedSet.size} on</span>${readOnly ? '' : '<button type="button" class="secondary text-button" id="permission-clear">Turn all off</button>'}</div><input type="hidden" name="permissions" id="role-permission-values" value="${escape([...selectedSet].join(','))}"><div class="permission-groups"><table class="perm-matrix">${cols}<thead><tr><th scope="col">Group</th>${columns.map(column => `<th scope="col">${column === 'Edit' ? 'Write / Edit' : column}</th>`).join('')}</tr></thead><tbody>${groupHtml}</tbody></table></div><p class="muted perm-note">ON grants the permission. OFF leaves it out. Save stores the selection; Cancel discards it.</p></div>`;
+}
+function bindRolePermissionEditor() {
+  const holder = $('#modal-body');
+  if (!holder) return;
+  const boxes = () => [...holder.querySelectorAll('[data-permission]')];
+  const sync = () => {
+    const values = boxes().filter(box => box.checked).map(box => box.value);
+    const hidden = $('#role-permission-values');
+    if (hidden) hidden.value = values.join(',');
+    const count = $('#role-permission-count');
+    if (count) count.textContent = `${values.length} on`;
+    boxes().forEach(box => box.setAttribute('aria-checked', box.checked ? 'true' : 'false'));
+  };
+  boxes().forEach(box => box.addEventListener('change', sync));
+  holder.querySelectorAll('[data-scope]').forEach(button => button.addEventListener('click', () => {
+    const hidden = $('#role-scope');
+    if (hidden) hidden.value = button.dataset.scope;
+    holder.querySelectorAll('[data-scope]').forEach(item => {
+      const on = item === button;
+      item.classList.toggle('is-selected', on);
+      item.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+  }));
+  $('#permission-clear')?.addEventListener('click', () => {
+    boxes().forEach(box => { box.checked = false; });
+    sync();
+  });
+  sync();
+}
+function openRoleModal(role = null, readOnly = false, duplicate = false) {
+  const source = role || {};
+  const editing = Boolean(source.id) && !duplicate;
+  const systemRole = Boolean(source.is_system) && !duplicate;
+  const permissionsEditable = !readOnly && (!editing || canEditRolePermissions(source));
+  const identityLocked = readOnly || systemRole;
+  const selected = duplicate && me?.role !== 'System Admin'
+    ? (source.permissions || []).filter(permission => grants.includes(permission))
+    : (source.permissions || []);
+  const name = duplicate ? `${source.name} copy` : (source.name || '');
+  const description = source.description || '';
+  const canUseOrganizationScope = me?.role === 'System Admin';
+  const requestedScope = source.scope || 'team';
+  const scope = requestedScope === 'organization' && !canUseOrganizationScope ? 'team' : requestedScope;
+  const policyNote = systemRole
+    ? (permissionsEditable
+      ? 'System role names, descriptions and record scopes are protected. Permission changes are saved as a customization, apply immediately and persist across restarts.'
+      : 'This system role is fully protected and cannot be edited.')
+    : 'Organization roles see every team. Team roles are limited to the user\'s team. Assigned roles only see records explicitly assigned to them.';
+  const scopeChoices = [
+    ['organization', 'Organization', 'Every team'],
+    ['team', 'Team', 'The user\'s team'],
+    ['assigned', 'Assigned', 'Records assigned to the user'],
+    ['none', 'None', 'No record access']
+  ];
+  const scopeField = `<fieldset class="full scope-field"><legend>Record scope</legend><input type="hidden" name="scope" id="role-scope" value="${escape(scope)}"><div class="scope-choices" role="radiogroup" aria-label="Record scope">${scopeChoices.map(([value, label, hint]) => {
+    const blocked = value === 'organization' && !canUseOrganizationScope;
+    return `<button type="button" class="scope-choice${scope === value ? ' is-selected' : ''}" data-scope="${value}" ${identityLocked || blocked ? 'disabled' : ''} aria-pressed="${scope === value}"><strong>${label}</strong><small>${hint}</small></button>`;
+  }).join('')}</div></fieldset><p class="full muted scope-note">${policyNote}</p>`;
+  const html = `<div class="form-grid role-form"><label class="full">Role name<input name="name" value="${escape(name)}" maxlength="80" required ${identityLocked ? 'readonly' : ''}></label><label class="full">Description<textarea name="description" rows="2" maxlength="500" ${identityLocked ? 'readonly' : ''}>${escape(description)}</textarea></label>${scopeField}${rolePermissionEditor(selected, !permissionsEditable)}</div>`;
+  if (!permissionsEditable) {
+    modal(readOnly ? 'Role permissions' : 'Protected system role', html, null, { actions: `<div class="form-actions form-actions-end"><button type="button" class="secondary" data-action="close-modal">Close</button></div>` });
+    bindRolePermissionEditor();
+    return;
+  }
+  modal(systemRole ? 'Edit role permissions' : editing ? 'Edit role' : 'Create role', html, async values => {
+    const permissions = String(values.permissions || '').split(',').filter(Boolean);
+    if (!systemRole && !String(values.name || '').trim()) throw new Error('Role name is required.');
+    if (editing) {
+      const payload = systemRole
+        ? { version: source.version, permissions }
+        : { name: values.name, description: values.description, scope: values.scope, permissions, version: source.version };
+      await api(`admin/roles/${source.id}`, 'PUT', payload);
+      await refreshCurrentUser();
+      adminTab = 'roles';
+      return systemRole
+        ? 'System role permissions updated. Changes apply immediately and persist across restarts.'
+        : 'Role updated. Access changes take effect immediately.';
+    }
+    await api('admin/roles', 'POST', { name: values.name, description: values.description, scope: values.scope, permissions });
+    adminTab = 'roles';
+    return 'Role created.';
+  }, { saveLabel: systemRole ? 'Save permissions' : editing ? 'Save role' : 'Create role' });
+  bindRolePermissionEditor();
+}
+function openArchiveRoleModal(role) {
+  modal(`Archive ${role.name}`, `<div class="notice-inline danger-notice"><strong>${escape(role.name)}</strong> will stop appearing in role assignment lists.</div><p>Archiving is blocked while any user is assigned. This action is recorded in the audit log.</p><label class="full">Reason<textarea name="reason" rows="2" maxlength="500" placeholder="Why this role is being retired"></textarea></label>`, async values => {
+    await api(`admin/roles/${role.id}`, 'DELETE', { reason: values.reason });
+    adminTab = 'roles';
+    return 'Role archived.';
+  }, { saveLabel: 'Archive role' });
+}
 async function openDemoModal(isSwitch=false){
   let demoMeta=window._demoMeta;
   if(!demoMeta){
@@ -738,10 +882,7 @@ async function openDemoModal(isSwitch=false){
       if(!res.ok)throw new Error(data.error||'Failed to switch demo persona.');
       csrf=data.csrf;
       me=data.user;
-      const meData=await api('me');
-      me={ ...meData.user, agency: meData.agency };
-      permissions=meData.permissions;
-      csrf=meData.csrf;
+      applyMeData(await api('me'));
       candidateQuery='';
       reqPage=1;
       Object.keys(pageState).forEach(k=>pageState[k]=1);
@@ -755,10 +896,7 @@ async function openDemoModal(isSwitch=false){
       if(!res.ok)throw new Error(data.error||'Demo login failed.');
       csrf=data.csrf;
       me=data.user;
-      const meData=await api('me');
-      me={ ...meData.user, agency: meData.agency };
-      permissions=meData.permissions;
-      csrf=meData.csrf;
+      applyMeData(await api('me'));
       loadSavedPages();
       const nav=getNavList();
       current=getSavedNav(nav);
@@ -813,7 +951,7 @@ function login() {
 }
 function shell() {
   const nav=getNavList();
-  if(!nav.includes(current))current=nav[0]||'Overview';
+  if(!deniedView && !nav.includes(current))current=nav[0]||'Overview';
   const isDemoEnabled=document.documentElement.dataset.demoLogin==='true';
   const showQASwitch=Boolean(me?.isDemoUser||isDemoEnabled);
 
@@ -873,6 +1011,7 @@ function shell() {
 
   document.querySelectorAll('[data-nav]').forEach(b=>b.onclick=()=>{
     if(current!==b.dataset.nav){
+      deniedView='';
       reqPage=1;
       pageState[b.dataset.nav]=1;
       if(b.dataset.nav==='Candidates')candidateQuery='';
@@ -917,9 +1056,16 @@ window.addEventListener('resize', () => { if (current === 'Pipeline') syncPipeli
 
 async function render() {
   const version=++renderVersion;let html='';
-  const heading=(subtitle,action='')=>`<div class="heading"><div><p class="eyebrow">${isAgencyUser()?'EXTERNAL RECRUITER PORTAL':current==='Overview'?`YOUR TEAM. YOUR NEXT CHAPTER.`:allows('admin')&&['Settings','Administration','Audit log','Pipeline settings'].includes(current)?'WORKSPACE MANAGEMENT':'TALENT ACQUISITION'}</p><h1>${current}</h1><p class="muted">${subtitle}</p></div>${action}</div>`;
+  const heading=(subtitle,action='')=>`<div class="heading"><div><p class="eyebrow">${isAgencyUser()?'EXTERNAL RECRUITER PORTAL':current==='Overview'?`YOUR TEAM. YOUR NEXT CHAPTER.`:['Settings','Administration','Audit log','Pipeline settings'].includes(current)?'WORKSPACE MANAGEMENT':'TALENT ACQUISITION'}</p><h1>${current}</h1><p class="muted">${subtitle}</p></div>${action}</div>`;
   try {
     const config=await api('appearance');if(version!==renderVersion||!me)return;appearance=config;applyTheme(config.theme);cleanAccessQuery();shell();
+    if(deniedView){
+      if(version===renderVersion&&me){
+        $('#main').innerHTML=accessDeniedHtml(deniedView);
+        document.title=`Access denied · Orbit by Mechlin`;
+      }
+      return;
+    }
     if(current==='Overview') {
       const [stats,reqs]=await Promise.all([api('analytics'),api('requisitions')]);
       html=heading(`Welcome back, ${escape(me.name.split(' ')[0])}. Let’s move great people forward.`,allows('recruit')?button('+ Add candidate','new-candidate'):'')+`<div class="metrics">${[['Open requisitions',stats.openRequisitions,'Requisitions','Ready for your next hire'],['Approved headcount',stats.approvedHeadcount,'Referrals','Positions approved to fill'],['Candidates',stats.candidates,'Candidates','People in your talent pool'],['Awaiting approval',stats.pendingApprovals,'Administration','Requisitions awaiting a decision']].map(([label,count,i,note],n)=>`<div class="metric metric-${n}"><div class="metric-top"><span>${label}</span><span class="metric-icon">${icon(i)}</span></div><strong>${count}</strong><small>${note}</small></div>`).join('')}</div><div class="split"><section class="panel"><div class="panel-head"><div><h2>Hiring momentum</h2><p class="muted">A snapshot of your recruitment pipeline</p></div><span class="subtle-label">Current applications</span></div>${Object.entries(stats.stageCounts).map(([stage,count],n)=>`<div class="bar-row stage-${n}"><span>${escape(stage)}</span><progress value="${count}" max="${Math.max(1,...Object.values(stats.stageCounts))}" aria-label="${escape(stage)}"></progress><strong>${count}</strong></div>`).join('')}</section><section class="panel panel-attention"><div class="panel-head"><div><h2>Needs your attention</h2><p class="muted">Keep the next hire moving</p></div><span class="count-pill">${stats.pendingApprovals}</span></div><div class="attention-list" id="attention-list">${reqs.filter(r=>r.status.startsWith('pending')).map(r=>`<div class="attention-card"><div class="attention-title">${icon('Requisitions')}<strong>${escape(r.title)}</strong></div><p class="muted">${escape(r.team)} · ${r.headcount} opening(s)</p><div class="attention-bottom">${badge(r.status)}${button('View role','req-details',r.id,'class="text-button"')}</div></div>`).join('')||empty('All caught up. No pending requisitions.')}</div><p class="panel-footnote">Approvals keep hiring aligned with your team’s plans.</p></section></div><section class="panel"><div class="panel-head"><div><h2>Recent requisitions</h2><p class="muted">The roles shaping your next chapter</p></div>${button('View all roles','navigate','','class="text-button" data-view="Requisitions"')}</div>${reqTable(reqs.slice(0,5))}</section>`;
@@ -1062,18 +1208,18 @@ async function render() {
           `</div>`
         : `<div class="notice-inline" style="border-left-color:var(--warning);background:var(--warning-bg);color:var(--warning);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">`+
             `<div><strong>Microsoft Teams calendar not configured:</strong> Interview plans are stored locally. Configure Microsoft 365 credentials in Integrations to sync Teams invites.</div>`+
-            `${allows('admin') ? `<button type="button" class="secondary" data-action="navigate" data-view="Integrations" style="font-size:0.8rem;padding:5px 10px;">Configure Integration</button>` : ''}`+
+            `${allows('integrations.configure') ? `<button type="button" class="secondary" data-action="navigate" data-view="Integrations" style="font-size:0.8rem;padding:5px 10px;">Configure Integration</button>` : ''}`+
           `</div>`;
       const rows=paged.map(i=>{
         const ready=feedbackReady(i);
         const canSubmit=i.interviewer_id===me.id&&i.status!=='completed';
-        const canProxy=allows('admin')&&i.interviewer_id!==me.id&&i.status!=='completed';
+        const canProxy=allows('interviews.proxy_evaluate')&&i.interviewer_id!==me.id&&i.status!=='completed';
         const showLock=(canSubmit||canProxy)&&!ready;
         const isPhysical = i.interview_type === 'in_person';
         const meetBadge = isPhysical
           ? `<br><span class="badge" style="display:inline-flex;align-items:center;gap:4px;font-size:0.75rem;margin-top:4px;background:#f0f9ff;color:#0369a1;border:1px solid #bae6fd;padding:2px 8px;border-radius:4px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>In-Person • ${escape(i.location || 'Office')}</span>`
           : (i.meeting_url ? `<br><a href="${escape(i.meeting_url)}" target="_blank" rel="noopener noreferrer" class="teams-link" style="display:inline-flex;align-items:center;gap:4px;font-size:0.8rem;margin-top:4px;color:var(--accent,#4f46e5);font-weight:600;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>Join Teams</a>` : '');
-        return `<tr><td><strong>${escape(i.name)}</strong>${escape(i.title)}</td><td>${escape(i.interviewer)}</td><td>${escape(formatDateTimeIST(i.scheduled_at))}${meetBadge}</td><td>${badge(i.status)}</td><td><div class="actions">${canSubmit&&ready?button('Submit scorecard','scorecard',i.id):''}${canProxy&&ready?button('Proxy scorecard','scorecard-proxy',i.id,'class="secondary"'):''}${i.status!=='completed'&&(allows('recruit')||allows('admin')||i.interviewer_id===me.id)?button('Edit','edit-interview',i.id,'class="secondary"'):''}${i.status==='planned'&&(allows('recruit')||allows('admin')||i.interviewer_id===me.id)?button('Cancel','cancel-interview',i.id,'class="secondary"'):''}${button('View feedback','feedback',i.id,'class="secondary"')}${showLock?`<span class="muted feedback-locked">${FEEDBACK_LOCKED_MESSAGE}</span>`:''}</div></td></tr>`;
+        return `<tr><td><strong>${escape(i.name)}</strong>${escape(i.title)}</td><td>${escape(i.interviewer)}</td><td>${escape(formatDateTimeIST(i.scheduled_at))}${meetBadge}</td><td>${badge(i.status)}</td><td><div class="actions">${i.candidate_id?button('Candidate','candidate-details',i.candidate_id,'class="secondary"'):''}${canSubmit&&ready?button('Submit scorecard','scorecard',i.id):''}${canProxy&&ready?button('Proxy scorecard','scorecard-proxy',i.id,'class="secondary"'):''}${i.status!=='completed'&&(allows('interviews.update')||i.interviewer_id===me.id)?button('Edit','edit-interview',i.id,'class="secondary"'):''}${i.status==='planned'&&(allows('interviews.cancel')||i.interviewer_id===me.id)?button('Cancel','cancel-interview',i.id,'class="secondary"'):''}${button('View feedback','feedback',i.id,'class="secondary"')}${showLock?`<span class="muted feedback-locked">${FEEDBACK_LOCKED_MESSAGE}</span>`:''}</div></td></tr>`;
       });
       html=heading('Structured interviews, independent feedback.',allows('recruit')?button('+ Plan interview','new-interview'):'')+calNotice+`<section class="panel">${table(['Candidate / role','Interviewer','Scheduled (IST)','Status','Feedback'],rows)}${pag}</section>`;
     }
@@ -1116,18 +1262,56 @@ async function render() {
       `<section class="panel"><div class="panel-head"><div><h2>Company Letterhead & Background Stationery</h2><p class="muted">Upload official PNG, JPG, PDF, or DOCX stationery for multi-page branding</p></div>${button('+ Upload asset','upload-letterhead','','class="secondary"')}</div>${assets.length?table(['Asset name','Format','Dimensions','Scaling mode','Target pages','Uploaded','Actions'],assets.map(a=>`<tr><td><strong>${escape(a.name)}</strong><br><small class="muted mono">${escape(a.filename)}</small></td><td><span class="badge mono" style="font-size:0.72rem;text-transform:uppercase;">${escape(a.file_format)}</span></td><td><small class="mono">${a.width&&a.height?`${a.width} × ${a.height} px`:'A4 Document'}</small></td><td><span class="badge" style="font-size:0.72rem;background:#f1f5f9;color:#334155;">${escape(a.scaling_mode)}</span></td><td><small>${escape(a.page_target)}</small></td><td>${escape(formatDateIST(a.created_at))}</td><td><a href="/api/offer-letter-assets/${a.id}" target="_blank" class="button secondary" style="font-size:0.78rem;padding:4px 8px;">View File</a></td></tr>`)):empty('No company letterhead uploaded yet. Click "+ Upload asset" to add company stationery.')}</section>`;
     }
     if(current==='Administration') {
-      const users=await api('admin/users');window.currentUsers=users;
-      const {paged,page,totalPages,total,start}=paginate(users,pageState.Administration||1,10);
-      pageState.Administration=page;
-      const pag=renderPagination('Administration',page,totalPages,total,start,10);
-      html=heading('Approve access and manage your organization’s users.',button('+ Add user','new-user'))+`<div class="metrics">${[['Active',users.filter(u=>u.status==='active').length],['Pending',users.filter(u=>u.status==='pending').length],['Disabled',users.filter(u=>u.status==='disabled').length],['Rejected',users.filter(u=>u.status==='rejected').length]].map(([label,count])=>`<div class="metric"><span>${label}</span><strong>${count}</strong></div>`).join('')}</div><section class="panel">${table(['User','Role / team','Access','Last sign-in (IST)','Manage'],paged.map(u=>`<tr><td><strong>${escape(u.name)}</strong><small>${escape(u.email)}</small></td><td>${escape(u.role)}<br><small>${escape(u.team||'Organization')}</small></td><td>${badge(u.status)}</td><td>${u.last_login?escape(formatDateTimeIST(u.last_login)):'Never'}</td><td>${button('Manage','manage-user',u.id,'class="secondary"')}</td></tr>`))}${pag}</section>`;
+      const canUsers=allows('users.read'), canCreateUsers=allows('users.create');
+      const canRoles=allows('roles.read'), canCreateRoles=allows('roles.create');
+      let users=[], roles=[], summary=null;
+      if(canUsers) users=await api('admin/users');
+      if(canRoles) roles=await api('admin/roles');
+      if(canUsers||canRoles){ try{summary=await api('admin/access');}catch{} }
+      window.currentUsers=users; window.currentRoles=roles; window.currentAccessSummary=summary;
+      if(!canUsers && adminTab==='users') adminTab='roles';
+      if(!canRoles && adminTab!=='users') adminTab='users';
+      if(adminTab!=='users' && adminTab!=='roles') adminTab=canRoles?'roles':'users';
+      const availableTabs=[...(canUsers?[['users','Users']]:[]),...(canRoles?[['roles','Roles & permissions']]:[])];
+      const tabBar=availableTabs.length>1?`<div role="tablist" aria-label="Access management" style="display:flex;gap:6px;flex-wrap:wrap;margin:0 0 18px;">${availableTabs.map(([id,label])=>`<button type="button" role="tab" aria-selected="${adminTab===id}" data-action="admin-tab" data-id="${id}" class="${adminTab===id?'':'secondary'}" style="min-height:36px;">${escape(label)}</button>`).join('')}</div>`:'';
+      const metrics=[['Active roles',summary?.active_roles??roles.length,'roles'],['Custom roles',summary?.custom_roles??roles.filter(r=>!r.is_system).length,'roles'],['User assignments',summary?.assignments??users.filter(u=>u.status==='active').length,'users'],['Elevated roles',summary?.elevated_roles??roles.filter(r=>(r.permissions||[]).some(p=>me?.permissionRegistry?.find(x=>x.id===p)?.sensitive)).length,'roles'],['Unassigned users',summary?.unassigned_users??0,'users']];
+      const metricsHtml=`<div class="metrics">${metrics.map(([label,count,target],n)=>`<div class="metric metric-${n}"><div class="metric-top"><span>${escape(label)}</span><span class="metric-icon">${icon(target==='roles'?'Administration':'Candidates')}</span></div><strong>${Number(count)||0}</strong><small>${target==='roles'?'Persisted role definitions':'Accounts with access'}</small></div>`).join('')}</div>`;
+      let body='';
+      if(adminTab==='users') {
+        const pending=users.filter(u=>u.status==='pending');
+        const directory=users.filter(u=>u.status!=='pending');
+        const canApprove=allows('users.update'), canReject=allows('users.deactivate');
+        const pendingRows=pending.map(u=>`<tr><td><strong>${escape(u.name)}</strong><small>${escape(u.email)}</small></td><td class="mono">${escape(u.oid||'')}</td><td>${escape(formatDateTimeIST(u.created_at))}</td><td><div class="actions">${canApprove?button('Approve','approve-access',u.id):''}${canReject?button('Reject','reject-access',u.id,'class="secondary"'):''}</div></td></tr>`);
+        const pendingPanel=`<section class="panel" id="pending-access"><div class="panel-head"><div><h2>Pending access requests</h2><p class="muted">People who signed in with Microsoft 365 and are waiting for an administrator decision. Approving or rejecting is saved immediately and cannot be repeated.</p></div><span class="badge">${pending.length}</span></div>${pending.length?table(['Person','Entra object','Requested (IST)','Decision'],pendingRows):'<p class="muted">No pending access requests.</p>'}</section>`;
+        const {paged,page,totalPages,total,start}=paginate(directory,pageState.Administration||1,10);
+        pageState.Administration=page;
+        const pag=renderPagination('Administration',page,totalPages,total,start,10);
+        const recent=summary?.recent_changes||[];
+        body=pendingPanel+`<section class="panel">${table(['User','Role / team','Access','Permissions','Last sign-in (IST)','Manage'],paged.map(u=>`<tr><td><strong>${escape(u.name)}</strong><small>${escape(u.email)}</small></td><td>${escape(u.role||'Unassigned')}<br><small>${escape(u.team||'Organization')}</small></td><td>${badge(u.status)}</td><td>${Number(u.effective_permissions)||0}</td><td>${u.last_login?escape(formatDateTimeIST(u.last_login)):'Never'}</td><td>${button('Manage','manage-user',u.id,'class="secondary"')}</td></tr>`))}${pag}</section>`+
+          (recent.length?`<section class="panel role-history"><div class="panel-head"><div><h2>Recent access changes</h2><p class="muted">Role and user-access events recorded in the audit trail.</p></div>${button('Open audit log','navigate','','class="secondary" data-view="Audit log"')}</div>${table(['Time (IST)','Event','Actor','Target'],recent.slice(0,6).map(e=>`<tr><td>${escape(formatDateTimeIST(e.at))}</td><td>${escape(e.event)}</td><td class="mono">${escape(e.actor)}</td><td class="mono">${escape(e.target)}</td></tr>`))}</section>`:'');
+      } else if(adminTab==='roles') {
+        const rows=roles.map(role=>{
+          const editable=canEditRolePermissions(role);
+          const acts=[button(editable?(role.is_system?'Edit permissions':'Edit'):'View',editable?'edit-role':'view-role',role.id,'class="secondary"')];
+          if(canCreateRoles) acts.push(button('Duplicate','duplicate-role',role.id,'class="secondary"'));
+          if(!role.is_system && allows('roles.delete') && !role.assigned_users) acts.push(button('Archive','archive-role',role.id,'class="secondary"'));
+          const type=role.is_system?`<span class="badge">System${role.permissions_customized?' &middot; customized':''}</span>`:'<span class="badge">Custom</span>';
+          return `<tr data-role-name="${escape((role.name+' '+role.description).toLowerCase())}"><td><strong>${escape(role.name)}</strong><small>${escape(role.description||'No description')}</small></td><td>${type}</td><td>${escape(role.scope)}</td><td>${role.assigned_users}</td><td>${role.permission_count}</td><td>${escape(formatDateIST(role.updated_at))}</td><td><div class="actions">${acts.join('')}</div></td></tr>`;
+        });
+        body=`<section class="panel"><div class="panel-head"><div><h2>Roles and permissions</h2><p class="muted">System role identities and scopes are protected; their permissions can be customized. Custom roles are fully editable.</p></div><input id="role-search" type="search" placeholder="Search roles" aria-label="Search roles" style="max-width:240px;"></div>${table(['Role','Type','Scope','Users','Permissions','Updated','Actions'],rows)}</section>`;
+      }
+      html=heading('Manage users, roles, scopes and effective access from one controlled workspace.',`<div style="display:flex;gap:8px;flex-wrap:wrap;">${canCreateUsers?button('+ Add user','new-user'):''}${canCreateRoles?button('+ New role','new-role','','class="secondary"'):''}</div>`)+metricsHtml+tabBar+body;
     }
     if(current==='Audit log') {
-      const events=await api('admin/audit');
+      const params=new URLSearchParams();
+      Object.entries(auditFilters).forEach(([key,value])=>{if(value)params.set(key,value);});
+      const events=await api('admin/audit'+(params.toString()?`?${params.toString()}`:''));
       const {paged,page,totalPages,total,start}=paginate(events,pageState['Audit log']||1,20);
       pageState['Audit log']=page;
       const pag=renderPagination('Audit log',page,totalPages,total,start,20);
-      html=heading('Administrative actions, authentication and hiring changes.')+`<section class="panel"><p class="muted">Latest 200 events. Earlier entries are available through the paginated audit API.</p>${table(['Time (IST)','Event','Actor','Target'],paged.map(e=>`<tr><td>${escape(formatDateTimeIST(e.at))}</td><td>${escape(e.event)}</td><td class="mono">${escape(e.actor)}</td><td class="mono">${escape(e.target)}</td></tr>`))}${pag}</section>`;
+      const filters=`<section class="panel"><div id="audit-filter-form" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;align-items:end;"><label>Event contains<input id="audit-event" name="event" value="${escape(auditFilters.event)}" placeholder="role.updated"></label><label>Search<input id="audit-q" name="q" value="${escape(auditFilters.q)}" placeholder="Actor, target, detail"></label><label>From (ISO)<input id="audit-from" name="from" value="${escape(auditFilters.from)}" placeholder="2026-01-01"></label><label>To (ISO)<input id="audit-to" name="to" value="${escape(auditFilters.to)}" placeholder="2026-12-31"></label><div style="grid-column:1/-1;display:flex;gap:8px;flex-wrap:wrap;"><button type="button" data-action="audit-filter">Apply filters</button><button type="button" class="secondary" data-action="audit-clear">Clear</button></div></div></section>`;
+      const rows=paged.map(e=>`<tr><td>${escape(formatDateTimeIST(e.at))}</td><td><strong>${escape(e.event)}</strong></td><td class="mono">${escape(e.actor)}</td><td class="mono">${escape(e.target)}</td><td>${Object.keys(e.detail||{}).length?`<details><summary>View detail</summary><pre class="audit-detail">${escape(JSON.stringify(e.detail,null,2))}</pre></details>`:'&mdash;'}</td></tr>`);
+      html=heading('Administrative actions, authentication and hiring changes.')+filters+`<section class="panel"><p class="muted">Filtered audit results, newest first. Access changes and authorization denials are recorded here.</p>${table(['Time (IST)','Event','Actor','Target','Detail'],rows)}${pag}</section>`;
     }
     if(current==='Settings') {
       html=heading('Make Orbit feel like your team’s workspace.')+`<section class="panel appearance-panel"><div class="panel-head"><div><h2>Appearance</h2><p class="muted">Choose a look that helps your team do their best work.</p></div><span class="subtle-label">${icon('Administration')} Admin controlled</span></div><form id="appearance-form"><fieldset class="theme-fieldset"><legend>Workspace theme</legend><div class="theme-grid">${appearance.themes.map(t=>`<label class="theme-option"><input type="radio" name="theme" value="${t.id}" ${t.id===appearance.theme?'checked':''}><span class="theme-thumbnail theme-${t.id}"><span class="mini-sidebar"><i></i><i></i><i></i></span><span class="mini-workspace"><span class="mini-topline"></span><span class="mini-metrics"><i></i><i></i><i></i></span><span class="mini-panel"><i></i><i></i><i></i></span></span><span class="theme-check" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span></span><span class="theme-name">${t.name}</span><span class="theme-description">${t.description}</span></label>`).join('')}</div></fieldset><div class="theme-scope">${icon('Candidates')}<div><strong>One look, for the whole team</strong><p>The saved theme applies to every user and the sign-in screen. Existing sessions pick it up on their next page change or refresh.</p></div></div><p id="appearance-status" role="status" aria-live="polite" class="muted">${escape(appearance.themes.find(t=>t.id===appearance.theme).name)} is your saved workspace theme.</p><div class="settings-actions"><button type="button" class="secondary" data-action="reset-theme">Reset preview</button><button type="submit" id="save-theme" disabled>Save workspace theme</button></div></form></section><section class="panel brand-panel"><div><p class="eyebrow">OUR WORKSPACE</p><h2>Orbit, by Mechlin</h2><p class="muted">A place for people, possibility and your next great hire.</p></div><div class="brand-lockup"><img src="/mechlin-logo.webp" alt="Mechlin Technologies" width="174" height="40"></div></section>`;
@@ -1210,8 +1394,8 @@ async function render() {
       `</section>`;
     }
     if(current==='Integrations') {
-      if(me?.role !== 'System Admin') {
-        html=heading('Access Restricted')+`<div class="empty">System Admin access is required to view and manage integrations.</div>`;
+      if(!allows('integrations.read') && !allows('integrations.configure') && !allows('integrations.secrets.manage')) {
+        html=heading('Access Restricted')+`<div class="empty">Integration access is required to view and manage integrations.</div>`;
       } else {
         const integrations = await api('admin/integrations');
         const activeCount = integrations.filter(i => i.enabled && (i.status === 'connected' || i.status === 'configured')).length;
@@ -1292,9 +1476,11 @@ async function render() {
                   `<div class="int-feature-tags">${featureTags.map(t => `<span class="int-feature-tag">${escape(t)}</span>`).join('')}</div>` +
                   `<div class="int-health-row">${testInfo}<span class="int-enc-badge" title="AES-256-GCM encrypted">AES-256 Encrypted</span></div>` +
                   `<div class="int-card-actions">` +
-                    `<button type="button" class="button" data-action="configure-integration" data-id="${escape(item.id)}">Configure</button>` +
-                    `<button type="button" class="button secondary" data-action="test-integration" data-id="${escape(item.id)}" title="Run safe, non-destructive connection test">Test Connection</button>` +
-                    `<button type="button" class="button secondary int-toggle-btn" data-action="toggle-integration" data-id="${escape(item.id)}" data-enabled="${item.enabled ? '0' : '1'}">${item.enabled ? 'Deactivate' : 'Activate'}</button>` +
+                    (allows('integrations.configure')
+                      ? `<button type="button" class="button" data-action="configure-integration" data-id="${escape(item.id)}">Configure</button>` +
+                        `<button type="button" class="button secondary" data-action="test-integration" data-id="${escape(item.id)}" title="Run safe, non-destructive connection test">Test Connection</button>` +
+                        `<button type="button" class="button secondary int-toggle-btn" data-action="toggle-integration" data-id="${escape(item.id)}" data-enabled="${item.enabled ? '0' : '1'}">${item.enabled ? 'Deactivate' : 'Activate'}</button>`
+                      : `<span class="muted" style="font-size:0.8rem;">Read-only access</span>`) +
                   `</div>` +
                 `</div>`;
               }).join('') +
@@ -1307,7 +1493,7 @@ async function render() {
       const {paged,page,totalPages,total,start}=paginate(agencies,pageState.Agencies||1,10);
       pageState.Agencies=page;
       const pag=renderPagination('Agencies',page,totalPages,total,start,10);
-      html=heading('Manage external recruitment agencies and partner access.',allows('admin')?button('+ Register agency','new-agency'):'')+
+      html=heading('Manage external recruitment agencies and partner access.',allows('agencies.create')?button('+ Register agency','new-agency'):'')+
       `<div class="metrics">${[
         ['Registered agencies', agencies.length, 'Agencies', 'External recruitment partners'],
         ['Active agencies', agencies.filter(a=>a.status==='active').length, 'Agencies', 'Operational partner portals'],
@@ -1315,7 +1501,7 @@ async function render() {
         ['Agency submissions', agencies.reduce((acc,a)=>acc+Number(a.submissions_count||0),0), 'Candidates', 'Total candidates received']
       ].map(([label,count,i,note],n)=>`<div class="metric metric-${n}"><div class="metric-top"><span>${label}</span><span class="metric-icon">${icon(i)}</span></div><strong>${count}</strong><small>${note}</small></div>`).join('')}</div>`+
       `<section class="panel"><div class="panel-head"><div><h2>External recruitment agencies</h2><p class="muted">Authorized partners with isolated portal access.</p></div></div>`+
-      `${table(['Agency / Code','Primary contact','Recruiters','Assigned jobs','Submissions','Status','Actions'],paged.map(a=>`<tr><td><strong>${escape(a.name)}</strong><br><small class="mono">${escape(a.code)}</small></td><td>${escape(a.contact_name||'—')}<br><small>${escape(a.contact_email||'')}${a.contact_phone?` · ${escape(a.contact_phone)}`:''}</small></td><td><strong>${a.active_recruiters_count||0}</strong> <small class="muted">active</small></td><td><strong>${a.assigned_requisitions_count||0}</strong></td><td><strong>${a.submissions_count||0}</strong></td><td>${badge(a.status)}</td><td><div class="actions">${button('Manage','manage-agency',a.id,'class="secondary"')}${allows('admin')?button('Assign role','agency-assign-job',a.id,'class="secondary"'):''}</div></td></tr>`))}`+
+      `${table(['Agency / Code','Primary contact','Recruiters','Assigned jobs','Submissions','Status','Actions'],paged.map(a=>`<tr><td><strong>${escape(a.name)}</strong><br><small class="mono">${escape(a.code)}</small></td><td>${escape(a.contact_name||'—')}<br><small>${escape(a.contact_email||'')}${a.contact_phone?` · ${escape(a.contact_phone)}`:''}</small></td><td><strong>${a.active_recruiters_count||0}</strong> <small class="muted">active</small></td><td><strong>${a.assigned_requisitions_count||0}</strong></td><td><strong>${a.submissions_count||0}</strong></td><td>${badge(a.status)}</td><td><div class="actions">${button('Manage','manage-agency',a.id,'class="secondary"')}${allows('agencies.assign')?button('Assign role','agency-assign-job',a.id,'class="secondary"'):''}</div></td></tr>`))}`+
       `${pag}</section>`;
     }
     if(current==='Portal Dashboard') {
@@ -1387,8 +1573,8 @@ async function render() {
   }catch(e){if(me)$('#main').innerHTML=`<section class="panel"><h1>Could not load this view</h1><p class="error">${escape(e.message)}</p>${button('Try again','refresh')}</section>`;}
 }
 function reqTable(reqs) {return table(['Position','Team','Headcount','Status','Actions'],reqs.map(r=>{
-  const canReviewManager = r.status==='pending_manager' && allows('approve_manager') && (r.created_by !== me?.id || allows('admin'));
-  const canReviewFinance = r.status==='pending_finance' && allows('approve_finance') && (r.created_by !== me?.id || allows('admin'));
+  const canReviewManager = r.status==='pending_manager' && allows('approve_manager') && (r.created_by !== me?.id || allows('requisitions.override') || allows('system.override'));
+  const canReviewFinance = r.status==='pending_finance' && allows('approve_finance') && (r.created_by !== me?.id || allows('requisitions.override') || allows('system.override'));
   return `<tr><td><strong>${escape(r.title)}</strong><small>${escape(r.skills.join(', '))}</small></td><td>${escape(r.team)}</td><td>${r.headcount}</td><td>${badge(r.status)}</td><td><div class="actions">${button('Details','req-details',r.id,'class="secondary"')}${['draft','open'].includes(r.status)&&(allows('recruit')||allows('requisition'))?button('Edit','edit-req',r.id,'class="secondary"'):''}${r.status==='draft'&&(allows('recruit')||allows('requisition'))?button('Submit','submit-req',r.id):''}${(canReviewManager||canReviewFinance)?button('Review','approve-req',r.id):''}</div></td></tr>`;
 }),'requisitions-table');}
 const requisitionSectionHeadings=new Set(['purpose','role overview','about the role','required skills','required skills and experience','responsibilities','key responsibilities','what success looks like','interview process','accessibility']);
@@ -1411,7 +1597,7 @@ function requisitionDescription(value='') {
   return html;
 }
 function requisitionDetail(r,{readOnly=false}={}) {
-  const canEdit=!readOnly&&((['draft','open'].includes(r.status)||(allows('admin')&&['pending_manager','pending_finance'].includes(r.status)))&&(allows('recruit')||allows('requisition')));
+  const canEdit=!readOnly&&((['draft','open'].includes(r.status)||((allows('requisitions.override')||allows('system.override'))&&['pending_manager','pending_finance'].includes(r.status)))&&(allows('recruit')||allows('requisition')));
   const skillsList=Array.isArray(r.skills)?r.skills:[];
   return `<div class="requisition-detail"><p class="detail-meta">${badge(r.status)} · ${escape(r.team)} · ${r.headcount} opening(s)</p>${r.salary_min!==undefined?`<p class="detail-salary">${r.salary_min}–${r.salary_max} ${escape(r.currency)}</p>`:''}${requisitionDescription(r.description)}${skillsList.length?`<h3 class="detail-section-title">Required skills</h3><div class="skill-list">${skillsList.map(s=>`<span class="skill-chip">${escape(s)}</span>`).join('')}</div>`:''}${readOnly?`<p class="read-only-note" role="status">${icon('Administration')}<span>Read-only view. Editing is available from the Requisitions page for authorized users.</span></p>`:''}${canEdit?`<div class="actions detail-actions">${button('Edit','edit-req',r.id)}</div>`:''}</div>`;
 }
@@ -1506,6 +1692,13 @@ async function openIntegrationConfigModal(integrationId) {
         return `<label class="full checkbox-row" style="cursor:pointer;background:var(--surface-alt);padding:10px 14px;border:1px solid var(--line);border-radius:8px;font-weight:600;"><input type="checkbox" name="cfg_${f.key}" ${f.value ? 'checked' : ''}> <span>${escape(f.label)}</span></label>`;
       }
       if (f.secret) {
+        if (!allows('integrations.secrets.manage')) {
+          return `
+          <div class="full int-secret-group" style="background:var(--surface-alt);border:1px solid var(--line);padding:12px 14px;border-radius:8px;margin-top:4px;">
+            <strong>${escape(f.label)}</strong>
+            <p class="muted" style="font-size:0.8rem;margin:6px 0 0;">${f.hasSavedSecret ? 'A credential is stored securely.' : 'No credential is stored.'} You do not have permission to view, add, replace or remove integration credentials.</p>
+          </div>`;
+        }
         return `
           <div class="full int-secret-group" style="background:var(--surface-alt);border:1px solid var(--line);padding:12px 14px;border-radius:8px;margin-top:4px;">
             <label style="font-weight:600;display:block;">
@@ -2883,10 +3076,16 @@ document.addEventListener('click',async event=>{
   const b=event.target.closest('[data-action]');if(!b)return;const a=b.dataset.action,id=b.dataset.id;
   try {
     if(a==='close-modal'){closeModal();return;}
+    if(a==='admin-tab'){adminTab=id;pageState.Administration=1;await render();return;}
+    if(a==='new-role'){openRoleModal(null);return;}
+    if(a==='view-role'||a==='edit-role'||a==='duplicate-role'){const role=(window.currentRoles||[]).find(r=>r.id===id);if(!role)return;openRoleModal(role,a==='view-role',a==='duplicate-role');return;}
+    if(a==='archive-role'){const role=(window.currentRoles||[]).find(r=>r.id===id);if(!role)return;openArchiveRoleModal(role);return;}
+    if(a==='audit-filter'){auditFilters={event:$('#audit-event')?.value.trim()||'',q:$('#audit-q')?.value.trim()||'',from:$('#audit-from')?.value.trim()||'',to:$('#audit-to')?.value.trim()||''};pageState['Audit log']=1;await render();return;}
+    if(a==='audit-clear'){auditFilters={event:'',q:'',from:'',to:''};pageState['Audit log']=1;await render();return;}
     if(a==='demo-login-modal'){await openDemoModal(false);return;}
     if(a==='switch-demo-role'){await openDemoModal(true);return;}
     if(a==='req-page'||a==='page'){const view=b.dataset.view||'Requisitions';const p=Number(b.dataset.page);const total=Number(b.dataset.totalPages||Infinity);if(p>=1&&p<=total&&p!==(pageState[view]||1)){pageState[view]=p;reqPage=pageState.Requisitions;await render();}return;}
-    if(a==='navigate'){if(current!==b.dataset.view){reqPage=1;pageState[b.dataset.view]=1;if(b.dataset.view==='Candidates')candidateQuery='';}current=b.dataset.view;syncNavState();saveNavScroll(document.querySelector('.sidebar nav'));await render();return;}
+    if(a==='navigate'){deniedView='';if(current!==b.dataset.view){reqPage=1;pageState[b.dataset.view]=1;if(b.dataset.view==='Candidates')candidateQuery='';}current=b.dataset.view;syncNavState();saveNavScroll(document.querySelector('.sidebar nav'));await render();return;}
     if(a==='clear-candidate-search'){candidateQuery='';pageState.Candidates=1;await render();return;}
     if(a==='reset-theme'){applyTheme(appearance.theme);document.querySelector(`#appearance-form input[value="${appearance.theme}"]`).checked=true;$('#save-theme').disabled=true;$('#appearance-status').textContent='Preview reset to the saved workspace theme.';return;}
     if(a==='logout'){
@@ -2994,7 +3193,7 @@ document.addEventListener('click',async event=>{
     }
     if(a==='submit-req'){await api(`requisitions/${id}/submit`,'POST',{});notice('Submitted for manager approval.','success');await render();}
     if(a==='approve-req'){
-      const isAdmin = allows('admin');
+      const isAdmin = allows('requisitions.override') || allows('system.override');
       const reqs = await api('requisitions');
       const r = reqs.find(item => item.id === id) || await api(`requisitions/${id}`);
       if(r && r.created_by === me?.id && !isAdmin){
@@ -3053,7 +3252,7 @@ document.addEventListener('click',async event=>{
       const reqs=await api('requisitions');
       const r=reqs.find(item=>item.id===id)||await api(`requisitions/${id}`);
       if(!r)throw new Error('Requisition not found.');
-      if(!['draft','open'].includes(r.status)&&!(allows('admin')&&['pending_manager','pending_finance'].includes(r.status)))throw new Error(`Cannot edit requisition with status ${r.status}.`);
+      if(!['draft','open'].includes(r.status)&&!((allows('requisitions.override')||allows('system.override'))&&['pending_manager','pending_finance'].includes(r.status)))throw new Error(`Cannot edit requisition with status ${r.status}.`);
       modal('Edit requisition',`<div class="form-grid">${field('Position title','title','text',r.title)}${teamSelect('Team','team',r.team||'Dev',false)}${field('Headcount','headcount','number',String(r.headcount))}${field('Currency','currency','text',r.currency||'INR')}${field('Minimum annual salary','salary_min','number',String(r.salary_min??0))}${field('Maximum annual salary','salary_max','number',String(r.salary_max??0))}${field('Required skills, comma separated','skills','text',(r.skills||[]).join(', '),false)}${area('Job description','description',r.description,true)}</div>${button('Draft description from title & skills','draft-jd','','class="secondary"')}`,async v=>{
         const cErr=checkCurrency(v.currency);
         if(cErr){
@@ -3068,7 +3267,7 @@ document.addEventListener('click',async event=>{
           throw new Error(sErr);
         }
         const payload = {...v,currency:v.currency.trim().toUpperCase(),headcount:Number(v.headcount),salary_min:Number(v.salary_min),salary_max:Number(v.salary_max),skills:skills(v.skills)};
-        if(allows('admin')) payload.admin_override = true;
+        if(allows('requisitions.override')||allows('system.override')) payload.admin_override = true;
         await api(`requisitions/${id}`,'PUT',payload);
         return 'Requisition updated successfully.';
       },{ actions: formActions({ deleteAction:'delete-req', deleteId:id }) });
@@ -3179,11 +3378,14 @@ document.addEventListener('click',async event=>{
       notice((r.email||r.phone)?'Email and phone number extracted successfully.':(r.message||'No email or phone number found in resume text.'),hasExtracted?'success':'error');
     }
     if(a==='candidate-details'){
-      const [c, commsData, fraudData, sigData] = await Promise.all([
-        (async () => (await api('candidates')).find(c=>c.id===id)||await api(`candidates/${id}`))(),
-        api(`candidates/${id}/communications`).catch(() => ({ consent: { opted_out: false }, communications: [] })),
-        api(`candidates/${id}/fraud-review`).catch(() => null),
-        api(`candidates/${id}/signatures`).catch(() => [])
+      const c = (allows('recruit') || allows('review'))
+        ? ((await api('candidates')).find(c=>c.id===id)||await api(`candidates/${id}`))
+        : await api(`candidates/${id}`);
+      const limitedView = c.access_scope === 'assigned_interviews';
+      const [commsData, fraudData, sigData] = await Promise.all([
+        limitedView ? Promise.resolve({ consent: { opted_out: false }, communications: [] }) : api(`candidates/${id}/communications`).catch(() => ({ consent: { opted_out: false }, communications: [] })),
+        limitedView ? Promise.resolve(null) : api(`candidates/${id}/fraud-review`).catch(() => null),
+        limitedView ? Promise.resolve([]) : api(`candidates/${id}/signatures`).catch(() => [])
       ]);
       const appsHtml=(c.applications&&c.applications.length)?`<h3>Applications & Status</h3><div class="candidate-status-list" style="margin-bottom:14px;">${c.applications.map(app=>{const title=escape(app.title||'General Application');return `<div class="candidate-status-pair"><span class="candidate-status-role" title="${title}">${title}</span> <span class="status-sep" aria-hidden="true">—</span> ${badge(app.stage||'Applied')}</div>`;}).join('')}</div>`:'';
 
@@ -3216,10 +3418,12 @@ document.addEventListener('click',async event=>{
           `;
         }
       }
-      const resumeHtml=c.resume?`<div class="resume-info" style="margin:10px 0;padding:10px 12px;background:var(--surface-alt);border:1px solid var(--line);border-radius:8px;font-size:0.85rem;"><span class="muted">Attached resume:</span> <strong>${escape(c.resume.filename)}</strong> <span class="badge clean" style="margin-left:6px;font-size:0.75rem;">${escape(c.resume.file_format.toUpperCase())}</span> <span class="muted">(${Math.round(c.resume.file_size/1024)} KB)</span></div>`:'';
+      const resumeHtml=!limitedView&&c.resume?`<div class="resume-info" style="margin:10px 0;padding:10px 12px;background:var(--surface-alt);border:1px solid var(--line);border-radius:8px;font-size:0.85rem;"><span class="muted">Attached resume:</span> <strong>${escape(c.resume.filename)}</strong> <span class="badge clean" style="margin-left:6px;font-size:0.75rem;">${escape(c.resume.file_format.toUpperCase())}</span> <span class="muted">(${Math.round(c.resume.file_size/1024)} KB)</span></div>`:'';
       const consent = commsData.consent || { opted_out: false };
       const commsList = commsData.communications || [];
-      const consentBadge = consent.opted_out
+      const consentBadge = limitedView
+        ? ''
+        : consent.opted_out
         ? `<span class="badge rejected" style="margin-left:8px;font-size:0.75rem;">Opted out of email</span>`
         : `<span class="badge active" style="margin-left:8px;font-size:0.75rem;">Subscribed to email</span>`;
       const commsHtml = commsList.length
@@ -3424,7 +3628,7 @@ document.addEventListener('click',async event=>{
           ? `<p class="score-note" style="margin-top:6px;font-size:0.85rem;"><strong>Reviewer notes (${escape(fraudData.reviewer?.name || 'Reviewer')}):</strong> ${escape(fraudData.resolution_notes)}</p>`
           : '';
 
-        const resolveAction = (allows('recruit') || allows('admin'))
+        const resolveAction = allows('candidates.fraud.manage')
           ? button(fraudData.status === 'pending' ? 'Review & resolve flags' : 'Update review decision', 'resolve-fraud', c.id, 'class="secondary" style="margin-top:8px;font-size:0.82rem;"')
           : '';
 
@@ -3445,7 +3649,10 @@ document.addEventListener('click',async event=>{
       const showFooterOfferBtn = allows('recruit') && signatureState.eligible && !hasCompleted && !hasActivePending;
       const offerFooterBtn = showFooterOfferBtn ? button('Offer & E-Sign','new-signature-request',c.id,'class="secondary" style="margin-right:8px;"') : '';
       const emailAction = allows('recruit') ? `${offerFooterBtn}${button('Send email','send-candidate-email',c.id,'class="primary" style="margin-right:8px;"')}${button('Edit','edit-candidate',c.id,'class="secondary"')}` : '';
-      modal(c.name,`<p>${escape(c.email)}${c.phone?` · ${escape(c.phone)}`:''}${consentBadge}</p><p>${escape((c.skills||[]).join(', '))}</p>${appsHtml}${resumeHtml}${signaturesHtml}${trainingEvalHtml}<h3>Experience / Resume</h3><p class="score-note">${escape(c.resume_text||c.experience||'No resume text provided.')}</p>${fraudHtml}${commsHtml}${emailAction?`<div class="actions" style="margin-top:16px">${emailAction}</div>`:''}`);
+      const limitedNotice = limitedView
+        ? `<div class="notice-inline" role="status" style="margin-bottom:12px;"><strong>Interviewer access:</strong> You can see this candidate's contact details, skills and the applications linked to your assigned interviews. Resume files, offer data and unrelated applications are restricted.</div>`
+        : '';
+      modal(c.name,`${limitedNotice}<p>${escape(c.email)}${c.phone?` · ${escape(c.phone)}`:''}${consentBadge}</p><p>${escape((c.skills||[]).join(', '))}</p>${appsHtml}${limitedView?'':resumeHtml}${limitedView?'':signaturesHtml}${limitedView?'':trainingEvalHtml}${limitedView?'':`<h3>Experience / Resume</h3><p class="score-note">${escape(c.resume_text||c.experience||'No resume text provided.')}</p>`}${fraudHtml}${commsHtml}${emailAction?`<div class="actions" style="margin-top:16px">${emailAction}</div>`:''}`);
     }
     if(a==='send-candidate-email'){
       const formKey = `comm_${id}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -4149,7 +4356,7 @@ document.addEventListener('click',async event=>{
       const interviews=await api('interviews');
       const i=interviews.find(item=>item.id===id)||await api(`interviews/${id}`);
       if(!i)throw new Error('Interview not found.');
-      const canManage=allows('recruit')||allows('admin');
+      const canManage=allows('interviews.schedule')||allows('interviews.update');
       const users=canManage?await api('interviewers'):[];
       const toLocal=s=>toISTDateTimeInput(s);
       const comps=JSON.parse(i.competencies||'[]');
@@ -4456,7 +4663,22 @@ document.addEventListener('click',async event=>{
       deleteDialog('referral',`Referral for ${r.name}`,'This removes the referral from active lists. Linked candidates and applications would be blocked from deletion and are never removed silently.',`referrals/${id}`,'Referral deleted successfully.');
     }
     if(a==='new-user'){const roles=(await api('me')).roles.filter(r=>r!=='Agency');modal('Add Microsoft 365 user',field('Full name','name')+field('Microsoft email','email','email')+field('Entra object ID','oid')+field('Entra tenant ID','tenant')+select('Role','role',roles,'Employee/Referral')+teamSelect('Team','team','',true)+'<p class="muted">This grants approved access to the exact Entra identity. It does not create a Microsoft account or an ATS password.</p>',async v=>{await api('admin/users','POST',v);return 'User provisioned successfully.';});}
-    if(a==='manage-user'){const u=window.currentUsers.find(u=>u.id===id);const roles=(await api('me')).roles.filter(r=>r!=='Agency');const actions=u.status==='pending'?['approve','reject']:u.status==='active'?['update','disable','force-logout']:['reactivate','update'];modal(`Manage ${u.name}`,`<p>${escape(u.email)} · ${badge(u.status)}</p><p class="mono">Entra object: ${escape(u.oid)}</p>`+select('Action','action',actions)+select('Role','role',roles,u.role)+teamSelect('Team','team',u.team||'',true)+'<p class="muted">Access changes revoke all current ATS sessions.</p>',async v=>{await api(`admin/users/${id}/${v.action}`,'POST',v);return `User ${v.action} completed successfully.`;});}
+    if(a==='approve-access'||a==='reject-access'){
+      const u=(window.currentUsers||[]).find(row=>row.id===id);
+      if(!u||u.status!=='pending'){notice('This request is no longer pending.','error');await render();return;}
+      const roles=(await api('me')).roles.filter(r=>r!=='Agency'&&r!=='Agency Admin'&&r!=='Agency Recruiter');
+      if(a==='reject-access'){
+        modal(`Reject ${u.name}`,`<p>${escape(u.email)} will be denied access. This cannot be applied twice.</p>`,async()=>{await api(`admin/users/${id}/reject`,'POST',{});return 'Access request rejected.';},{saveLabel:'Reject request'});
+        return;
+      }
+      modal(`Approve ${u.name}`,`<p>${escape(u.email)}</p>${select('Role','role',roles,roles.includes('Recruiter')?'Recruiter':roles[0])}${teamSelect('Team','team','',true)}<p class="muted">The person can sign in after approval. A second approval is rejected by the server.</p>`,async v=>{
+        if(!v.role)throw new Error('Select a role before approving.');
+        await api(`admin/users/${id}/approve`,'POST',{role:v.role,team:v.team||''});
+        return 'Access request approved.';
+      },{saveLabel:'Approve request'});
+      return;
+    }
+    if(a==='manage-user'){const u=window.currentUsers.find(u=>u.id===id);if(!u||u.status==='pending')return;const roles=(await api('me')).roles.filter(r=>r!=='Agency');const actions=u.status==='active'?['update','disable','force-logout']:['reactivate','update'];modal(`Manage ${u.name}`,`<p>${escape(u.email)} · ${badge(u.status)}</p><p class="mono">Entra object: ${escape(u.oid)}</p>`+select('Action','action',actions)+select('Role','role',roles,u.role)+teamSelect('Team','team',u.team||'',true)+'<p class="muted">Access changes revoke all current ATS sessions.</p>',async v=>{await api(`admin/users/${id}/${v.action}`,'POST',v);return `User ${v.action} completed successfully.`;});}
     if(a==='edit-pipeline'){
       const [stages, presets, apps] = await Promise.all([
         api('pipeline'),
@@ -4911,7 +5133,7 @@ document.addEventListener('click',async event=>{
       const ass = details.assignments || ag.assignments || [];
       const subs = details.submissions || ag.submissions || [];
 
-      const statusActionButtons = allows('admin') ? `
+      const statusActionButtons = (allows('agencies.update') || allows('agencies.delete')) ? `
         <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
           ${ag.status!=='active'?button('Activate agency','set-agency-status',ag.id,'data-status="active" class="primary"'):''}
           ${ag.status==='active'?button('Suspend agency','set-agency-status',ag.id,'data-status="suspended" class="secondary"'):''}
@@ -4932,7 +5154,7 @@ document.addEventListener('click',async event=>{
       const assignmentsList = ass.length ? `
         <div class="table-wrap" style="margin-top:8px;">
           <table class="table"><thead><tr><th scope="col">Requisition</th><th scope="col">Deadline</th><th scope="col">Instructions</th><th scope="col">Action</th></tr></thead>
-          <tbody>${ass.map(j=>`<tr><td><strong>${escape(j.title)}</strong><br><small>${escape(j.team)}</small></td><td>${(j.submission_deadline||j.deadline)?escape(formatDateIST(j.submission_deadline||j.deadline)):'None'}</td><td><small class="muted">${escape(j.sourcing_instructions||j.instructions||'—')}</small></td><td>${allows('admin')?button('Revoke','revoke-agency-req',ag.id,`data-req-id="${j.requisition_id}" class="secondary text-button"`):'—'}</td></tr>`).join('')}</tbody>
+          <tbody>${ass.map(j=>`<tr><td><strong>${escape(j.title)}</strong><br><small>${escape(j.team)}</small></td><td>${(j.submission_deadline||j.deadline)?escape(formatDateIST(j.submission_deadline||j.deadline)):'None'}</td><td><small class="muted">${escape(j.sourcing_instructions||j.instructions||'—')}</small></td><td>${allows('agencies.assign')?button('Revoke','revoke-agency-req',ag.id,`data-req-id="${j.requisition_id}" class="secondary text-button"`):'-'}</td></tr>`).join('')}</tbody>
           </table>
         </div>
       ` : '<p class="muted" style="font-size:0.85rem;margin-top:6px;">No requisitions currently assigned.</p>';
@@ -5133,10 +5355,17 @@ document.addEventListener('click',async event=>{
 });
 window.addEventListener('hashchange',()=>{
   if(!me)return;
-  const nav=getNavList();
-  const target=parseNavFromHash(nav);
-  if(target&&target!==current){
-    current=target;
+  const requested=requestedRoute();
+  if(!requested)return;
+  if(!routeAllowed(requested)){
+    deniedView=requested;
+    current=requested;
+    render();
+    return;
+  }
+  deniedView='';
+  if(requested!==current){
+    current=requested;
     render();
   }
 });
@@ -5689,12 +5918,17 @@ window.addEventListener('online',()=>notice('Connection restored.','success'));
 
   try{
     const data=await api('me');
-    me={ ...data.user, agency: data.agency };
-    csrf=data.csrf;
-    permissions=data.permissions;
+    applyMeData(data);
     loadSavedPages();
     const nav=getNavList();
-    current=getSavedNav(nav);
+    const requested=requestedRoute();
+    if(requested&&!nav.includes(requested)){
+      current=requested;
+      deniedView=requested;
+    }else{
+      current=getSavedNav(nav);
+      deniedView='';
+    }
     cleanAccessQuery();
     await render();
   }catch{
@@ -5702,3 +5936,10 @@ window.addEventListener('online',()=>notice('Connection restored.','success'));
   }
   if('serviceWorker'in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{});
 })();
+document.addEventListener('input', event => {
+  if (event.target.id !== 'role-search') return;
+  const query = event.target.value.trim().toLowerCase();
+  document.querySelectorAll('[data-role-name]').forEach(row => {
+    row.style.display = !query || row.dataset.roleName.includes(query) ? '' : 'none';
+  });
+});

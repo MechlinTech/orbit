@@ -15,7 +15,9 @@ export function config(env = process.env) {
   if ((c.tenant && !/^[0-9a-f-]{36}$/i.test(c.tenant)) || (c.client && !/^[0-9a-f-]{36}$/i.test(c.client))) throw new Error('Entra IDs must be GUIDs');
   if (c.production && (!c.tenant || !c.client)) throw new Error('Production requires tenant/client IDs');
   const demoFlag = env.ENABLE_DEMO_LOGIN ?? env.DEMO_LOGIN ?? env.QA_LOGIN;
-  c.demoLogin = demoFlag !== 'false';
+  // Demo identities are a QA convenience, never a production authentication
+  // path. Production must explicitly opt in if a QA environment is required.
+  c.demoLogin = c.production ? demoFlag === 'true' : demoFlag !== 'false';
   c.maxResumeSizeBytes = Number(env.MAX_RESUME_SIZE_BYTES || 5 * 1024 * 1024);
   c.antivirusProvider = env.ANTIVIRUS_PROVIDER || '';
   c.antivirusRequired = env.ANTIVIRUS_REQUIRED === 'true' || (c.production && env.ANTIVIRUS_REQUIRED !== 'false');

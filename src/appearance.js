@@ -13,7 +13,7 @@ export function getAppearance(db) {
   return {theme,productName:'Orbit',companyName:'Mechlin',themes};
 }
 export function setAppearance(db,user,body) {
-  requirePermission(user,'admin');
+  requirePermission(user,'settings.update');
   if(!body || !themes.some(t=>t.id===body.theme) || Object.keys(body).some(k=>k!=='theme'))throw new HttpError(400,'Choose one of the available themes.');
   return transaction(db,()=>{
     const before=getAppearance(db).theme;

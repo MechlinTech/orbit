@@ -1138,6 +1138,59 @@ input[type="checkbox"],input[type="radio"]{width:18px!important;min-height:18px!
 .a4-sheet-table th{background:#f8fafc;font-weight:600;color:#0f172a;text-align:left}
 .a4-sheet-signatures{display:flex;justify-content:space-between;margin-top:30px;padding-top:10px;gap:20px}
 .a4-sheet-sig-box{flex:1;border-top:1.5px solid #0f172a;padding-top:6px;font-size:8pt;color:#1e293b}
+.permission-editor{margin-top:12px}
+.permission-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+.permission-toolbar input{flex:1;min-width:220px}
+.permission-toolbar .text-button{min-height:32px;padding:4px 10px}
+#modal[open]:has(.permission-editor){width:min(1180px,calc(100vw - 24px));max-width:1180px}
+.permission-groups{max-height:min(52vh,520px);overflow:auto;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.perm-matrix{width:1480px;min-width:1480px;table-layout:fixed;border-collapse:separate;border-spacing:0;font-size:.84rem}
+.perm-col-group{width:160px}
+.perm-col{width:264px}
+.perm-matrix th,.perm-matrix td{border-bottom:1px solid var(--line);padding:12px 14px;vertical-align:top;text-align:left;word-break:normal;overflow-wrap:break-word;white-space:normal;min-width:0}
+.perm-matrix thead th{position:sticky;top:0;z-index:2;background:var(--surface-alt);font-size:.72rem;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+.perm-matrix thead th:first-child,.perm-matrix tbody th{position:sticky;left:0;min-width:160px;width:160px;background:var(--surface);box-shadow:1px 0 0 var(--line);font-weight:650;z-index:3}
+.perm-matrix thead th:first-child{z-index:4;background:var(--surface-alt)}
+.perm-matrix th:nth-child(n+2),.perm-matrix td:nth-child(n+2){width:264px}
+.perm-matrix tbody tr:hover th{background:var(--surface-alt)}
+.perm-toggle{position:relative;display:grid;grid-template-columns:minmax(0,1fr) 52px;column-gap:12px;align-items:center;margin:0 0 14px;cursor:pointer;min-width:0}
+.perm-toggle>span:first-of-type{min-width:0}
+.perm-switch{justify-self:end}
+.perm-toggle:last-child{margin-bottom:0}
+.perm-toggle input{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+.perm-switch{width:52px;height:26px;border-radius:999px;background:var(--surface-alt);border:1px solid var(--line);position:relative;display:flex;align-items:center;justify-content:flex-end;padding:0 6px 0 22px;box-sizing:border-box;font-size:.62rem;font-weight:700;letter-spacing:.04em;color:var(--muted)}
+.perm-switch::before{content:'OFF'}
+.perm-knob{position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:var(--surface);border:1px solid var(--line);box-sizing:border-box}
+.perm-toggle:has(input:checked) .perm-switch{background:var(--accent);border-color:var(--accent);color:var(--on-accent);justify-content:flex-start;padding:0 22px 0 6px}
+.perm-toggle:has(input:checked) .perm-switch::before{content:'ON'}
+.perm-toggle:has(input:checked) .perm-knob{left:28px;border-color:transparent}
+.perm-toggle:has(input:focus-visible) .perm-switch{outline:2px solid var(--focus);outline-offset:2px}
+.perm-toggle:has(input:disabled){cursor:default;opacity:.6}
+@media(prefers-reduced-motion:no-preference){.perm-knob{transition:left .15s ease}}
+.perm-name{display:block;line-height:1.35;font-weight:600;overflow-wrap:break-word}
+.perm-desc{display:block;margin-top:2px;color:var(--muted);font-size:.75rem;font-weight:450;line-height:1.4;white-space:normal;word-break:normal;overflow-wrap:break-word}
+.role-form{gap:14px}
+.scope-field{border:0;margin:0;padding:0;min-width:0}
+.scope-field legend{font-size:.87rem;font-weight:600;margin:0 0 8px}
+.scope-choices{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.scope-choice{display:flex;flex-direction:column;align-items:flex-start;gap:2px;min-height:64px;padding:10px 12px;background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:8px;text-align:left;font-weight:500}
+.scope-choice small{color:var(--muted);font-size:.75rem;font-weight:450;line-height:1.35;white-space:normal}
+.scope-choice:hover:not(:disabled){border-color:var(--accent);background:var(--surface-alt);filter:none}
+.scope-choice.is-selected{border-color:var(--accent);background:var(--tint);box-shadow:inset 0 0 0 1px var(--accent)}
+.scope-choice:disabled{opacity:.55;cursor:not-allowed}
+.scope-note{font-size:.8rem;margin:8px 0 0}
+@media(max-width:720px){.scope-choices{grid-template-columns:1fr 1fr}}
+.perm-empty{color:var(--muted);text-align:center}
+.perm-note{font-size:.78rem;margin:8px 0 0}
+.permission-option{display:flex;gap:8px;align-items:flex-start;padding:6px 8px;border:1px solid var(--line);border-radius:7px;background:var(--surface);cursor:pointer;line-height:1.25}
+.permission-option:hover{border-color:var(--accent)}
+.permission-option input{margin-top:3px;flex-shrink:0}
+.permission-option span{display:flex;flex-direction:column;gap:2px;min-width:0}
+.permission-option strong{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:.72rem;font-weight:600;overflow-wrap:anywhere}
+.permission-option small{font-size:.72rem;color:var(--muted)}
+.permission-sensitive{align-self:flex-start;font-style:normal;font-size:.62rem;text-transform:uppercase;letter-spacing:.04em;color:#b45309;background:#fef3c7;border-radius:999px;padding:1px 6px;margin-top:2px}
+.audit-detail{max-height:220px;overflow:auto;background:var(--surface-alt);border:1px solid var(--line);border-radius:6px;padding:8px;font-size:.72rem;white-space:pre-wrap;overflow-wrap:anywhere;margin:6px 0 0}
+.role-history table{margin-top:4px}
 
 
 

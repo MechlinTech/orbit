@@ -8,7 +8,7 @@ import { randomBytes, createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import zlib from 'node:zlib';
 import { id, now, audit, transaction } from '../db.js';
-import { HttpError, requirePermission as permit, inTeam, can, text as validateText, email as validateEmail, currencies } from '../policy.js';
+import { HttpError, requirePermission as permit, inTeam, text as validateText, email as validateEmail, currencies } from '../policy.js';
 import { SignatureStorageManager } from './storage.js';
 import { validateTypedSignature, validateSignatureImage, validateDrawnSignature } from './validator.js';
 import { generateOfferLetterPdf, stampSignedPdf } from './pdf.js';
@@ -236,7 +236,7 @@ export async function dispatchSignatureEmail(db, user, request, signer, options 
  * Resends an invitation email for a pending signature request.
  */
 export async function resendSignatureInvitation(db, user, requestId, signerId = null, options = {}) {
-  permit(user, 'recruit', 'admin');
+  permit(user, 'signatures.manage', 'signatures.request', 'recruit', 'admin');
   const request = db.prepare('SELECT * FROM signature_requests WHERE id = ?').get(requestId);
   if (!request) throw new HttpError(404, 'Signature request not found.');
 
@@ -251,14 +251,12 @@ export async function resendSignatureInvitation(db, user, requestId, signerId = 
   }
 
   // Scoping check
-  if (!can(user, 'admin')) {
-    if (request.requisition_id) {
-      const r = db.prepare('SELECT team FROM requisitions WHERE id = ?').get(request.requisition_id);
-      if (r) requireTeam(user, r.team);
-    } else if (request.candidate_id) {
-      const c = db.prepare('SELECT team FROM candidates WHERE id = ?').get(request.candidate_id);
-      if (c) requireTeam(user, c.team);
-    }
+  if (request.requisition_id) {
+    const r = db.prepare('SELECT team FROM requisitions WHERE id = ?').get(request.requisition_id);
+    if (r) requireTeam(user, r.team);
+  } else if (request.candidate_id) {
+    const c = db.prepare('SELECT team FROM candidates WHERE id = ?').get(request.candidate_id);
+    if (c) requireTeam(user, c.team);
   }
 
   const signers = db.prepare('SELECT * FROM signature_signers WHERE request_id = ?').all(requestId);
@@ -322,7 +320,7 @@ export async function createSignatureRequest(db, user, {
   templateVariables = {},
   customSections = null
 } = {}, options = {}) {
-  permit(user, 'recruit', 'admin');
+  permit(user, 'signatures.request', 'offers.create', 'recruit', 'admin');
 
   const safeTitle = validateText(title || 'Employment Offer Letter', 'Title', 200);
   const storage = options.storage || new SignatureStorageManager();
@@ -346,7 +344,7 @@ export async function createSignatureRequest(db, user, {
   if (candidateId) {
     candidate = db.prepare('SELECT * FROM candidates WHERE id = ?').get(candidateId);
     if (!candidate) throw new HttpError(404, 'Candidate not found.');
-    if (!can(user, 'admin')) requireTeam(user, candidate.team);
+    requireTeam(user, candidate.team);
   }
 
   if (!requisitionId && candidateId) {
@@ -357,7 +355,7 @@ export async function createSignatureRequest(db, user, {
   if (requisitionId) {
     req = db.prepare('SELECT * FROM requisitions WHERE id = ?').get(requisitionId);
     if (!req) throw new HttpError(404, 'Requisition not found.');
-    if (!can(user, 'admin')) requireTeam(user, req.team);
+    requireTeam(user, req.team);
   }
 
   const detectedSalaryCurrency = salary ? cleanCurrencyCode(salary, null) : null;
@@ -538,7 +536,7 @@ export function getSignatureRequest(db, user, requestId) {
   if (!req) throw new HttpError(404, 'Signature request not found.');
 
   // Scoping check
-  if (user && !can(user, 'admin')) {
+  if (user) {
     if (req.requisition_id) {
       const r = db.prepare('SELECT team FROM requisitions WHERE id = ?').get(req.requisition_id);
       if (r) requireTeam(user, r.team);
@@ -569,7 +567,7 @@ export function getSignatureRequest(db, user, requestId) {
  * Lists signature requests accessible to the user.
  */
 export function listSignatureRequests(db, user, { candidateId, applicationId, status } = {}) {
-  permit(user, 'recruit', 'review', 'admin');
+  permit(user, 'signatures.read', 'offers.read', 'recruit', 'review', 'admin');
 
   let sql = 'SELECT * FROM signature_requests WHERE 1=1';
   const params = [];
@@ -592,7 +590,6 @@ export function listSignatureRequests(db, user, { candidateId, applicationId, st
 
   // Filter by team
   const filtered = requests.filter(req => {
-    if (can(user, 'admin')) return true;
     if (req.requisition_id) {
       const r = db.prepare('SELECT team FROM requisitions WHERE id = ?').get(req.requisition_id);
       return !r || inTeam(user, r.team);
@@ -928,7 +925,7 @@ export function declineSignature(db, rawToken, { reason = '' } = {}) {
  * Cancels a signature request (by recruiter or admin).
  */
 export function cancelSignatureRequest(db, user, requestId, { reason = '' } = {}) {
-  permit(user, 'recruit', 'admin');
+  permit(user, 'signatures.manage', 'recruit', 'admin');
   const req = db.prepare('SELECT * FROM signature_requests WHERE id = ?').get(requestId);
   if (!req) throw new HttpError(404, 'Signature request not found.');
 
@@ -965,7 +962,7 @@ export function downloadSignatureDocument(db, userOrToken, requestId = '', versi
   }
   const req = db.prepare('SELECT * FROM signature_requests WHERE id = ?').get(reqId);
   if (!req) throw new HttpError(404, 'Signature request not found.');
-  if (typeof userOrToken === 'object' && userOrToken && !can(userOrToken, 'admin')) {
+  if (typeof userOrToken === 'object' && userOrToken) {
     if (req.requisition_id) {
       const r = db.prepare('SELECT team FROM requisitions WHERE id = ?').get(req.requisition_id);
       if (r) requireTeam(userOrToken, r.team);
@@ -996,7 +993,6 @@ export function downloadSignatureDocument(db, userOrToken, requestId = '', versi
 }
 
 function requireTeam(user, team) {
-  if (user.role === 'System Admin') return;
   if (!inTeam(user, team)) throw new HttpError(403, 'Team mismatch: access denied.');
 }
 

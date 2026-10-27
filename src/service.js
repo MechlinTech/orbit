@@ -1,7 +1,8 @@
 import { audit, id, now, transaction } from './db.js';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { HttpError, roles, teams, requirePermission as permit, requireTeam, inTeam, can, text, email, phone as validatePhone, currency as validateCurrency, list, validateSkills, integer, isAgencyRole } from './policy.js';
+import { HttpError, roles, teams, permissions as permissionCatalog, permissionDefinitions, permissionGroups, permissionIds, permissionById, requirePermission as permit, requireTeam, inTeam, can, text, email, phone as validatePhone, currency as validateCurrency, list, validateSkills, integer, isAgencyRole } from './policy.js';
+import { accessSummary, archiveRole, assignmentImpact, createRole, duplicateRole, hydrateUser, listRoles, permissionsForRole, resolveRoleForAssignment, roleView, updateRole } from './rbac.js';
 import { getAppearance, setAppearance } from './appearance.js';
 import { isDemoUser } from './demo.js';
 import { ResumeAdapter, CommunicationAdapter, CalendarAdapter, MatchingAdapter, FraudAdapter, HrmsAdapter } from './adapters.js';
@@ -212,15 +213,14 @@ function referralStatus(db, row) {
   return app ? app.stage : 'Submitted';
 }
 function referralAccess(user, row) {
-  if (['System Admin', 'TA Director'].includes(user.role)) return true;
-  if (['Recruiter', 'TA Manager', 'Hiring Manager'].includes(user.role)) {
-    return row.created_by === user.id || inTeam(user, referralTeam(row));
-  }
-  return row.created_by === user.id;
+  if (row.created_by === user.id) return true;
+  if (!can(user, 'referrals.read_all') && !can(user, 'referrals.process')) return false;
+  if (user._scope === 'organization') return true;
+  return inTeam(user, referralTeam(row));
 }
 function withdrawalCheck(db, row, user) {
   if (row.status === 'Withdrawn' || row.withdrawn_at) return { ok:false, status:409, message:'This referral has already been withdrawn.' };
-  if (row.created_by !== user.id && !can(user, 'admin')) return { ok:false, status:403, message:'Only the employee who made this referral can withdraw it.' };
+  if (row.created_by !== user.id && !can(user, 'system.override')) return { ok:false, status:403, message:'Only the employee who made this referral can withdraw it.' };
   const app = referralApplication(db, row);
   if (app && !['Applied', 'Screening'].includes(app.stage)) {
     return { ok:false, status:409, message:`This referral can no longer be withdrawn because the linked application has reached the ${app.stage} stage. Contact the recruiting team if the referral must be removed from consideration.` };
@@ -230,15 +230,15 @@ function withdrawalCheck(db, row, user) {
 function referralView(db, user, row) {
   const app = referralApplication(db, row), status = referralStatus(db, row), applicationStage = app?.stage || null;
   const isOwner = row.created_by === user.id, isWithdrawn = status === 'Withdrawn';
-  const employeeLike = ['Employee/Referral', 'Interviewer'].includes(user.role);
+  const employeeLike = !can(user, 'referrals.process') && !can(user, 'referrals.read_all');
   const teamAccess = inTeam(user, referralTeam(row));
   const canViewRequisition = Boolean(row.requisition_team && inTeam(user, row.requisition_team) && (!employeeLike || row.requisition_status === 'open'));
   const ownerEligible = isOwner && !isWithdrawn && (!applicationStage || ['Applied', 'Screening'].includes(applicationStage));
-  const recruiterEdit = can(user, 'recruit') && teamAccess && !isWithdrawn && !['Hired', 'Rejected'].includes(status);
-  const adminEdit = can(user, 'admin') && !isWithdrawn;
-  const managerEdit = user.role === 'Hiring Manager' && isOwner && teamAccess && !isWithdrawn && !['Hired', 'Rejected'].includes(status);
-  const canProcess = can(user, 'recruit') && teamAccess && row.requisition_status === 'open' && !isWithdrawn && !app;
-  const authorizedForDelete = can(user, 'admin') || (can(user, 'recruit') && teamAccess) || isOwner;
+  const recruiterEdit = can(user, 'referrals.process') && can(user, 'referrals.update') && teamAccess && !isWithdrawn && !['Hired', 'Rejected'].includes(status);
+  const adminEdit = can(user, 'system.override') && !isWithdrawn;
+  const managerEdit = can(user, 'referrals.read_all') && can(user, 'referrals.update') && isOwner && teamAccess && !isWithdrawn && !['Hired', 'Rejected'].includes(status);
+  const canProcess = can(user, 'referrals.process') && teamAccess && row.requisition_status === 'open' && !isWithdrawn && !app;
+  const authorizedForDelete = can(user, 'system.override') || (can(user, 'referrals.delete') && teamAccess) || isOwner;
   const hasDependency = Boolean(row.application_id || row.candidate_id || app);
   const denial = withdrawalCheck(db, row, user);
   return {
@@ -262,13 +262,113 @@ function referralView(db, user, row) {
 }
 function appContext(db, user, aid, interviewer = false) {
   const app = get(db, 'applications', aid), req = get(db, 'requisitions', app.requisition_id);
-  if (interviewer && user.role === 'Interviewer') {
+  if (interviewer && (user._scope === 'assigned' || user.role === 'Interviewer')) {
     if (!db.prepare('SELECT id FROM interviews WHERE application_id=? AND interviewer_id=?').get(aid,user.id)) throw new HttpError(403,'You are not assigned to this interview.');
   } else requireTeam(user, req.team);
   return { app, req };
 }
+/**
+ * Candidate information required to prepare for an assigned interview.
+ * Deliberately excludes resume text, resume files, salary, creator identity
+ * and applications the interviewer is not assigned to.
+ */
+function interviewerCandidateContext(db, user, candidateId) {
+  const interviews = db.prepare(`SELECT i.id, i.application_id, i.scheduled_at, i.status, i.title,
+      i.competencies, r.id requisition_id, r.title requisition_title, r.team requisition_team, a.stage
+    FROM interviews i JOIN applications a ON a.id=i.application_id JOIN requisitions r ON r.id=a.requisition_id
+    WHERE a.candidate_id=? AND i.interviewer_id=? ORDER BY i.scheduled_at ASC`).all(candidateId, user.id);
+  if (!interviews.length) throw new HttpError(403, 'You can only view candidates assigned to your interviews.');
+  const cand = get(db, 'candidates', candidateId);
+  if (cand.deleted_at) throw new HttpError(404, 'Candidate not found.');
+  const byApplication = new Map(interviews.map(i => [i.application_id, i]));
+  const applications = db.prepare(`SELECT a.id, a.candidate_id, a.requisition_id, a.stage, a.created_at, r.title, r.team
+    FROM applications a JOIN requisitions r ON r.id=a.requisition_id WHERE a.candidate_id=? ORDER BY a.created_at ASC`)
+    .all(candidateId).filter(a => byApplication.has(a.id))
+    .map(a => ({ id: a.id, requisition_id: a.requisition_id, title: a.title, stage: a.stage, team: a.team, created_at: a.created_at }));
+  const output = {
+    id: cand.id,
+    name: cand.name,
+    team: cand.team,
+    skills: JSON.parse(cand.skills || '[]'),
+    source: cand.source,
+    applications,
+    interviews: interviews.map(i => ({
+      id: i.id, application_id: i.application_id, scheduled_at: i.scheduled_at, status: i.status,
+      title: i.title, competencies: JSON.parse(i.competencies || '[]'),
+      requisition_id: i.requisition_id, requisition_title: i.requisition_title,
+      requisition_team: i.requisition_team, stage: i.stage
+    })),
+    access_scope: 'assigned_interviews',
+    can_delete: false
+  };
+  if (can(user, 'candidates.personal.read')) {
+    output.email = cand.email;
+    output.phone = cand.phone;
+  }
+  return output;
+}
+function candidateOutput(user, candidate, extra = {}) {
+  const out = { ...candidate, skills: JSON.parse(candidate.skills || '[]'), ...extra };
+  if (!can(user, 'candidates.resume.read')) {
+    delete out.resume_text;
+    delete out.experience;
+    delete out.resume;
+  }
+  if (!can(user, 'candidates.personal.read')) {
+    delete out.email;
+    delete out.phone;
+  }
+  if (!can(user, 'candidates.delete')) out.can_delete = false;
+  return out;
+}
+function redactMatchEvidence(user, result) {
+  if (!result || can(user, 'candidates.resume.read')) return result;
+  return {
+    ...result,
+    evidence: Array.isArray(result.evidence)
+      ? result.evidence.map(entry => {
+          if (!entry || typeof entry !== 'object') return entry;
+          const { snippet: _snippet, ...safe } = entry;
+          return safe;
+        })
+      : result.evidence
+  };
+}
+function redactOfferCompensation(user, row) {
+  if (!row || typeof row !== 'object') return row;
+  const output = { ...row };
+  if (!can(user, 'offers.compensation.read')) {
+    delete output.salary;
+    delete output.currency;
+    delete output.start_date;
+    delete output.startDate;
+    delete output.compensation;
+  }
+  return output;
+}
+function interviewContextView(db, interview, user) {
+  const row = db.prepare(`SELECT i.*,a.candidate_id,c.name,c.email,c.phone,c.skills,r.title,r.team,u.name interviewer
+    FROM interviews i JOIN applications a ON a.id=i.application_id JOIN candidates c ON c.id=a.candidate_id
+    JOIN requisitions r ON r.id=a.requisition_id JOIN users u ON u.id=i.interviewer_id WHERE i.id=?`).get(interview.id);
+  if (!row) return row;
+  const candidate = { id: row.candidate_id, name: row.name, skills: JSON.parse(row.skills || '[]') };
+  if (can(user, 'candidates.personal.read')) {
+    candidate.email = row.email;
+    candidate.phone = row.phone;
+  }
+  const { email: _candidateEmail, phone: _candidatePhone, ...safeRow } = row;
+  return {
+    ...safeRow,
+    candidate,
+    application: (() => {
+      const app = db.prepare('SELECT a.id,a.stage,a.requisition_id FROM applications a WHERE a.id=?').get(row.application_id);
+      return app ? { id: app.id, stage: app.stage, requisition_id: app.requisition_id, requisition_title: row.title, requisition_team: row.team } : null;
+    })()
+  };
+}
 export function service(db, user, method, path, body = {}, query = new URLSearchParams(), c = {}) {
   seedDefaultTemplatesIfEmpty(db);
+  hydrateUser(db, user);
   const parts = path.split('/').filter(Boolean), key = parts[1], action = parts[2];
   if (path === 'appearance' && method === 'GET') return getAppearance(db);
   if (path === 'admin/appearance' && method === 'PUT') return setAppearance(db,user,body);
@@ -294,79 +394,184 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
         status: agencyMember.agency_status
       } : null,
       csrf: user.csrf,
-      roles,
+      roles: listRoles(db).filter(role => !isAgencyRole(role.name)).map(role => role.name),
       teams,
+      permissionCatalog,
+      permissionRegistry: permissionDefinitions,
+      permissionGroups,
+      roleScope: user._scope,
+      roleDefinition: user._role ? roleView(db, user._role) : null,
       demoLogin: Boolean(c?.demoLogin),
       isDemoUser: isDemoUser(user),
-      permissions: ['admin','recruit','requisition','approve_manager','approve_finance','review','analytics','refer','jobs','interview'].filter(p => can(user,p))
+      // Legacy capability tokens are derived from persisted grants so removals
+      // from customized system roles are reflected immediately.
+      permissions: [...user._legacy],
+      grants: [...user._grants]
     };
   }
   if (parts[0] === 'admin') {
-    permit(user,'admin');
     if (key === 'integrations') {
-      if (!action && method === 'GET') {
-        return listIntegrationsForAdmin(db, user);
-      }
+      permit(user, 'integrations.read', 'integrations.configure', 'integrations.secrets.manage');
+      if (!action && method === 'GET') return listIntegrationsForAdmin(db, user);
       if (action && !parts[3]) {
         if (method === 'GET') return getIntegrationForAdmin(db, user, action);
-        if (method === 'PUT') return updateIntegrationForAdmin(db, user, action, body);
+        if (method === 'PUT') {
+          permit(user, 'integrations.configure');
+          const incomingSecrets = body?.secrets && typeof body.secrets === 'object' ? body.secrets : {};
+          const secretChanges = Object.entries(incomingSecrets).filter(([, value]) => value !== undefined && value !== null && String(value).trim() !== '').length
+            + (Array.isArray(body?.removeSecrets) ? body.removeSecrets.length : 0);
+          if (secretChanges) permit(user, 'integrations.secrets.manage');
+          return updateIntegrationForAdmin(db, user, action, body);
+        }
       }
       if (action && parts[3] === 'test' && method === 'POST') {
+        permit(user, 'integrations.configure');
         return testIntegrationForAdmin(db, user, action, body, c?.transport || fetch);
       }
       if (action && parts[3] === 'toggle' && method === 'POST') {
+        permit(user, 'integrations.configure');
         return toggleIntegrationForAdmin(db, user, action, body);
       }
       throw new HttpError(404, 'Unknown integrations admin endpoint.');
     }
-    if (method === 'GET' && key === 'users') return db.prepare('SELECT * FROM users ORDER BY created_at DESC').all().map(publicUser);
+
+    if (method === 'GET' && key === 'access') {
+      permit(user, 'roles.read', 'users.read');
+      return accessSummary(db);
+    }
+    if (method === 'GET' && key === 'permissions') {
+      permit(user, 'permissions.read', 'roles.read');
+      return { permissions: permissionDefinitions, groups: permissionGroups };
+    }
+    if (key === 'roles') {
+      if (method === 'GET' && !action) {
+        permit(user, 'roles.read');
+        return listRoles(db, { includeArchived: query.get('archived') === 'true' });
+      }
+      if (method === 'POST' && !action) {
+        permit(user, 'roles.create');
+        return createRole(db, user, body);
+      }
+      if (action) {
+        const role = db.prepare('SELECT * FROM rbac_roles WHERE id=?').get(action);
+        if (!role) throw new HttpError(404, 'Role not found.');
+        if (method === 'GET' && !parts[3]) {
+          permit(user, 'roles.read');
+          return { ...roleView(db, role), impact: assignmentImpact(db, role), users: db.prepare('SELECT id,name,email,team,status,last_login FROM users WHERE role_id=? OR (role_id IS NULL AND role=?) ORDER BY name').all(role.id, role.name) };
+        }
+        if ((method === 'PUT' || method === 'POST') && !parts[3]) {
+          permit(user, 'roles.update');
+          return updateRole(db, user, role.id, body);
+        }
+        if (method === 'POST' && parts[3] === 'duplicate') {
+          permit(user, 'roles.create');
+          return duplicateRole(db, user, role.id, body);
+        }
+        if ((method === 'DELETE' && !parts[3]) || (method === 'POST' && parts[3] === 'archive')) {
+          permit(user, 'roles.delete');
+          return archiveRole(db, user, role.id, body);
+        }
+      }
+      throw new HttpError(404, 'Unknown role administration endpoint.');
+    }
+
+    if (method === 'GET' && key === 'users') {
+      permit(user, 'users.read');
+      const roleMap = new Map(listRoles(db, { includeArchived: true }).map(role => [role.name, role]));
+      return db.prepare('SELECT * FROM users ORDER BY created_at DESC').all().map(row => {
+        const role = roleMap.get(row.role);
+        return {
+          ...publicUser(row),
+          role_id: row.role_id || role?.id || null,
+          role_scope: role?.scope || 'none',
+          effective_permissions: role?.permission_count || 0
+        };
+      });
+    }
     if (method === 'GET' && key === 'audit') {
+      permit(user, 'audit.read');
       const limit = Math.min(500, Math.max(1, Number(query.get('limit')) || 200));
-      return db.prepare('SELECT * FROM audit WHERE id < ? ORDER BY id DESC LIMIT ?').all(Number(query.get('before')) || Number.MAX_SAFE_INTEGER,limit);
+      const clauses = ['id < ?'], params = [Number(query.get('before')) || Number.MAX_SAFE_INTEGER];
+      const event = (query.get('event') || '').trim(), actor = (query.get('actor') || '').trim(), q = (query.get('q') || '').trim();
+      const from = (query.get('from') || '').trim(), to = (query.get('to') || '').trim();
+      if (event) { clauses.push('event LIKE ?'); params.push(`%${event}%`); }
+      if (actor) { clauses.push('actor = ?'); params.push(actor); }
+      if (q) { clauses.push('(event LIKE ? OR actor LIKE ? OR target LIKE ? OR detail LIKE ?)'); params.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`); }
+      if (from) { clauses.push('at >= ?'); params.push(/^\d{4}-\d{2}-\d{2}$/.test(from) ? `${from}T00:00:00.000Z` : from); }
+      if (to) { clauses.push('at <= ?'); params.push(/^\d{4}-\d{2}-\d{2}$/.test(to) ? `${to}T23:59:59.999Z` : to); }
+      params.push(limit);
+      return db.prepare(`SELECT * FROM audit WHERE ${clauses.join(' AND ')} ORDER BY id DESC LIMIT ?`).all(...params).map(row => {
+        let detail = {};
+        try { detail = JSON.parse(row.detail || '{}'); } catch {}
+        return { ...row, detail };
+      });
     }
     if (method === 'POST' && key === 'users' && !action) {
+      permit(user, 'users.create');
       const address = email(body.email), name = text(body.name,'Name',200), team = text(body.team ?? '','Team',100,true);
-      if (!roles.includes(body.role) || isAgencyRole(body.role)) throw new HttpError(400,'Select a supported role. Agency access is not enabled.');
+      const role = resolveRoleForAssignment(db, user, body.role);
+      if (role.scope !== 'organization' && role.scope !== 'none' && !team) throw new HttpError(400,'Team is required for this role.');
+      if (team && !inTeam(user, team)) throw new HttpError(403, 'You cannot assign users outside your team scope.');
+      if (roles.includes(role.name) && ['System Admin','TA Director'].includes(role.name) && !team) { /* organization roles may omit team */ }
       const oid = text(body.oid,'Entra object ID',36), tenant = text(body.tenant,'Entra tenant ID',36);
       if (!/^[a-f0-9-]{36}$/i.test(oid) || !/^[a-f0-9-]{36}$/i.test(tenant)) throw new HttpError(400,'Entra object and tenant IDs must be GUIDs.');
       const uid = id();
       return transaction(db, () => {
-        db.prepare('INSERT INTO users(id,email,name,oid,tenant,role,team,status,created_at) VALUES(?,?,?,?,?,?,?,?,?)').run(uid,address,name,oid,tenant,body.role,team,'active',now());
-        audit(db,user.id,'admin.user_added',uid,{role:body.role,team}); return publicUser(get(db,'users',uid));
+        db.prepare('INSERT INTO users(id,email,name,oid,tenant,role,role_id,team,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)').run(uid,address,name,oid,tenant,role.name,role.id,team,'active',now());
+        audit(db,user.id,'admin.user_added',uid,{role:role.name,role_id:role.id,team}); return publicUser(get(db,'users',uid));
       });
     }
     if (method === 'POST' && key === 'users' && action && parts[3]) {
       const target = get(db,'users',action), op = parts[3];
       if (!['approve','reject','disable','reactivate','force-logout','update'].includes(op)) throw new HttpError(404,'Unknown admin action.');
       if (target.id === user.id && op !== 'force-logout') throw new HttpError(409,'Use another administrator to modify your own access.');
-      let status = target.status, role = target.role, team = target.team;
+      if (op === 'force-logout') permit(user, 'users.deactivate');
+      else if (['disable','reject'].includes(op)) permit(user, 'users.deactivate');
+      else permit(user, 'users.update');
+      let status = target.status, role = target.role, roleId = target.role_id, team = target.team;
       if (op === 'approve' && target.status !== 'pending') throw new HttpError(409,'Only pending requests can be approved.');
       if (op === 'reject' && target.status !== 'pending') throw new HttpError(409,'Only pending requests can be rejected.');
       if (op === 'reactivate' && !['disabled','rejected'].includes(target.status)) throw new HttpError(409,'Only disabled or rejected users can be reactivated.');
       if (op === 'disable' && target.status !== 'active') throw new HttpError(409,'Only active users can be disabled.');
       if (['approve','update'].includes(op)) {
-        if (!roles.includes(body.role) || isAgencyRole(body.role)) throw new HttpError(400,'Select a supported role.');
-        role = body.role; team = text(body.team ?? '', 'Team',100,true);
+        const nextRole = resolveRoleForAssignment(db, user, body.role ?? target.role);
+        const roleChanged = nextRole.name !== target.role
+          || (target.role_id && nextRole.id !== target.role_id)
+          || (body.role !== undefined && body.role !== target.role);
+        if (roleChanged) permit(user, 'roles.assign');
+        role = nextRole.name; roleId = nextRole.id; team = text(body.team ?? '', 'Team',100,true);
+        if (nextRole.scope !== 'organization' && nextRole.scope !== 'none' && !team) throw new HttpError(400,'Team is required for this role.');
+        if (team && !inTeam(user, team)) throw new HttpError(403, 'You cannot assign users outside your team scope.');
       }
       if (['approve','reactivate'].includes(op)) status = 'active';
       if (op === 'reject') status = 'rejected';
       if (op === 'disable') status = 'disabled';
-      if (target.role === 'System Admin' && target.status === 'active' && (status !== 'active' || role !== 'System Admin') && db.prepare("SELECT count(*) n FROM users WHERE role='System Admin' AND status='active'").get().n <= 1) throw new HttpError(409,'Cannot remove the last administrator.');
+      const adminRole = db.prepare("SELECT id FROM rbac_roles WHERE name='System Admin'").get();
+      const wasAdmin = target.role === 'System Admin' || (adminRole && target.role_id === adminRole.id);
+      const remainsAdmin = role === 'System Admin' || (adminRole && roleId === adminRole.id);
+      if (wasAdmin && target.status === 'active' && (status !== 'active' || !remainsAdmin)) {
+        const activeAdmins = db.prepare("SELECT count(*) n FROM users WHERE status='active' AND (role='System Admin' OR role_id=?)").get(adminRole?.id || '').n;
+        if (activeAdmins <= 1) throw new HttpError(409,'Cannot remove the last administrator.');
+      }
       return transaction(db, () => {
-        db.prepare('UPDATE users SET status=?,role=?,team=?,version=version+1 WHERE id=?').run(status,role,team,target.id);
+        const guarded = op === 'approve' || op === 'reject';
+        const updated = guarded
+          ? db.prepare('UPDATE users SET status=?,role=?,role_id=?,team=?,version=version+1 WHERE id=? AND status=?').run(status,role,roleId,team,target.id,'pending')
+          : db.prepare('UPDATE users SET status=?,role=?,role_id=?,team=?,version=version+1 WHERE id=?').run(status,role,roleId,team,target.id);
+        if (guarded && updated.changes !== 1) throw new HttpError(409, 'This access request was already decided.');
         db.prepare('DELETE FROM sessions WHERE user_id=?').run(target.id);
-        audit(db,user.id,`admin.${op}`,target.id,{status,role,team}); return publicUser(get(db,'users',target.id));
+        audit(db,user.id,`admin.${op}`,target.id,{status,role,role_id:roleId,team}); return publicUser(get(db,'users',target.id));
       });
     }
   }
   if (path === 'pipeline/presets' && method === 'GET') {
-    permit(user, 'jobs');
+    permit(user, 'pipeline.read', 'jobs.read');
     return PIPELINE_PRESETS;
   }
   if (path === 'pipeline') {
-    if (method === 'GET') { permit(user,'jobs'); return pipeline(db); }
+    if (method === 'GET') { permit(user,'pipeline.read','jobs.read'); return pipeline(db); }
     if (method === 'PUT') {
-      permit(user,'admin');
+      permit(user,'pipeline.configure');
       let targetStages = body?.preset && PIPELINE_PRESETS[body.preset] ? PIPELINE_PRESETS[body.preset] : body?.stages;
       if (!targetStages && Array.isArray(body)) targetStages = body;
       const stages = list(targetStages, 'Stages', 30);
@@ -413,24 +618,29 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
   }
   if (parts[0] === 'requisitions') {
     if (method === 'GET') {
-      permit(user,'jobs');
+      permit(user,'jobs.read','requisitions.read');
+      const openOnly = !can(user, 'requisitions.read');
+      const redactCompensation = !can(user, 'requisitions.compensation.read');
       if (key) {
         const r = get(db, 'requisitions', key);
-        if (r.deleted_at || !inTeam(user, r.team) || (['Employee/Referral', 'Interviewer'].includes(user.role) && r.status !== 'open')) {
+        if (r.deleted_at || !inTeam(user, r.team) || (openOnly && r.status !== 'open')) {
           throw new HttpError(404, 'Requisition not found.');
         }
         const output = { ...r, skills: JSON.parse(r.skills) };
-        if (['Employee/Referral', 'Interviewer'].includes(user.role)) { delete output.salary_min; delete output.salary_max; }
+        if (redactCompensation) { delete output.salary_min; delete output.salary_max; delete output.currency; }
         return output;
       }
-      return db.prepare('SELECT * FROM requisitions WHERE deleted_at IS NULL ORDER BY created_at DESC').all().filter(r => inTeam(user,r.team) && (!['Employee/Referral','Interviewer'].includes(user.role) || r.status === 'open')).map(r => {
+      return db.prepare('SELECT * FROM requisitions WHERE deleted_at IS NULL ORDER BY created_at DESC').all().filter(r => inTeam(user,r.team) && (!openOnly || r.status === 'open')).map(r => {
         const output = {...r,skills:JSON.parse(r.skills)};
-        if (['Employee/Referral','Interviewer'].includes(user.role)) { delete output.salary_min; delete output.salary_max; }
+        if (redactCompensation) { delete output.salary_min; delete output.salary_max; delete output.currency; }
         return output;
       });
     }
     if (method === 'POST' && !key) {
-      permit(user,'recruit','requisition'); const team = text(body.team,'Team',100); requireTeam(user,team);
+      permit(user,'requisitions.create'); const team = text(body.team,'Team',100); requireTeam(user,team);
+      if (!can(user, 'requisitions.compensation.read') && ['salary_min','salary_max','currency'].some(field => body[field] !== undefined && body[field] !== null && body[field] !== '')) {
+        throw new HttpError(403, 'You do not have permission to set compensation fields.');
+      }
       const title = text(body.title,'Title',200), headcount = integer(body.headcount,'Headcount',1,1000), min = integer(body.salary_min,'Minimum salary'), max = integer(body.salary_max,'Maximum salary');
       if (min > max) throw new HttpError(400,'Minimum salary exceeds maximum.');
       const currency = validateCurrency(body.currency);
@@ -441,11 +651,15 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       });
     }
     if ((method === 'PUT' || (method === 'POST' && !action)) && key) {
-      permit(user,'recruit','requisition');
+      permit(user,'requisitions.update');
+      if (!can(user, 'requisitions.compensation.read') && ['salary_min','salary_max','currency'].some(field => body[field] !== undefined)) {
+        throw new HttpError(403, 'You do not have permission to change compensation fields.');
+      }
       const req = get(db,'requisitions',key);
       if (req.deleted_at) throw new HttpError(404, 'Requisition not found.');
       requireTeam(user,req.team);
-      const isAdmin = can(user, 'admin');
+      const isAdmin = can(user, 'requisitions.override') || can(user, 'system.override');
+      const canCrossTeam = can(user, 'system.override');
       if (!isAdmin && !['draft','open'].includes(req.status)) {
         if (['pending_manager','pending_finance'].includes(req.status)) {
           throw new HttpError(409,'Cannot edit requisition awaiting approval.');
@@ -456,7 +670,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       requireTeam(user,team);
       const hasApps = Boolean(db.prepare('SELECT id FROM applications WHERE requisition_id=?').get(key));
       if (team !== req.team && hasApps) {
-        if (!isAdmin || (!body.admin_override && !body.override)) {
+        if (!canCrossTeam || (!body.admin_override && !body.override)) {
           throw new HttpError(409,'Cannot change team of a requisition with existing applications.');
         }
       }
@@ -482,7 +696,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
           auditDetail.admin_pending_edit = true;
           auditDetail.previous_status = req.status;
         }
-        if (isAdmin && team !== req.team && hasApps) {
+        if (canCrossTeam && team !== req.team && hasApps) {
           auditDetail.admin_team_reassignment = true;
           auditDetail.previous_team = req.team;
         }
@@ -492,7 +706,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       });
     }
     if (method === 'DELETE' && key && !action) {
-      permit(user,'recruit','requisition');
+      permit(user,'requisitions.delete');
       const req = get(db,'requisitions',key);
       if (req.deleted_at) throw new HttpError(404, 'Requisition not found.');
       requireTeam(user,req.team);
@@ -520,11 +734,11 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       requireTeam(user,req.team);
       let status;
       if (action === 'submit') {
-        permit(user,'recruit','requisition'); if (req.status !== 'draft') throw new HttpError(409,'Only drafts can be submitted.'); status = 'pending_manager';
+        permit(user,'requisitions.submit'); if (req.status !== 'draft') throw new HttpError(409,'Only drafts can be submitted.'); status = 'pending_manager';
       } else if (action === 'approve' || action === 'reject') {
         const step = req.status === 'pending_manager' ? 'manager' : req.status === 'pending_finance' ? 'finance' : null;
         if (!step) throw new HttpError(409,'Requisition is not awaiting approval.');
-        permit(user,`approve_${step}`);
+        permit(user, step === 'manager' ? 'requisitions.approve_manager' : 'requisitions.approve_finance');
         const isCreator = req.created_by === user.id;
         const priorApproval = db.prepare('SELECT id FROM approvals WHERE requisition_id=? AND actor=?').get(key,user.id);
         const separationViolated = isCreator || Boolean(priorApproval);
@@ -537,8 +751,8 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
           if (!isEmergency) {
             throw new HttpError(403,'Requester and each approver must be different people.');
           }
-          if (!can(user, 'admin')) {
-            throw new HttpError(403,'Only a System Admin can perform an emergency approval override.');
+          if (!can(user, 'requisitions.override') && !can(user, 'system.override')) {
+            throw new HttpError(403,'The requisitions.override permission is required for an emergency approval override.');
           }
           if (body.override_reason !== undefined) {
             overrideReason = text(body.override_reason, 'Emergency override reason', 2000, false);
@@ -546,12 +760,12 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
               throw new HttpError(400, 'A meaningful reason is required for an emergency approval override.');
             }
           } else {
-            overrideReason = text(body.reason || body.note || 'System Admin direct approval override', 'Emergency override reason', 2000, true) || 'System Admin direct approval override';
+            overrideReason = text(body.reason || body.note || 'Authorized emergency approval override', 'Emergency override reason', 2000, true) || 'Authorized emergency approval override';
           }
           bypassedRule = isCreator && priorApproval ? 'requester_and_prior_approver' : isCreator ? 'requester_self_approval' : 'same_approver_both_steps';
         } else if (isEmergency) {
-          if (!can(user, 'admin')) {
-            throw new HttpError(403,'Only a System Admin can perform an emergency approval override.');
+          if (!can(user, 'requisitions.override') && !can(user, 'system.override')) {
+            throw new HttpError(403,'The requisitions.override permission is required for an emergency approval override.');
           }
           if (body.override_reason !== undefined) {
             overrideReason = text(body.override_reason, 'Emergency override reason', 2000, false);
@@ -559,7 +773,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
               throw new HttpError(400, 'A meaningful reason is required for an emergency approval override.');
             }
           } else {
-            overrideReason = text(body.reason || body.note || 'System Admin direct approval override', 'Emergency override reason', 2000, true) || 'System Admin direct approval override';
+            overrideReason = text(body.reason || body.note || 'Authorized emergency approval override', 'Emergency override reason', 2000, true) || 'Authorized emergency approval override';
           }
           bypassedRule = 'explicit_administrative_override';
         }
@@ -589,8 +803,16 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
     }
   }
   if (parts[0] === 'candidates') {
-    permit(user,'recruit','review');
+    const assignedCandidateRead = method === 'GET' && key && !action && !can(user, 'candidates.read') && can(user, 'candidates.assigned.read');
+    if (!assignedCandidateRead) {
+      if (method === 'POST' && !key) permit(user, 'candidates.create');
+      else if ((method === 'PUT' || method === 'POST') && key && !action) permit(user, 'candidates.update');
+      else if (method === 'DELETE') permit(user, 'candidates.delete');
+      else if (method === 'GET' && !action) permit(user, 'candidates.read');
+      // Action routes below perform their own field-specific permission check.
+    }
     if (key && action === 'resume' && method === 'GET') {
+      permit(user, 'candidates.resume.read');
       const cand = get(db, 'candidates', key);
       requireTeam(user, cand.team);
       const resRow = db.prepare('SELECT * FROM candidate_resumes WHERE candidate_id = ? ORDER BY created_at DESC LIMIT 1').get(key);
@@ -611,9 +833,11 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
     }
     if (key && action === 'communications') {
       if (method === 'GET') {
+        permit(user, 'candidates.communications.read');
         return listCandidateCommunications(db, user, key);
       }
       if (method === 'POST') {
+        permit(user, 'candidates.communications.send');
         return (async () => {
           const commAdapter = c?.communicationAdapter || new CommunicationAdapter({ db, fromEnv: true, transport: c?.transport });
           return await sendCandidateCommunication(db, user, { ...body, candidate_id: key }, commAdapter);
@@ -622,30 +846,31 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
     }
     if (key && action === 'consent') {
       if (method === 'GET') {
-        permit(user, 'recruit', 'review');
+        permit(user, 'candidates.consent.read');
         return getCandidateConsent(db, key);
       }
       if (method === 'POST' || method === 'PUT') {
+        permit(user, 'candidates.consent.update');
         return setCandidateConsent(db, user, key, body.opted_out, body.reason);
       }
     }
     if (key && action === 'signatures') {
       if (method === 'GET') {
-        permit(user, 'recruit', 'review', 'admin');
+        permit(user, 'signatures.read', 'offers.read');
         const cand = get(db, 'candidates', key);
         requireTeam(user, cand.team);
-        return listSignatureRequests(db, user, { candidateId: key });
+        return listSignatureRequests(db, user, { candidateId: key }).map(row => redactOfferCompensation(user, row));
       }
     }
     if (key && (action === 'fraud-review' || action === 'fraud')) {
       const cand = get(db, 'candidates', key);
       requireTeam(user, cand.team);
       if (method === 'GET') {
-        permit(user, 'recruit', 'review');
+        permit(user, 'candidates.fraud.read');
         return getOrRunFraudReview(db, cand.id, { refresh: query.get('refresh') === 'true' });
       }
       if (method === 'POST') {
-        permit(user, 'recruit', 'admin');
+        permit(user, 'candidates.fraud.manage');
         if (parts[3] === 'resolve' || body.action === 'resolve' || body.status) {
           return resolveFraudReview(db, user, cand.id, body);
         }
@@ -654,7 +879,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
     }
     if (key && action === 'templates') {
       if (method === 'GET') {
-        permit(user, 'recruit');
+        permit(user, 'candidates.read', 'candidates.update');
         const cand = get(db, 'candidates', key);
         requireTeam(user, cand.team);
         const apps = db.prepare('SELECT a.id, a.requisition_id, a.stage, r.title, r.team FROM applications a JOIN requisitions r ON r.id=a.requisition_id WHERE a.candidate_id=?').all(key);
@@ -664,8 +889,8 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
           candidate: {
             id: cand.id,
             name: cand.name,
-            email: cand.email,
-            team: cand.team
+            team: cand.team,
+            ...(can(user, 'candidates.personal.read') ? { email: cand.email } : {})
           },
           applications: apps,
           interviews
@@ -676,6 +901,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       if (key) {
         const c = get(db, 'candidates', key);
         if (c.deleted_at) throw new HttpError(404, 'Candidate not found.');
+        if (!can(user, 'candidates.read')) return interviewerCandidateContext(db, user, key);
         requireTeam(user, c.team);
         const apps = db.prepare('SELECT a.id, a.candidate_id, a.requisition_id, a.stage, a.created_at, r.title, r.team FROM applications a JOIN requisitions r ON r.id=a.requisition_id WHERE a.candidate_id=? ORDER BY a.created_at ASC').all(key).filter(a => inTeam(user, a.team)).map(a => ({
           id: a.id,
@@ -689,7 +915,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
         const totalApps = db.prepare('SELECT count(*) n FROM applications WHERE candidate_id=?').get(key).n;
         const totalInterviews = db.prepare('SELECT count(*) n FROM interviews i JOIN applications a ON a.id=i.application_id WHERE a.candidate_id=?').get(key).n;
         const canDelete = totalApps === 0 && totalInterviews === 0;
-        return { ...c, skills: JSON.parse(c.skills), experience: c.resume_text, applications: apps, resume: resumeMeta || null, can_delete: canDelete };
+        return candidateOutput(user, c, { experience: c.resume_text, applications: apps, resume: can(user, 'candidates.resume.read') ? (resumeMeta || null) : null, can_delete: canDelete });
       }
       const search = (query.get('q') || '').toLowerCase();
       const cands = db.prepare('SELECT * FROM candidates WHERE deleted_at IS NULL ORDER BY created_at DESC').all().filter(c => inTeam(user,c.team));
@@ -710,24 +936,24 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
           created_at: a.created_at
         });
       }
+      const canSearchResume = can(user, 'candidates.resume.read');
+      const canSearchContact = can(user, 'candidates.personal.read');
       return cands
         .filter(c => {
           const appText = (appsByCandidate.get(c.id) || []).map(a => `${a.title} ${a.stage}`).join(' ');
-          return `${c.name} ${c.email} ${c.skills} ${c.resume_text} ${appText}`.toLowerCase().includes(search);
+          return `${c.name} ${canSearchContact ? c.email : ''} ${c.skills} ${canSearchResume ? c.resume_text : ''} ${appText}`.toLowerCase().includes(search);
         })
         .map(c => {
           const cApps = appsByCandidate.get(c.id) || [];
-          return {
-            ...c,
-            skills: JSON.parse(c.skills),
+          return candidateOutput(user, c, {
             experience: c.resume_text,
             applications: cApps,
             can_delete: cApps.length === 0
-          };
+          });
         });
     }
     if (method === 'POST' && !key) {
-      permit(user,'recruit'); const team = text(body.team,'Team',100); requireTeam(user,team);
+      permit(user,'candidates.create'); const team = text(body.team,'Team',100); requireTeam(user,team);
       const address = email(body.email), name = text(body.name,'Name',200), phone = validatePhone(body.phone ?? '', true);
       const resumeVal = body.resume_text !== undefined ? body.resume_text : body.experience !== undefined ? body.experience : '';
       const resume = text(resumeVal, 'Resume text', 50000, true);
@@ -746,9 +972,10 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
         audit(db,user.id,'candidate.created',cid);
         let createdApps = [];
         if (body.requisition_id) {
+          permit(user, 'applications.create');
           const req = get(db, 'requisitions', body.requisition_id);
           requireTeam(user, req.team);
-          const isAdmin = can(user, 'admin');
+          const isAdmin = can(user, 'system.override');
           if (!isAdmin && team !== req.team) throw new HttpError(409, 'Candidate and requisition must belong to the same team.');
           if (req.status !== 'open') throw new HttpError(409, 'Requisition must be approved and open.');
           const aid = id();
@@ -765,11 +992,17 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
         }
         const created = get(db,'candidates',cid);
         const resumeMeta = db.prepare('SELECT id, filename, file_format, file_size, scan_status, extraction_status, created_at FROM candidate_resumes WHERE candidate_id=? ORDER BY created_at DESC LIMIT 1').get(cid);
-        return {...created,skills:JSON.parse(created.skills),experience:created.resume_text,applications:createdApps,resume:resumeMeta||null};
+        return candidateOutput(user, created, { experience: created.resume_text, applications: createdApps, resume: resumeMeta || null });
       });
     }
     if ((method === 'PUT' || method === 'POST') && key && !action) {
-      permit(user,'recruit');
+      permit(user,'candidates.update');
+      if (!can(user, 'candidates.resume.read') && (body.resume_text !== undefined || body.experience !== undefined || body.resume_id)) {
+        throw new HttpError(403, 'You do not have permission to change resume fields.');
+      }
+      if (!can(user, 'candidates.personal.read') && (body.email !== undefined || body.phone !== undefined)) {
+        throw new HttpError(403, 'You do not have permission to change candidate contact details.');
+      }
       const candidate = get(db,'candidates',key);
       if (candidate.deleted_at) throw new HttpError(404, 'Candidate not found.');
       requireTeam(user,candidate.team);
@@ -805,11 +1038,11 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
           created_at: a.created_at
         }));
         const resumeMeta = db.prepare('SELECT id, filename, file_format, file_size, scan_status, extraction_status, created_at FROM candidate_resumes WHERE candidate_id=? ORDER BY created_at DESC LIMIT 1').get(key);
-        return {...updated,skills:JSON.parse(updated.skills),experience:updated.resume_text,applications:apps,resume:resumeMeta||null};
+        return candidateOutput(user, updated, { experience: updated.resume_text, applications: apps, resume: can(user, 'candidates.resume.read') ? (resumeMeta || null) : null });
       });
     }
     if (method === 'DELETE' && key && !action) {
-      permit(user,'recruit');
+      permit(user,'candidates.delete');
       const candidate = get(db,'candidates',key);
       if (candidate.deleted_at) throw new HttpError(404, 'Candidate not found.');
       requireTeam(user,candidate.team);
@@ -828,7 +1061,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
     }
   }
   if (path === 'resume/upload' && method === 'POST') {
-    permit(user, 'recruit');
+    permit(user, 'candidates.resume.upload');
     if (!body.buffer || !Buffer.isBuffer(body.buffer)) {
       throw new HttpError(400, 'Uploaded file content is missing or invalid.');
     }
@@ -884,9 +1117,9 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
 
         return {
           resume_id: resumeId,
-          text: result.text,
-          email,
-          phone,
+          text: can(user, 'candidates.resume.read') ? result.text : '',
+          email: can(user, 'candidates.personal.read') ? email : '',
+          phone: can(user, 'candidates.personal.read') ? phone : '',
           name,
           skills,
           filename: result.filename,
@@ -906,7 +1139,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
     })();
   }
   if (path === 'resume/parse' && method === 'POST') {
-    permit(user,'recruit'); const resume = text(body.text,'Resume text',50000);
+    permit(user,'candidates.resume.upload'); const resume = text(body.text,'Resume text',50000);
     const details = extractResumeDetails(resume, getDbSkills(db));
     const hasContact = Boolean(details.email || details.phone);
     const hasAny = Boolean(hasContact || details.name || (details.skills && details.skills.length));
@@ -916,8 +1149,8 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
         ? 'Resume details extracted successfully.'
         : 'No email or phone number found in resume text.';
     return {
-      email: details.email,
-      phone: details.phone,
+      email: can(user, 'candidates.personal.read') ? details.email : '',
+      phone: can(user, 'candidates.personal.read') ? details.phone : '',
       name: details.name,
       skills: details.skills,
       message,
@@ -925,7 +1158,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
     };
   }
   if (path === 'jd/draft' && method === 'POST') {
-    permit(user,'recruit','requisition');
+    permit(user,'requisitions.create','requisitions.update');
     const title = text(body.title,'Title',200), skills = validateSkills(body.skills);
     if (!skills.length) throw new HttpError(400, 'Add at least one required skill before drafting a job description.');
     if (isAiMatchingConfigured(c) || body.provider) {
@@ -948,7 +1181,9 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
     };
   }
   if (parts[0] === 'applications') {
-    permit(user,'recruit','review');
+    if (method === 'GET' && !key) permit(user,'applications.read');
+    else if (method === 'POST' && !key) permit(user,'applications.create');
+    // Action routes below perform their own field-specific permission check.
     if (method === 'GET' && !key) {
       const apps = db.prepare(`SELECT a.*,c.name,c.email,c.skills,r.title,r.team FROM applications a JOIN candidates c ON c.id=a.candidate_id JOIN requisitions r ON r.id=a.requisition_id ORDER BY a.created_at DESC`).all().filter(a => inTeam(user,a.team));
       if (!apps.length) return [];
@@ -960,16 +1195,22 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
         }
         return apps.map(a => {
           const ev = evalMap.get(a.id);
-          return ev ? { ...a, training_evaluation: ev, training_rating: ev.rating, training_decision: ev.decision } : a;
+          const out = ev ? { ...a, training_evaluation: ev, training_rating: ev.rating, training_decision: ev.decision } : { ...a };
+          if (!can(user, 'candidates.personal.read')) delete out.email;
+          return out;
         });
       } catch {
-        return apps;
+        return apps.map(a => {
+          if (can(user, 'candidates.personal.read')) return a;
+          const { email: _email, ...safe } = a;
+          return safe;
+        });
       }
     }
     if (method === 'POST' && !key) {
-      permit(user,'recruit'); const candidate = get(db,'candidates',body.candidate_id), req = get(db,'requisitions',body.requisition_id);
+      const candidate = get(db,'candidates',body.candidate_id), req = get(db,'requisitions',body.requisition_id);
       requireTeam(user,candidate.team); requireTeam(user,req.team);
-      const isAdmin = can(user, 'admin');
+      const isAdmin = can(user, 'system.override');
       if (!isAdmin && candidate.team !== req.team) throw new HttpError(409,'Candidate and requisition must belong to the same team.');
       if (req.status !== 'open') throw new HttpError(409,'Requisition must be approved and open.');
       const aid = id();
@@ -986,6 +1227,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       });
     }
     if ((method === 'GET' || method === 'POST') && key && action === 'match') {
+      permit(user, method === 'POST' ? 'applications.match' : 'applications.read');
       const {app,req} = appContext(db,user,key);
       const cand = get(db,'candidates',app.candidate_id);
       if (isAiMatchingConfigured(c) || body.provider) {
@@ -999,7 +1241,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
             );
           } catch {}
           if (method === 'POST') audit(db, user.id, 'application.match_calculated', app.id, { score: res.score, method: res.method });
-          return res;
+          return redactMatchEvidence(user, res);
         })();
       }
       const res = evaluateCandidateMatch(cand, req);
@@ -1011,16 +1253,16 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
         );
       } catch {}
       if (method === 'POST') audit(db, user.id, 'application.match_calculated', app.id, { score: res.score, method: res.method });
-      return res;
+      return redactMatchEvidence(user, res);
     }
     if (key && (action === 'fraud-review' || action === 'fraud')) {
       const {app,req} = appContext(db,user,key);
       if (method === 'GET') {
-        permit(user, 'recruit', 'review');
+        permit(user, 'candidates.fraud.read');
         return getOrRunFraudReview(db, app.candidate_id, { application_id: app.id, refresh: query.get('refresh') === 'true' });
       }
       if (method === 'POST') {
-        permit(user, 'recruit', 'admin');
+        permit(user, 'candidates.fraud.manage');
         if (parts[3] === 'resolve' || body.action === 'resolve' || body.status) {
           return resolveFraudReview(db, user, app.candidate_id, body);
         }
@@ -1030,7 +1272,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
     if (key && (action === 'training-evaluation' || action === 'training')) {
       const { app, req } = appContext(db, user, key);
       if (method === 'GET') {
-        permit(user, 'recruit', 'review');
+        permit(user, 'applications.read');
         const evalRow = db.prepare(`
           SELECT te.*, u.name AS evaluator_name, u.email AS evaluator_email
           FROM training_evaluations te
@@ -1041,7 +1283,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
         return { evaluation: evalRow || null };
       }
       if (method === 'POST') {
-        permit(user, 'recruit', 'admin');
+        permit(user, 'applications.evaluate');
         const rating = integer(body.rating, 'Rating', 1, 5);
         const practicalScore = body.practical_score !== undefined && body.practical_score !== '' && body.practical_score !== null
           ? Number(body.practical_score)
@@ -1108,7 +1350,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       }
     }
     if (key && (action === 'hrms-handoff' || action === 'handoff') && method === 'POST') {
-      permit(user, 'recruit', 'admin');
+      permit(user, 'applications.hrms_handoff');
       const { app, req } = appContext(db, user, key);
       const hrmsEffective = getEffectiveIntegrationConfig(db, 'hrms');
       if (!hrmsEffective.enabled || !hrmsEffective.isConfigured) {
@@ -1184,7 +1426,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       })();
     }
     if (method === 'POST' && action === 'stage') {
-      permit(user,'recruit'); const {app,req} = appContext(db,user,key), stages = pipeline(db);
+      permit(user,'applications.update'); const {app,req} = appContext(db,user,key), stages = pipeline(db);
       if (!stages.includes(body.stage)) throw new HttpError(400,'Unknown pipeline stage.');
       if (body.stage === 'Hired') {
         const sigCheck = verifyApplicationOfferSignature(db, key, app.candidate_id, req.id);
@@ -1192,7 +1434,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
           throw new HttpError(409, sigCheck.reason);
         }
       }
-      const isAdmin = can(user, 'admin');
+      const isAdmin = can(user, 'applications.override') || can(user, 'system.override');
       const isTerminal = ['Hired','Rejected','Revoked'].includes(app.stage);
       const isSequential = isAllowedStageProgression(app.stage, body.stage, stages);
       const hiredCount = db.prepare("SELECT count(*) n FROM applications WHERE requisition_id=? AND stage='Hired'").get(req.id).n;
@@ -1371,22 +1613,21 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
     }
   }
   if (parts[0] === 'interviews') {
-    permit(user,'recruit','review','interview');
+    permit(user,'interviews.read','interviews.schedule','interviews.update','interviews.cancel','interviews.evaluate','interviews.proxy_evaluate','interviews.feedback.read');
     if (method === 'GET' && key === 'calendar-status') {
       const calEffective = getEffectiveIntegrationConfig(db, 'microsoft_calendar');
       const configured = Boolean((calEffective.enabled && calEffective.isConfigured) || isCalendarConfigured(c, db) || c?.calendarAdapter);
       return { configured, status: configured ? 'active' : 'not_configured' };
     }
-    if (method === 'GET' && !key) return db.prepare(`SELECT i.*,c.name,r.title,r.team,u.name interviewer FROM interviews i
-      JOIN applications a ON a.id=i.application_id JOIN candidates c ON c.id=a.candidate_id JOIN requisitions r ON r.id=a.requisition_id JOIN users u ON u.id=i.interviewer_id`).all().filter(i => user.role === 'Interviewer' ? i.interviewer_id === user.id : inTeam(user,i.team));
+    if (method === 'GET' && !key) return db.prepare(`SELECT i.*,a.candidate_id,c.name,r.title,r.team,u.name interviewer FROM interviews i
+      JOIN applications a ON a.id=i.application_id JOIN candidates c ON c.id=a.candidate_id JOIN requisitions r ON r.id=a.requisition_id JOIN users u ON u.id=i.interviewer_id`).all().filter(i => (user._scope === 'assigned' || user.role === 'Interviewer') ? i.interviewer_id === user.id : inTeam(user,i.team));
     if (method === 'GET' && key && !action) {
       const interview = get(db, 'interviews', key);
       appContext(db, user, interview.application_id, true);
-      return db.prepare(`SELECT i.*,c.name,r.title,r.team,u.name interviewer FROM interviews i
-        JOIN applications a ON a.id=i.application_id JOIN candidates c ON c.id=a.candidate_id JOIN requisitions r ON r.id=a.requisition_id JOIN users u ON u.id=i.interviewer_id WHERE i.id=?`).get(key);
+      return interviewContextView(db, interview, user);
     }
     if (method === 'POST' && !key) {
-      permit(user,'recruit'); const {app,req} = appContext(db,user,body.application_id), interviewer = get(db,'users',body.interviewer_id);
+      permit(user,'interviews.schedule'); const {app,req} = appContext(db,user,body.application_id), interviewer = get(db,'users',body.interviewer_id);
       if (['Hired','Rejected'].includes(app.stage)) throw new HttpError(409,'Cannot interview a closed application.');
       if (interviewer.status !== 'active' || !['Interviewer','Hiring Manager','Recruiter','TA Manager','TA Director','System Admin'].includes(interviewer.role) || !inTeam(interviewer,req.team)) throw new HttpError(400,'Choose an active interviewer who can access this team.');
       const scheduled = new Date(body.scheduled_at); if (!Number.isFinite(scheduled.getTime()) || scheduled.getTime() < Date.now()) throw new HttpError(400,'Enter a future interview date.');
@@ -1394,7 +1635,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       const duration = body.duration_minutes !== undefined ? integer(body.duration_minutes, 'Duration', 15, 480) : 45;
       const timezone = body.timezone ? text(body.timezone, 'Timezone', 100, false) : 'Asia/Kolkata';
       const interviewType = body.interview_type === 'in_person' ? 'in_person' : 'virtual';
-      const location = body.location !== undefined ? text(body.location, 'Location', 500, false) : (interviewType === 'in_person' ? 'Mechlin Technologies Office' : '');
+      const location = body.location !== undefined ? (text(body.location, 'Location', 500, true) || (interviewType === 'in_person' ? 'Mechlin Technologies Office' : '')) : (interviewType === 'in_person' ? 'Mechlin Technologies Office' : '');
       const notes = body.notes ? text(body.notes, 'Notes', 5000, false) : '';
       const customMeetingUrl = interviewType === 'in_person' ? null : (body.meeting_url ? text(body.meeting_url, 'Meeting URL', 1000, false) : null);
       const cand = get(db, 'candidates', app.candidate_id);
@@ -1454,7 +1695,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
     if (method === 'PUT' && key && !action) {
       const interview = get(db, 'interviews', key);
       const {app, req} = appContext(db, user, interview.application_id, true);
-      if (!can(user, 'recruit') && !can(user, 'admin') && interview.interviewer_id !== user.id) {
+      if (!can(user, 'interviews.update') && interview.interviewer_id !== user.id) {
         throw new HttpError(403, 'Your role cannot perform this action.');
       }
       if (interview.status === 'completed') {
@@ -1469,7 +1710,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       let interviewerId = interview.interviewer_id;
       let assignedInterviewer = get(db, 'users', interview.interviewer_id);
       if (body.interviewer_id && body.interviewer_id !== interview.interviewer_id) {
-        permit(user, 'recruit', 'admin');
+        permit(user, 'interviews.update');
         const interviewer = get(db, 'users', body.interviewer_id);
         if (interviewer.status !== 'active' || !['Interviewer','Hiring Manager','Recruiter','TA Manager','TA Director','System Admin'].includes(interviewer.role) || !inTeam(interviewer, req.team)) {
           throw new HttpError(400, 'Choose an active interviewer who can access this team.');
@@ -1483,7 +1724,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       }
       let competencies = JSON.parse(interview.competencies);
       if (body.competencies !== undefined) {
-        if (!can(user, 'recruit') && !can(user, 'admin') && interview.interviewer_id !== user.id) {
+        if (!can(user, 'interviews.update') && !can(user, 'recruit') && !can(user, 'admin') && interview.interviewer_id !== user.id) {
           throw new HttpError(403, 'Your role cannot perform this action.');
         }
         competencies = list(body.competencies, 'Competencies', 25);
@@ -1495,7 +1736,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       const title = body.title !== undefined ? text(body.title, 'Title', 200, false) : (interview.title || '');
       const cand = get(db, 'candidates', app.candidate_id);
       const interviewType = body.interview_type !== undefined ? (body.interview_type === 'in_person' ? 'in_person' : 'virtual') : (interview.interview_type || 'virtual');
-      const location = body.location !== undefined ? text(body.location, 'Location', 500, false) : (interview.location || (interviewType === 'in_person' ? 'Mechlin Technologies Office' : ''));
+      const location = body.location !== undefined ? (text(body.location, 'Location', 500, true) || (interviewType === 'in_person' ? 'Mechlin Technologies Office' : '')) : (interview.location || (interviewType === 'in_person' ? 'Mechlin Technologies Office' : ''));
       const customMeetingUrl = interviewType === 'in_person' ? null : (body.meeting_url !== undefined ? (body.meeting_url ? text(body.meeting_url, 'Meeting URL', 1000, false) : null) : interview.meeting_url);
 
       transaction(db, () => {
@@ -1550,7 +1791,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
     if (key && action === 'cancel' && method === 'POST') {
       const interview = get(db, 'interviews', key);
       const {app, req} = appContext(db, user, interview.application_id, true);
-      if (!can(user, 'recruit') && !can(user, 'admin') && interview.interviewer_id !== user.id) {
+      if (!can(user, 'interviews.cancel') && interview.interviewer_id !== user.id) {
         throw new HttpError(403, 'Your role cannot perform this action.');
       }
       if (interview.status === 'completed') {
@@ -1601,7 +1842,8 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
     if (key && action === 'scorecards') {
       const interview = get(db,'interviews',key); appContext(db,user,interview.application_id,true);
       if (method === 'POST') {
-        const isAdmin = can(user, 'admin');
+        permit(user, 'interviews.evaluate', 'interviews.proxy_evaluate');
+        const isAdmin = can(user, 'interviews.proxy_evaluate');
         const isAssigned = interview.interviewer_id === user.id;
         if (!isAssigned && !isAdmin) {
           throw new HttpError(403,'Only the assigned interviewer can submit this scorecard.');
@@ -1660,7 +1902,8 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
         });
       }
       if (method === 'GET') {
-        const isAdmin = can(user, 'admin');
+        permit(user, 'interviews.feedback.read', 'interviews.evaluate');
+        const isAdmin = can(user, 'interviews.feedback.read');
         // Non-admin assigned reviewers remain blinded until all their feedback for this application is submitted.
         const assigned = db.prepare('SELECT i.id,s.id submitted FROM interviews i LEFT JOIN scorecards s ON s.interview_id=i.id WHERE i.application_id=? AND i.interviewer_id=?').all(interview.application_id,user.id);
         const blinded = !isAdmin && assigned.some(i => !i.submitted);
@@ -1675,10 +1918,10 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
     }
   }
   if (path === 'interviewers' && method === 'GET') {
-    permit(user,'recruit','admin'); return db.prepare("SELECT * FROM users WHERE status='active'").all().filter(u => inTeam(user,u.team) && ['Interviewer','Hiring Manager','Recruiter','TA Manager','TA Director','System Admin'].includes(u.role)).map(u=>({id:u.id,name:u.name,team:u.team}));
+    permit(user,'interviews.schedule','interviews.read'); return db.prepare("SELECT * FROM users WHERE status='active'").all().filter(u => inTeam(user,u.team) && ['Interviewer','Hiring Manager','Recruiter','TA Manager','TA Director','System Admin'].includes(u.role)).map(u=>({id:u.id,name:u.name,team:u.team}));
   }
   if (parts[0] === 'referrals') {
-    permit(user,'refer');
+    if (method === 'GET') permit(user,'referrals.read');
     if (method === 'GET' && !key) {
       return db.prepare(`${referralQuery} ORDER BY r.at DESC`).all()
         .filter(row => !row.deleted_at && referralAccess(user, row))
@@ -1699,10 +1942,11 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       const req = get(db, 'requisitions', row.requisition_id);
       if (req.deleted_at) throw new HttpError(404, 'Requisition not found.');
       const output = { ...req, skills: JSON.parse(req.skills), read_only: true };
-      if (['Employee/Referral', 'Interviewer'].includes(user.role)) { delete output.salary_min; delete output.salary_max; }
+      if (!can(user, 'requisitions.compensation.read')) { delete output.salary_min; delete output.salary_max; delete output.currency; }
       return output;
     }
     if (method === 'POST' && !key) {
+      permit(user, 'referrals.create');
       if (!body.requisition_id) throw new HttpError(400, 'Select a job position for this referral.');
       const req = get(db,'requisitions',body.requisition_id);
       if (req.deleted_at) throw new HttpError(404, 'Requisition not found.');
@@ -1716,6 +1960,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       });
     }
     if ((method === 'PUT' || (method === 'POST' && !action)) && key) {
+      permit(user, 'referrals.update');
       const row = referralRow(db, key);
       if (!referralAccess(user, row)) throw new HttpError(404, 'Referral not found.');
       const view = referralView(db,user,row);
@@ -1740,6 +1985,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       });
     }
     if (method === 'POST' && key && action === 'withdraw') {
+      permit(user, 'referrals.withdraw');
       const row = referralRow(db, key);
       if (!referralAccess(user, row)) throw new HttpError(404, 'Referral not found.');
       const check = withdrawalCheck(db, row, user);
@@ -1752,7 +1998,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       });
     }
     if (method === 'POST' && key && action === 'process') {
-      permit(user,'recruit');
+      permit(user,'referrals.process');
       const row = referralRow(db, key);
       if (!referralAccess(user, row)) throw new HttpError(404, 'Referral not found.');
       const view = referralView(db,user,row);
@@ -1763,7 +2009,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
         const referral = referralRow(db,key);
         let candidate = db.prepare('SELECT * FROM candidates WHERE email=?').get(referral.email);
         if (candidate?.deleted_at) throw new HttpError(409,'A deleted candidate already uses this email. Ask TA operations to restore or resolve the record.');
-        if (candidate && !can(user,'admin') && candidate.team !== req.team) throw new HttpError(409,'The matching candidate belongs to another team. Ask a System Admin to process this cross-team referral.');
+        if (candidate && !can(user,'system.override') && candidate.team !== req.team) throw new HttpError(409,'The matching candidate belongs to another team. Ask a System Admin to process this cross-team referral.');
         let candidateCreated = false;
         if (!candidate) {
           const cid = id();
@@ -1788,6 +2034,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       });
     }
     if (method === 'DELETE' && key && !action) {
+      permit(user, 'referrals.delete');
       const row = referralRow(db, key);
       if (!referralAccess(user, row)) throw new HttpError(404, 'Referral not found.');
       const view = referralView(db,user,row);
@@ -1802,7 +2049,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
     throw new HttpError(404,'Unknown referral action.');
   }
   if (parts[0] === 'fraud-reviews') {
-    permit(user, 'recruit', 'admin');
+    permit(user, 'candidates.fraud.manage');
     if (key && (action === 'resolve' || !action) && method === 'POST') {
       const review = get(db, 'fraud_reviews', key);
       const cand = get(db, 'candidates', review.candidate_id);
@@ -1812,14 +2059,17 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
   }
   if (parts[0] === 'signatures') {
     if (method === 'GET' && !key) {
-      permit(user, 'recruit', 'review', 'admin');
+      permit(user, 'signatures.read', 'offers.read');
       const candidateId = query.get('candidate_id') || query.get('candidateId');
       const applicationId = query.get('application_id') || query.get('applicationId');
       const status = query.get('status');
-      return listSignatureRequests(db, user, { candidateId, applicationId, status });
+      return listSignatureRequests(db, user, { candidateId, applicationId, status }).map(row => redactOfferCompensation(user, row));
     }
     if (method === 'POST' && !key) {
-      permit(user, 'recruit', 'admin');
+      permit(user, 'signatures.request', 'offers.create');
+      if (!can(user, 'offers.compensation.read') && [body.salary, body.currency, body.start_date, body.startDate].some(value => value !== undefined && value !== null && value !== '')) {
+        throw new HttpError(403, 'You do not have permission to set offer compensation.');
+      }
       let docBuffer = null;
       if (body.document_buffer) {
         docBuffer = Buffer.isBuffer(body.document_buffer) ? body.document_buffer : Buffer.from(body.document_buffer, 'base64');
@@ -1845,36 +2095,36 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       }, {
         origin: c?.origin,
         communicationAdapter: c?.communicationAdapter
-      });
+      }).then(result => redactOfferCompensation(user, result));
     }
     if (key && !action && method === 'GET') {
-      permit(user, 'recruit', 'review', 'admin');
-      return getSignatureRequest(db, user, key);
+      permit(user, 'signatures.read', 'offers.read');
+      return redactOfferCompensation(user, getSignatureRequest(db, user, key));
     }
     if (key && action === 'document' && method === 'GET') {
-      permit(user, 'recruit', 'review', 'admin');
+      permit(user, 'signatures.download');
       const version = query.get('version') || 'signed';
       return downloadSignatureDocument(db, user, key, version);
     }
     if (key && (action === 'send-email' || action === 'resend') && method === 'POST') {
-      permit(user, 'recruit', 'admin');
+      permit(user, 'signatures.manage', 'signatures.request');
       return resendSignatureInvitation(db, user, key, body?.signer_id, {
         origin: c?.origin,
         communicationAdapter: c?.communicationAdapter
       });
     }
     if (key && action === 'cancel' && method === 'POST') {
-      permit(user, 'recruit', 'admin');
+      permit(user, 'signatures.manage');
       return cancelSignatureRequest(db, user, key, { reason: body.reason });
     }
   }
   if (parts[0] === 'offer-variables' && method === 'GET') {
-    permit(user, 'recruit', 'review', 'admin');
+    permit(user, 'offers.templates.read', 'offers.read');
     return { variables: VARIABLE_REGISTRY };
   }
   if (parts[0] === 'offer-letter-assets') {
     if (method === 'POST' && !key) {
-      permit(user, 'recruit', 'admin');
+      permit(user, 'offers.assets.manage');
       let assetBuffer = body.buffer;
       if (!assetBuffer && (body.fileBase64 || body.file_base64)) {
         assetBuffer = Buffer.from(body.fileBase64 || body.file_base64, 'base64');
@@ -1893,7 +2143,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       });
     }
     if (key && method === 'GET') {
-      permit(user, 'recruit', 'review', 'admin');
+      permit(user, 'offers.templates.read', 'offers.read');
       const asset = getLetterheadAssetBuffer(db, user, key);
       return {
         isRaw: true,
@@ -1905,31 +2155,39 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
   }
   if (parts[0] === 'offer-templates') {
     if (method === 'GET' && !key) {
-      permit(user, 'recruit', 'review', 'admin');
+      permit(user, 'offers.templates.read', 'offers.read');
       return listOfferTemplates(db, user, { status: query.get('status') });
     }
     if (method === 'POST' && !key) {
-      permit(user, 'recruit', 'admin');
+      permit(user, 'offers.templates.manage');
       return createOfferTemplate(db, user, body);
     }
     if (key && !action && method === 'GET') {
-      permit(user, 'recruit', 'review', 'admin');
+      permit(user, 'offers.templates.read', 'offers.read');
       return getOfferTemplate(db, user, key);
     }
     if (key && !action && method === 'PUT') {
-      permit(user, 'recruit', 'admin');
+      permit(user, 'offers.templates.manage');
       return updateOfferTemplate(db, user, key, body);
     }
     if (key && action === 'duplicate' && method === 'POST') {
-      permit(user, 'recruit', 'admin');
+      permit(user, 'offers.templates.manage');
       return duplicateOfferTemplate(db, user, key, body);
     }
     if (key && action === 'status' && method === 'POST') {
-      permit(user, 'recruit', 'admin');
+      permit(user, 'offers.templates.manage');
       return setOfferTemplateStatus(db, user, key, body.status, body.is_default);
     }
     if (((key && action === 'preview') || key === 'preview') && method === 'POST') {
-      permit(user, 'recruit', 'review', 'admin');
+      permit(user, 'offers.templates.read', 'offers.read');
+      const candidateId = body.candidate_id || body.candidateId || body.application_id || body.applicationId;
+      const requisitionId = body.requisition_id || body.requisitionId;
+      if (candidateId && !can(user, 'candidates.personal.read')) {
+        throw new HttpError(403, 'Candidate contact permission is required to preview a candidate offer.');
+      }
+      if ((requisitionId || body.salary || body.currency || body.start_date || body.startDate) && !can(user, 'offers.compensation.read')) {
+        throw new HttpError(403, 'Offer compensation permission is required to preview real offer terms.');
+      }
       return previewOfferTemplate(db, user, key === 'preview' ? 'preview' : key, {
         ...body,
         customSections: body.custom_sections || body.customSections || body.sections || null,
@@ -1940,13 +2198,19 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       });
     }
     if (key && action === 'preview.pdf' && method === 'GET') {
-      permit(user, 'recruit', 'review', 'admin');
+      permit(user, 'offers.templates.read', 'offers.read');
       const tpl = getOfferTemplate(db, user, key);
       const candId = query.get('candidate_id') || query.get('candidateId');
       const appId = query.get('application_id') || query.get('applicationId');
       const reqId = query.get('requisition_id') || query.get('requisitionId');
       const salary = query.get('salary');
       const currency = query.get('currency');
+      if ((candId || appId) && !can(user, 'candidates.personal.read')) {
+        throw new HttpError(403, 'Candidate contact permission is required to preview a candidate offer.');
+      }
+      if ((reqId || salary || currency) && !can(user, 'offers.compensation.read')) {
+        throw new HttpError(403, 'Offer compensation permission is required to preview real offer terms.');
+      }
       const compiled = compileTemplateToPdf(db, tpl, {
         candidateId: candId,
         applicationId: appId,
@@ -1963,32 +2227,35 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
     }
   }
   if (parts[0] === 'agencies') {
-    permit(user, 'admin', 'recruit');
     if (method === 'GET' && !key) {
+      permit(user, 'agencies.read');
       return listAgencies(db, user, query);
     }
     if (method === 'POST' && !key) {
-      permit(user, 'admin');
+      permit(user, 'agencies.create');
       return createAgency(db, user, body);
     }
     if (key && !action) {
-      if (method === 'GET') return getAgency(db, user, key);
+      if (method === 'GET') {
+        permit(user, 'agencies.read');
+        return getAgency(db, user, key);
+      }
       if (method === 'PUT') {
-        permit(user, 'admin');
+        permit(user, 'agencies.update');
         return updateAgency(db, user, key, body);
       }
     }
     if (key && action === 'status' && method === 'POST') {
-      permit(user, 'admin');
+      permit(user, 'agencies.delete');
       return setAgencyStatus(db, user, key, body.status, body.reason);
     }
     if (key && action === 'members' && method === 'POST') {
-      permit(user, 'admin');
+      permit(user, 'agencies.update');
       return addAgencyMember(db, user, key, body);
     }
     if (key && (action === 'requisitions' || action === 'assignments')) {
       if (method === 'POST' && (!parts[3] || parts[4] !== 'revoke')) {
-        permit(user, 'recruit', 'admin');
+        permit(user, 'agencies.assign');
         return assignRequisitionToAgency(db, user, key, {
           requisitionId: body.requisition_id || body.requisitionId,
           instructions: body.instructions ?? body.sourcing_instructions ?? '',
@@ -1996,7 +2263,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
         });
       }
       if (method === 'DELETE' || (method === 'POST' && parts[3] && parts[4] === 'revoke')) {
-        permit(user, 'recruit', 'admin');
+        permit(user, 'agencies.assign');
         const reqId = parts[3];
         return revokeRequisitionFromAgency(db, user, key, reqId);
       }
@@ -2004,7 +2271,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
   }
   if (parts[0] === 'agency') {
     if (parts[1] === 'submissions' && parts[2] && parts[3] === 'feedback' && method === 'POST') {
-      permit(user, 'recruit', 'admin');
+      permit(user, 'agencies.feedback');
       return publishAgencyFeedback(db, user, parts[2], body.feedback);
     }
     if (key === 'me' && method === 'GET') {
@@ -2080,7 +2347,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
     }
   }
   if (path === 'analytics' && method === 'GET') {
-    permit(user,'analytics');
+    permit(user,'analytics.read');
     const reqs = db.prepare('SELECT * FROM requisitions WHERE deleted_at IS NULL').all().filter(r=>inTeam(user,r.team)), ids = new Set(reqs.map(r=>r.id));
     const apps = db.prepare('SELECT * FROM applications').all().filter(a=>ids.has(a.requisition_id));
     return {openRequisitions:reqs.filter(r=>r.status==='open').length, pendingApprovals:reqs.filter(r=>r.status.startsWith('pending')).length,
@@ -2089,7 +2356,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       averageApplicationAgeDays:apps.length ? Math.round(apps.reduce((n,a)=>n+(Date.now()-Date.parse(a.created_at))/86400000,0)/apps.length) : 0};
   }
   if (path === 'integrations' && method === 'GET') {
-    permit(user,'admin','recruit');
+    permit(user,'applications.read','integrations.read');
     const calEffective = getEffectiveIntegrationConfig(db, 'microsoft_calendar');
     const emailEffective = getEffectiveIntegrationConfig(db, 'email_communication');
     const hrmsEffective = getEffectiveIntegrationConfig(db, 'hrms');
