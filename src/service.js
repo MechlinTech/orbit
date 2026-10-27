@@ -1390,7 +1390,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       if (['Hired','Rejected'].includes(app.stage)) throw new HttpError(409,'Cannot interview a closed application.');
       if (interviewer.status !== 'active' || !['Interviewer','Hiring Manager','Recruiter','TA Manager','TA Director','System Admin'].includes(interviewer.role) || !inTeam(interviewer,req.team)) throw new HttpError(400,'Choose an active interviewer who can access this team.');
       const scheduled = new Date(body.scheduled_at); if (!Number.isFinite(scheduled.getTime()) || scheduled.getTime() < Date.now()) throw new HttpError(400,'Enter a future interview date.');
-      const competencies = list(body.competencies,'Competencies',10); if (!competencies.length) throw new HttpError(400,'At least one competency is required.');
+      const competencies = list(body.competencies,'Competencies',25); if (!competencies.length) throw new HttpError(400,'At least one competency is required.');
       const duration = body.duration_minutes !== undefined ? integer(body.duration_minutes, 'Duration', 15, 480) : 45;
       const timezone = body.timezone ? text(body.timezone, 'Timezone', 100, false) : 'Asia/Kolkata';
       const interviewType = body.interview_type === 'in_person' ? 'in_person' : 'virtual';
@@ -1483,8 +1483,10 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       }
       let competencies = JSON.parse(interview.competencies);
       if (body.competencies !== undefined) {
-        permit(user, 'recruit', 'admin');
-        competencies = list(body.competencies, 'Competencies', 10);
+        if (!can(user, 'recruit') && !can(user, 'admin') && interview.interviewer_id !== user.id) {
+          throw new HttpError(403, 'Your role cannot perform this action.');
+        }
+        competencies = list(body.competencies, 'Competencies', 25);
         if (!competencies.length) throw new HttpError(400, 'At least one competency is required.');
       }
       const duration = body.duration_minutes !== undefined ? integer(body.duration_minutes, 'Duration', 15, 480) : (interview.duration_minutes || 45);
@@ -1617,21 +1619,36 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
             throw new HttpError(400, 'A meaningful reason is required for proxy scorecard submission.');
           }
         }
-        const comps = JSON.parse(interview.competencies);
-        if (!body.ratings || typeof body.ratings !== 'object' || Array.isArray(body.ratings) || Object.keys(body.ratings).length !== comps.length) throw new HttpError(400,'Rate every planned competency.');
-        for (const comp of comps) integer(body.ratings[comp],comp,1,5);
+        if (!body.ratings || typeof body.ratings !== 'object' || Array.isArray(body.ratings)) {
+          throw new HttpError(400, 'Ratings must be an object.');
+        }
+        const ratingEntries = Object.entries(body.ratings);
+        if (!ratingEntries.length) {
+          throw new HttpError(400, 'At least one competency rating is required.');
+        }
+        if (ratingEntries.length > 25) {
+          throw new HttpError(400, 'Competencies must be at most 25 items.');
+        }
+        const sanitizedRatings = {};
+        for (const [rawComp, score] of ratingEntries) {
+          const comp = text(rawComp, 'Competency name', 100);
+          integer(score, comp, 1, 5);
+          sanitizedRatings[comp] = score;
+        }
         if (!['Strong yes','Yes','No','Strong no'].includes(body.recommendation)) throw new HttpError(400,'Choose a recommendation.');
         const notes = text(body.notes,'Evidence notes',10000), sid = id();
         const proxyFor = isProxy ? interview.interviewer_id : null;
+        const evaluatedComps = Object.keys(sanitizedRatings);
         return transaction(db, () => {
           db.prepare('INSERT INTO scorecards(id,interview_id,author,ratings,recommendation,notes,submitted_at,proxy_for,proxy_reason) VALUES(?,?,?,?,?,?,?,?,?)').run(
-            sid,key,user.id,JSON.stringify(body.ratings),body.recommendation,notes,now(),proxyFor,proxyReason
+            sid,key,user.id,JSON.stringify(sanitizedRatings),body.recommendation,notes,now(),proxyFor,proxyReason
           );
-          db.prepare("UPDATE interviews SET status='completed' WHERE id=?").run(key);
+          db.prepare("UPDATE interviews SET status='completed', competencies=? WHERE id=?").run(JSON.stringify(evaluatedComps), key);
           const auditDetail = {
             interview_id: key,
             application_id: interview.application_id,
-            recommendation: body.recommendation
+            recommendation: body.recommendation,
+            competencies: evaluatedComps
           };
           if (isProxy) {
             auditDetail.proxy_for = interview.interviewer_id;
