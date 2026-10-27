@@ -4379,7 +4379,7 @@ document.addEventListener('click',async event=>{
         <div id="row-location" class="full" ${currentType !== 'in_person' ? 'style="display:none;"' : ''}>
           ${field('Office / Physical Location','location','text',currentLocation,false,'placeholder="e.g. Mechlin Technologies Office, Sector 67, Mohali"')}
         </div>
-        ${canManage?field('Competencies, comma separated','competencies','text',comps.join(', '),true):''}
+        ${(canManage || i.interviewer_id === me?.id)?field('Competencies, comma separated','competencies','text',comps.join(', '),true):''}
         ${area('Agenda / Update notes (Optional)','notes',i.notes||'',false)}
         <p class="full status-note" id="interview-format-note">${currentType === 'in_person' ? 'This is an in-person interview. No virtual meeting link is used.' : 'This updates the scheduled interview date and time and synchronizes with Microsoft Teams when configured.'}</p>
       </div>`,async v=>{
@@ -4389,6 +4389,8 @@ document.addEventListener('click',async event=>{
         }
         let updatedComps;
         if(v.competencies!==undefined){
+          const sErr=checkSkills(v.competencies);
+          if(sErr)throw new Error(sErr);
           updatedComps=skills(v.competencies);
           if(!updatedComps.length)throw new Error('At least one competency is required.');
         }
@@ -4408,6 +4410,9 @@ document.addEventListener('click',async event=>{
         return 'Interview updated successfully.';
       });
       setupInterviewFormatToggle(currentType);
+      if(canManage || i.interviewer_id === me?.id){
+        bindValidation('competencies',checkSkills);
+      }
     }
     if(a==='cancel-interview'){
       const interviews=await api('interviews');
@@ -4418,20 +4423,179 @@ document.addEventListener('click',async event=>{
         return 'Interview cancelled successfully.';
       });
     }
-    if(a==='scorecard'){const i=(await api('interviews')).find(i=>i.id===id);if(!i)throw new Error('Interview not found.');if(!feedbackReady(i))throw new Error(FEEDBACK_LOCKED_MESSAGE);const comps=JSON.parse(i.competencies);modal('Submit independent feedback',comps.map((c,n)=>select(`${escape(c)} (1 low – 5 high)`,`rating${n}`,['1','2','3','4','5'],'3')).join('')+select('Recommendation','recommendation',['Strong yes','Yes','No','Strong no'])+area('Job-related evidence','notes','',true)+'<p class="muted">Submitted feedback is final in this phase. Other feedback stays hidden until you submit your assigned scorecards.</p>',async v=>{if(!feedbackReady(i))throw new Error(FEEDBACK_LOCKED_MESSAGE);await api(`interviews/${id}/scorecards`,'POST',{ratings:Object.fromEntries(comps.map((c,n)=>[c,Number(v[`rating${n}`])])),recommendation:v.recommendation,notes:v.notes});return 'Scorecard submitted successfully.';});}
-    if(a==='scorecard-proxy'){
-      const i=(await api('interviews')).find(i=>i.id===id)||await api(`interviews/${id}`);
+    if(a==='scorecard'||a==='scorecard-proxy'){
+      const isProxy=a==='scorecard-proxy';
+      const interviews=await api('interviews');
+      const i=interviews.find(item=>item.id===id)||await api(`interviews/${id}`);
+      if(!i)throw new Error('Interview not found.');
       if(!feedbackReady(i))throw new Error(FEEDBACK_LOCKED_MESSAGE);
-      const comps=JSON.parse(i.competencies);
-      modal(`Submit proxy scorecard on behalf of ${escape(i.interviewer)}`,`<div class="notice-inline"><strong>Administrative Proxy Submission:</strong> You are submitting this scorecard on behalf of the assigned interviewer (${escape(i.interviewer)}). An audit log entry will record your action and reason.</div>`+comps.map((c,n)=>select(`${escape(c)} (1 low – 5 high)`,`rating${n}`,['1','2','3','4','5'],'3')).join('')+select('Recommendation','recommendation',['Strong yes','Yes','No','Strong no'])+area('Job-related evidence','notes','',true)+area('Reason for proxy submission','proxy_reason','',true),async v=>{
-        if(!v.proxy_reason||!v.proxy_reason.trim())throw new Error('A reason for proxy submission is required.');
-        if(!feedbackReady(i))throw new Error(FEEDBACK_LOCKED_MESSAGE);
-        return api(`interviews/${id}/scorecards`,'POST',{ratings:Object.fromEntries(comps.map((c,n)=>[c,Number(v[`rating${n}`])])),recommendation:v.recommendation,notes:v.notes,proxy_reason:v.proxy_reason});
-      });
+      const comps=JSON.parse(i.competencies||'[]');
+      const title=isProxy?`Submit proxy scorecard on behalf of ${escape(i.interviewer)}`:'Submit independent feedback';
+      const headerNotice=isProxy
+        ? `<div class="notice-inline"><strong>Administrative Proxy Submission:</strong> You are submitting this scorecard on behalf of the assigned interviewer (${escape(i.interviewer)}). An audit log entry will record your action and reason.</div>`
+        : `<div class="notice-inline" style="margin-top:0;margin-bottom:16px;border-left-color:var(--accent);background:var(--tint,#f0fdf4);"><p style="margin:0;"><strong>Candidate:</strong> ${escape(i.name||'Candidate')} &middot; <strong>Round:</strong> ${escape(i.title||'Interview round')}</p></div>`;
+      
+      const compSection=`
+        <div class="scorecard-competencies-section" style="margin-bottom:18px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+            <label style="font-weight:600;font-size:0.92rem;margin:0;">Evaluation Competencies &amp; Ratings <span style="color:var(--negative,#b91c1c);font-weight:bold;">*</span></label>
+            <span class="muted" id="comp-count-badge" style="font-size:0.8rem;background:var(--surface-alt);padding:2px 8px;border-radius:12px;border:1px solid var(--line);">${comps.length} ${comps.length===1?'competency':'competencies'}</span>
+          </div>
+          <p class="muted" style="font-size:0.82rem;margin:0 0 10px 0;line-height:1.4;">Rate planned competencies below. You can also add custom competencies to evaluate additional aspects from your perspective, or remove competencies as needed.</p>
+          <div id="scorecard-competencies-list" style="display:flex;flex-direction:column;gap:8px;max-height:260px;overflow-y:auto;padding-right:2px;margin-bottom:10px;"></div>
+          <div class="add-comp-box" style="display:flex;gap:8px;align-items:center;background:var(--surface-alt);border:1px dashed var(--line);border-radius:8px;padding:8px 10px;">
+            <input type="text" id="new-competency-input" placeholder="Add custom competency (e.g. System Design, Problem Solving, Culture Fit)..." style="flex:1;min-height:36px;padding:6px 10px;font-size:0.85rem;" maxlength="100">
+            <button type="button" id="btn-add-competency" class="secondary" style="min-height:36px;padding:6px 14px;font-size:0.85rem;white-space:nowrap;font-weight:600;">+ Add Competency</button>
+          </div>
+          <p class="error" id="competency-error" style="font-size:0.8rem;margin:6px 0 0 0;display:none;"></p>
+        </div>
+      `;
+
+      modal(title,
+        headerNotice+
+        compSection+
+        select('Recommendation','recommendation',['Strong yes','Yes','No','Strong no'])+
+        area('Job-related evidence','notes','',true)+
+        (isProxy?area('Reason for proxy submission','proxy_reason','',true):'')+
+        '<p class="muted" style="font-size:0.82rem;margin-top:8px;">Submitted feedback is final in this phase. Other feedback stays hidden until you submit your assigned scorecards.</p>',
+        async v=>{
+          if(!feedbackReady(i))throw new Error(FEEDBACK_LOCKED_MESSAGE);
+          if(isProxy&&(!v.proxy_reason||!v.proxy_reason.trim())){
+            throw new Error('A reason for proxy submission is required.');
+          }
+          const listEl=$('#scorecard-competencies-list');
+          const rows=listEl?listEl.querySelectorAll('.scorecard-comp-row'):[];
+          const ratings={};
+          for(const row of rows){
+            const compName=row.dataset.compName;
+            const sel=row.querySelector('.scorecard-rating-select');
+            if(compName&&sel){
+              ratings[compName]=Number(sel.value);
+            }
+          }
+          if(!Object.keys(ratings).length){
+            const errEl=$('#competency-error');
+            if(errEl){errEl.textContent='At least one competency rating is required.';errEl.style.display='block';}
+            throw new Error('At least one competency rating is required.');
+          }
+          const payload={
+            ratings,
+            recommendation:v.recommendation,
+            notes:v.notes,
+            ...(isProxy?{proxy_reason:v.proxy_reason.trim()}:{})
+          };
+          await api(`interviews/${id}/scorecards`,'POST',payload);
+          return 'Scorecard submitted successfully.';
+        }
+      );
+
+      const listEl=$('#scorecard-competencies-list');
+      const newCompInput=$('#new-competency-input');
+      const addCompBtn=$('#btn-add-competency');
+      const errEl=$('#competency-error');
+      const countBadge=$('#comp-count-badge');
+
+      const updateBadge=()=>{
+        if(!countBadge||!listEl)return;
+        const count=listEl.querySelectorAll('.scorecard-comp-row').length;
+        countBadge.textContent=`${count} ${count===1?'competency':'competencies'}`;
+        countBadge.style.color=count===0?'var(--negative, #b91c1c)':'';
+      };
+
+      const renderCompRow=(name,isCustom=false)=>{
+        const row=document.createElement('div');
+        row.className='scorecard-comp-row';
+        row.dataset.compName=name;
+        row.style.cssText='display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 12px;background:var(--surface);border:1px solid var(--line);border-radius:8px;';
+        row.innerHTML=`
+          <div style="flex:1;min-width:0;display:flex;align-items:center;gap:8px;">
+            <span style="font-weight:600;font-size:0.88rem;overflow-wrap:anywhere;color:var(--ink);">${escape(name)}</span>
+            ${isCustom?`<span class="badge" style="font-size:0.7rem;padding:2px 6px;background:var(--tint,#e0f2fe);color:var(--accent,#0369a1);border-radius:4px;">Custom</span>`:''}
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
+            <label style="display:flex;align-items:center;gap:6px;font-size:0.83rem;margin:0;font-weight:normal;color:var(--muted);">
+              <span>Score:</span>
+              <select class="scorecard-rating-select" data-comp="${escape(name)}" name="rating_${escape(name)}" style="min-height:34px;padding:3px 8px;font-size:0.85rem;border-radius:6px;width:auto;" aria-label="Rating for ${escape(name)}">
+                <option value="1">1 (Low)</option>
+                <option value="2">2</option>
+                <option value="3" selected>3</option>
+                <option value="4">4</option>
+                <option value="5">5 (High)</option>
+              </select>
+            </label>
+            <button type="button" class="secondary btn-remove-comp" data-comp="${escape(name)}" title="Remove ${escape(name)}" aria-label="Remove ${escape(name)}" style="min-height:34px;padding:3px 10px;font-size:0.8rem;color:var(--negative,#b91c1c);border-color:var(--line);">
+              Remove
+            </button>
+          </div>
+        `;
+        return row;
+      };
+
+      if(listEl){
+        for(const c of comps){
+          listEl.appendChild(renderCompRow(c,false));
+        }
+        updateBadge();
+      }
+
+      const handleAdd=()=>{
+        if(!newCompInput)return;
+        const val=newCompInput.value.trim();
+        if(!val){
+          if(errEl){errEl.textContent='Please enter a competency name.';errEl.style.display='block';}
+          newCompInput.focus();
+          return;
+        }
+        if(val.length>100){
+          if(errEl){errEl.textContent='Competency name must be at most 100 characters.';errEl.style.display='block';}
+          return;
+        }
+        const existingRows=listEl?listEl.querySelectorAll('.scorecard-comp-row'):[];
+        const exists=Array.from(existingRows).some(r=>(r.dataset.compName||'').toLowerCase()===val.toLowerCase());
+        if(exists){
+          if(errEl){errEl.textContent=`Competency "${val}" is already in the list.`;errEl.style.display='block';}
+          return;
+        }
+        if(errEl){errEl.textContent='';errEl.style.display='none';}
+        if(listEl){
+          listEl.appendChild(renderCompRow(val,true));
+          updateBadge();
+        }
+        newCompInput.value='';
+        newCompInput.focus();
+      };
+
+      if(addCompBtn)addCompBtn.onclick=handleAdd;
+      if(newCompInput){
+        newCompInput.onkeydown=e=>{
+          if(e.key==='Enter'){
+            e.preventDefault();
+            handleAdd();
+          }
+        };
+      }
+
+      if(listEl){
+        listEl.onclick=e=>{
+          const btn=e.target.closest('.btn-remove-comp');
+          if(!btn)return;
+          e.preventDefault();
+          const row=btn.closest('.scorecard-comp-row');
+          if(row){
+            row.remove();
+            updateBadge();
+            if(errEl){errEl.textContent='';errEl.style.display='none';}
+          }
+        };
+      }
     }
     if(a==='feedback'){
       const r=await api(`interviews/${id}/scorecards`);
-      modal('Interview feedback',`${r.blinded?'<div class="notice-inline">Other reviewers’ feedback is hidden until you submit all your assigned scorecards for this application.</div>':''}${r.scorecards.map(s=>`<article class="panel"><h3>${escape(s.recommendation)}</h3>${s.proxy_for?`<p class="muted" style="margin-bottom:6px"><strong>Proxy Submission:</strong> Submitted by ${escape(s.author_name||'Administrator')} on behalf of ${escape(s.proxy_for_name||'Interviewer')}${s.proxy_reason?` · Reason: ${escape(s.proxy_reason)}`:''}</p>`:(s.author_name?`<p class="muted" style="margin-bottom:6px">By: ${escape(s.author_name)}</p>`:'')}<p>${escape(Object.entries(JSON.parse(s.ratings)).map(([k,v])=>`${k}: ${v}/5`).join(' · '))}</p><p class="score-note">${escape(s.notes)}</p></article>`).join('')||empty('No feedback is available to you yet.')}`);
+      modal('Interview feedback',`${r.blinded?'<div class="notice-inline">Other reviewers’ feedback is hidden until you submit all your assigned scorecards for this application.</div>':''}${r.scorecards.map(s=>{
+        const ratingsObj=JSON.parse(s.ratings||'{}');
+        const ratingChips=Object.entries(ratingsObj).map(([k,v])=>`<span style="display:inline-flex;align-items:center;gap:6px;background:var(--surface-alt);border:1px solid var(--line);padding:3px 10px;border-radius:6px;font-size:0.83rem;margin:2px 4px 2px 0;"><strong>${escape(k)}:</strong> <span style="color:var(--accent);font-weight:600;">${escape(v)}/5</span></span>`).join('');
+        return `<article class="panel"><h3>${escape(s.recommendation)}</h3>${s.proxy_for?`<p class="muted" style="margin-bottom:6px"><strong>Proxy Submission:</strong> Submitted by ${escape(s.author_name||'Administrator')} on behalf of ${escape(s.proxy_for_name||'Interviewer')}${s.proxy_reason?` &middot; Reason: ${escape(s.proxy_reason)}`:''}</p>`:(s.author_name?`<p class="muted" style="margin-bottom:6px">By: ${escape(s.author_name)}</p>`:'')}<div style="display:flex;flex-wrap:wrap;gap:4px;margin:8px 0;">${ratingChips}</div><p class="score-note">${escape(s.notes)}</p></article>`;
+      }).join('')||empty('No feedback is available to you yet.')}`);
     }
     if(a==='new-referral'){
       const rs=(await api('requisitions')).filter(r=>r.status==='open');
