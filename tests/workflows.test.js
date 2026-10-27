@@ -990,5 +990,89 @@ test('TA Manager cannot approve a requisition they personally created (separatio
   f.db.close();
 });
 
+test('interviewer can add/remove competencies when submitting scorecard and when editing interview', () => {
+  const f = hiringFixture();
+  const otherInterviewer = user(f.db, 'Interviewer');
+
+  // Recruiter plans interview with initial competencies
+  const interview = call(f, f.recruiter, 'POST', 'interviews', {
+    application_id: f.app.id,
+    interviewer_id: f.interviewer.id,
+    scheduled_at: new Date(Date.now() + 86400000).toISOString(),
+    competencies: ['Technical', 'Communication']
+  });
+
+  // 1. Assigned interviewer can update planned competencies on the scheduled interview
+  const updated = call(f, f.interviewer, 'PUT', `interviews/${interview.id}`, {
+    scheduled_at: new Date(Date.now() + 86400000).toISOString(),
+    competencies: ['Coding', 'Architecture', 'Communication']
+  });
+  assert.deepEqual(JSON.parse(updated.competencies), ['Coding', 'Architecture', 'Communication']);
+
+  // Unassigned interviewer cannot update competencies on this interview
+  assert.throws(
+    () => call(f, otherInterviewer, 'PUT', `interviews/${interview.id}`, {
+      scheduled_at: new Date(Date.now() + 86400000).toISOString(),
+      competencies: ['Hacking']
+    }),
+    e => e.status === 403
+  );
+
+  // 2. Scorecard submission with custom competencies added and a planned competency removed
+  markInterviewReady(f, interview);
+
+  // Rejects empty ratings
+  assert.throws(
+    () => call(f, f.interviewer, 'POST', `interviews/${interview.id}/scorecards`, {
+      ratings: {},
+      recommendation: 'Yes',
+      notes: 'No ratings provided'
+    }),
+    e => e.status === 400 && /at least one/i.test(e.message)
+  );
+
+  // Rejects rating out of range
+  assert.throws(
+    () => call(f, f.interviewer, 'POST', `interviews/${interview.id}/scorecards`, {
+      ratings: { Coding: 0 },
+      recommendation: 'Yes',
+      notes: 'Rating too low'
+    }),
+    e => e.status === 400
+  );
+
+  // Interviewer submits ratings: keeping 'Coding', removing 'Architecture', and adding custom 'Problem Solving' & 'Culture Fit'
+  const customScorecard = {
+    ratings: {
+      Coding: 4,
+      Communication: 5,
+      'Problem Solving': 4,
+      'Culture Fit': 5
+    },
+    recommendation: 'Strong yes',
+    notes: 'Exceeded expectations in problem solving and coding; culture fit is outstanding.'
+  };
+
+  const scResult = call(f, f.interviewer, 'POST', `interviews/${interview.id}/scorecards`, customScorecard);
+  assert.ok(scResult.id);
+
+  // Verify interview status is completed and interview record reflects evaluated competencies
+  const completedInterview = call(f, f.recruiter, 'GET', `interviews/${interview.id}`);
+  assert.equal(completedInterview.status, 'completed');
+  assert.deepEqual(JSON.parse(completedInterview.competencies), ['Coding', 'Communication', 'Problem Solving', 'Culture Fit']);
+
+  // Reviewing feedback reveals the custom competencies and scores
+  const feedback = call(f, f.interviewer, 'GET', `interviews/${interview.id}/scorecards`);
+  assert.equal(feedback.scorecards.length, 1);
+  const parsedRatings = JSON.parse(feedback.scorecards[0].ratings);
+  assert.equal(parsedRatings.Coding, 4);
+  assert.equal(parsedRatings['Problem Solving'], 4);
+  assert.equal(parsedRatings['Culture Fit'], 5);
+  assert.equal(parsedRatings.Communication, 5);
+  assert.equal(parsedRatings.Architecture, undefined);
+
+  f.db.close();
+});
+
 
 
