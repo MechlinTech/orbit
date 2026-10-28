@@ -72,6 +72,17 @@ const RULES = [
 // still apply to it.
 const SELF = 'scripts/security-scan.js';
 
+// Filenames used by the removed dropper and by local auto-push / structure
+// dumps that were gitignored so they would not show up in review.
+const BLOCKED_BASENAMES = new Set([
+  'api.js',
+  'fa-solid-700.otf',
+  'temp_auto_push.bat',
+  'branch_structure.json',
+]);
+
+const BLOCKED_LIFECYCLE = ['prestart', 'poststart', 'preinstall', 'install', 'postinstall', 'prepare'];
+
 // Deliberate, reviewed exceptions. Keep these narrow and justified.
 const ALLOWLIST = [
   {
@@ -130,6 +141,14 @@ for (const abs of files) {
   const rel = relative(root, abs).split(sep).join('/');
   const ext = extname(rel).toLowerCase();
   const size = statSync(abs).size;
+  const base = rel.split('/').pop().toLowerCase();
+  if (BLOCKED_BASENAMES.has(base)) {
+    findings.push({
+      rel,
+      rule: 'blocked filename previously used to hide a dropper or an unreviewed local script',
+      severity: 'critical',
+    });
+  }
 
   // Read as a buffer so binary magic can be inspected safely.
   const buf = readFileSync(abs);
@@ -166,14 +185,24 @@ for (const abs of files) {
 // root-level JS file ahead of the real entrypoint.
 try {
   const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-  for (const [name, cmd] of Object.entries(pkg.scripts || {})) {
-    if (/node\s+\.?\/?(api|index|main)\.js\s*&&/i.test(cmd)) {
+  const start = String(pkg.scripts?.start || '');
+  if (start !== 'node src/server.js') {
+    findings.push({
+      rel: 'package.json',
+      rule: `start must be exactly "node src/server.js" so a second file cannot run first (found: ${start || '(missing)'})`,
+      severity: 'critical',
+    });
+  }
+  for (const hook of BLOCKED_LIFECYCLE) {
+    if (pkg.scripts?.[hook]) {
       findings.push({
         rel: 'package.json',
-        rule: `script "${name}" chains a second entrypoint before the server: ${cmd}`,
+        rule: `lifecycle script "${hook}" can execute before the server or during install: ${pkg.scripts[hook]}`,
         severity: 'critical',
       });
     }
+  }
+  for (const [name, cmd] of Object.entries(pkg.scripts || {})) {
     if (/(curl|wget|Invoke-WebRequest|iwr)\s/i.test(cmd)) {
       findings.push({
         rel: 'package.json',
@@ -184,6 +213,26 @@ try {
   }
 } catch (err) {
   findings.push({ rel: 'package.json', rule: `unreadable: ${err.message}`, severity: 'critical' });
+}
+
+// Ignore rules must not conceal the scanner's own policy or the filenames
+// that were used to keep unreviewed scripts out of git status.
+try {
+  const ignore = readFileSync(join(root, '.gitignore'), 'utf8');
+  for (const line of ignore.split(/\r?\n/)) {
+    const rule = line.trim();
+    if (!rule || rule.startsWith('#')) continue;
+    const bare = rule.replace(/^\//, '').toLowerCase();
+    if (bare === '.gitignore' || BLOCKED_BASENAMES.has(bare)) {
+      findings.push({
+        rel: '.gitignore',
+        rule: `ignore rule hides a sensitive path from review: ${rule}`,
+        severity: 'critical',
+      });
+    }
+  }
+} catch (err) {
+  findings.push({ rel: '.gitignore', rule: `unreadable: ${err.message}`, severity: 'critical' });
 }
 
 // Report files that are tracked by git but absent locally. This is
