@@ -240,14 +240,78 @@ export function requireRole(user, ...allowedRoles) {
 export function requireAllPermissions(user, ...actions) {
   if (!actions.every(action => can(user, action))) throw new HttpError(403, 'Your role cannot perform this action.');
 }
+export function normalizeTeamName(val) {
+  if (!val || typeof val !== 'string') return '';
+  const clean = val.trim();
+  if (!clean) return '';
+  const lower = clean.toLowerCase();
+  if (
+    lower === 'qa' ||
+    lower === 'quality assurance' ||
+    lower === 'quality assurance team' ||
+    lower === 'qa team' ||
+    lower === 'qa candidate pool' ||
+    lower === 'qa pool' ||
+    lower === 'qa talent pool' ||
+    lower === 'quality assurance candidate pool' ||
+    lower === 'quality assurance pool' ||
+    /^(qa|quality\s+assurance)(\s+(team|candidate\s+pool|talent\s+pool|pool))?$/i.test(clean)
+  ) return 'QA';
+  if (lower === 'engineering') return 'Engineering';
+  if (lower === 'dev' || lower === 'software engineering' || lower === 'development') return 'Dev';
+  if (lower === 'bd' || lower === 'business development') return 'BD';
+  if (lower === 'devops' || lower === 'dev ops' || lower === 'sre' || lower === 'infrastructure') return 'DevOps';
+  if (lower === 'hr' || lower === 'human resources' || lower === 'people' || lower === 'people operations') return 'HR';
+  if (lower === 'product' || lower === 'product management') return 'Product';
+  if (lower === 'design' || lower === 'ui/ux' || lower === 'product design') return 'Design';
+  if (lower === 'operations' || lower === 'ops') return 'Operations';
+  if (lower === 'sales') return 'Sales';
+  if (lower === 'pm' || lower === 'project manager' || lower === 'project management') return 'PM';
+  if (lower === 'tl' || lower === 'tech lead' || lower === 'team lead') return 'TL';
+  if (lower === 'other') return 'Other';
+  const match = teams.find(t => t.toLowerCase() === lower);
+  return match || clean;
+}
+
+export function teamsEquivalent(a, b) {
+  if (!a || !b) return false;
+  const la = String(a).trim().toLowerCase();
+  const lb = String(b).trim().toLowerCase();
+  if (la === lb) return true;
+  const na = normalizeTeamName(a);
+  const nb = normalizeTeamName(b);
+  if (na && nb && na.toLowerCase() === nb.toLowerCase()) return true;
+  if ((la === 'dev' || la === 'engineering' || na === 'Dev' || na === 'Engineering') && (lb === 'dev' || lb === 'engineering' || nb === 'Dev' || nb === 'Engineering')) return true;
+  if ((la === 'qa' || la === 'quality assurance' || na === 'QA') && (lb === 'qa' || lb === 'quality assurance' || nb === 'QA')) return true;
+  return false;
+}
+
+export function userTeams(user) {
+  if (!user || !user.team) return [];
+  const raw = String(user.team);
+  return raw.split(/[,;/|]+/).map(t => normalizeTeamName(t)).filter(Boolean);
+}
+
 export function inTeam(user, team) {
   if (!user) return false;
+  if (can(user, 'system.override')) return true;
+  const normTarget = normalizeTeamName(team);
   if (user._scope) {
     if (user._scope === 'organization') return true;
-    if (user._scope === 'team') return Boolean(user.team && user.team === team);
+    if (user._scope === 'team') {
+      if (!user.team || !normTarget) return false;
+      const targetLower = normTarget.toLowerCase();
+      const list = userTeams(user).map(t => t.toLowerCase());
+      return list.some(t => teamsEquivalent(t, targetLower)) || teamsEquivalent(user.team, normTarget);
+    }
     return false;
   }
-  return ['System Admin','TA Director'].includes(user.role) || (user.team && user.team === team);
+  const isOrg = ['System Admin','TA Director'].includes(user.role);
+  if (isOrg) return true;
+  if (!user.team || !normTarget) return false;
+  const targetLower = normTarget.toLowerCase();
+  const list = userTeams(user).map(t => t.toLowerCase());
+  return list.some(t => teamsEquivalent(t, targetLower)) || teamsEquivalent(user.team, normTarget);
 }
 export function requireTeam(user, team) { if (!inTeam(user, team)) throw new HttpError(403, 'This record belongs to another team.'); }
 export function text(value, label, max = 500, optional = false) {

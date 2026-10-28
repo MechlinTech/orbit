@@ -251,3 +251,262 @@ test('Stage Flow: Moving application to the same stage is rejected with 400', ()
   );
   f.db.close();
 });
+
+test('Stage Flow: Applied stage does not show pending interview and advancing to Screening Round is not blocked', () => {
+  const f = flowFixture();
+  assert.equal(f.app.stage, 'Applied');
+
+  // Schedule an interview for Screening Round while application is in Applied
+  const interview = service(f.db, f.recruiter, 'POST', 'interviews', {
+    application_id: f.app.id,
+    interviewer_id: f.interviewer.id,
+    scheduled_at: new Date(Date.now() + 86400000).toISOString(),
+    competencies: ['Problem solving'],
+    round: 'Screening Round'
+  });
+  assert.ok(interview.id);
+
+  // Applications listing should NOT attach pending_interview while candidate is still in Applied
+  const apps = service(f.db, f.recruiter, 'GET', 'applications');
+  const appInApplied = apps.find(a => a.id === f.app.id);
+  assert.equal(appInApplied.stage, 'Applied');
+  assert.equal(appInApplied.pending_interview, null, 'Applied cards must not show pending interview');
+
+  // Recruiter can advance candidate from Applied to Screening Round without error
+  const advanced = service(f.db, f.recruiter, 'POST', `applications/${f.app.id}/stage`, { stage: 'Screening Round' });
+  assert.equal(advanced.stage, 'Screening Round');
+
+  // Once in Screening Round, the scheduled interview is attached as pending_interview
+  const appsAfterMove = service(f.db, f.recruiter, 'GET', 'applications');
+  const appInScreening = appsAfterMove.find(a => a.id === f.app.id);
+  assert.equal(appInScreening.stage, 'Screening Round');
+  assert.ok(appInScreening.pending_interview, 'Screening Round card must now reflect the scheduled interview');
+  assert.equal(appInScreening.pending_interview.id, interview.id);
+
+  // Moving forward from Screening Round now requires scorecard rating
+  assert.throws(
+    () => service(f.db, f.recruiter, 'POST', `applications/${f.app.id}/stage`, { stage: 'Interview Round 1' }),
+    err => {
+      assert.equal(err.status, 409);
+      assert.match(err.message, /scorecard rating is required/i);
+      return true;
+    }
+  );
+
+  f.db.close();
+});
+
+test('Requisitions: A user authorized for the QA team can create and save a QA requisition successfully', () => {
+  const f = fixture();
+
+  // 1. Hiring Manager authorized for QA creates a QA requisition
+  const qaManager = user(f.db, 'Hiring Manager', 'QA');
+  const req = service(f.db, qaManager, 'POST', 'requisitions', {
+    title: 'QA Lead Automation Engineer',
+    team: 'QA',
+    headcount: 2,
+    salary_min: 80000,
+    salary_max: 130000,
+    currency: 'USD',
+    description: 'Lead automated testing workflows and frameworks.',
+    skills: ['Playwright', 'Selenium', 'CI/CD']
+  });
+  assert.ok(req.id, 'Requisition created successfully');
+  assert.equal(req.team, 'QA');
+  assert.equal(req.title, 'QA Lead Automation Engineer');
+
+  // 2. Recruiter authorized for QA updates/saves the requisition
+  const qaRecruiter = user(f.db, 'Recruiter', 'QA');
+  const updatedReq = service(f.db, qaRecruiter, 'PUT', `requisitions/${req.id}`, {
+    title: 'Senior QA Lead Automation Engineer',
+    team: 'QA',
+    headcount: 3
+  });
+  assert.equal(updatedReq.title, 'Senior QA Lead Automation Engineer');
+  assert.equal(updatedReq.headcount, 3);
+  assert.equal(updatedReq.team, 'QA');
+
+  // 3. User with lowercase 'qa' creates and saves a requisition
+  const lowercaseQaUser = user(f.db, 'Hiring Manager', 'qa');
+  const reqLower = service(f.db, lowercaseQaUser, 'POST', 'requisitions', {
+    title: 'QA Manual Tester',
+    team: 'qa',
+    headcount: 1,
+    salary_min: 50000,
+    salary_max: 75000,
+    currency: 'USD',
+    description: 'Manual and exploratory QA testing.',
+    skills: ['Manual Testing', 'Jira']
+  });
+  assert.ok(reqLower.id);
+  assert.equal(reqLower.team, 'QA', 'Team is normalized to QA');
+
+  const updatedReqLower = service(f.db, lowercaseQaUser, 'PUT', `requisitions/${reqLower.id}`, {
+    title: 'Senior QA Manual Tester',
+    team: 'qa'
+  });
+  assert.equal(updatedReqLower.title, 'Senior QA Manual Tester');
+
+  // 4. User with alias 'Quality Assurance' or multi-team 'QA, Dev'
+  const aliasUser = user(f.db, 'Recruiter', 'Quality Assurance');
+  const multiTeamUser = user(f.db, 'Hiring Manager', 'QA, Dev');
+
+  const reqAlias = service(f.db, aliasUser, 'POST', 'requisitions', {
+    title: 'SDET II',
+    team: 'Quality Assurance',
+    headcount: 1,
+    salary_min: 90000,
+    salary_max: 120000,
+    currency: 'USD',
+    description: 'Software development engineer in test.',
+    skills: ['Python', 'PyTest']
+  });
+  assert.ok(reqAlias.id);
+  assert.equal(reqAlias.team, 'QA');
+
+  const updatedMulti = service(f.db, multiTeamUser, 'PUT', `requisitions/${reqAlias.id}`, {
+    headcount: 2,
+    team: 'QA'
+  });
+  assert.equal(updatedMulti.headcount, 2);
+
+  // 5. Unauthorized user belonging only to 'Dev' gets 403 when creating or saving QA requisition
+  const devUser = user(f.db, 'Hiring Manager', 'Dev');
+  assert.throws(
+    () => service(f.db, devUser, 'POST', 'requisitions', {
+      title: 'QA Rogue Position',
+      team: 'QA',
+      headcount: 1,
+      salary_min: 60000,
+      salary_max: 90000,
+      currency: 'USD',
+      description: 'Unauthorized QA creation.',
+      skills: ['Testing']
+    }),
+    err => {
+      assert.equal(err.status, 403);
+      assert.equal(err.message, 'This record belongs to another team.');
+      return true;
+    }
+  );
+
+  assert.throws(
+    () => service(f.db, devUser, 'PUT', `requisitions/${req.id}`, {
+      title: 'Hacked Title',
+      team: 'QA'
+    }),
+    err => {
+      assert.equal(err.status, 403);
+      assert.equal(err.message, 'This record belongs to another team.');
+      return true;
+    }
+  );
+
+  f.db.close();
+});
+
+test('Candidate creation: A user authorized for QA can save a candidate to the QA candidate pool successfully', () => {
+  const f = fixture();
+
+  // 1. Recruiter authorized for QA creates a candidate in the QA candidate pool
+  const qaRecruiter = user(f.db, 'Recruiter', 'QA');
+  const candQA = service(f.db, qaRecruiter, 'POST', 'candidates', {
+    name: 'Sarah Connor',
+    email: 'sarah.connor@example.com',
+    team: 'QA',
+    skills: ['Selenium', 'Cypress', 'API Testing'],
+    source: 'LinkedIn',
+    experience: '5 years of automated and manual QA engineering.'
+  });
+  assert.ok(candQA.id, 'Candidate created successfully');
+  assert.equal(candQA.team, 'QA');
+  assert.equal(candQA.name, 'Sarah Connor');
+  assert.equal(candQA.applications.length, 0, 'Candidate is in pool only (no applications)');
+
+  // 2. TA Manager authorized for QA updates and saves the candidate
+  const qaManager = user(f.db, 'TA Manager', 'QA');
+  const updatedCand = service(f.db, qaManager, 'PUT', `candidates/${candQA.id}`, {
+    name: 'Sarah Connor-Reese',
+    team: 'QA',
+    skills: ['Selenium', 'Cypress', 'Playwright', 'API Testing']
+  });
+  assert.equal(updatedCand.name, 'Sarah Connor-Reese');
+  assert.equal(updatedCand.team, 'QA');
+
+  // 3. User authorized for QA creates candidate with 'QA candidate pool' alias
+  const candPoolAlias = service(f.db, qaRecruiter, 'POST', 'candidates', {
+    name: 'Kyle Reese',
+    email: 'kyle.reese@example.com',
+    team: 'QA candidate pool',
+    skills: ['Performance Testing', 'JMeter'],
+    source: 'Referral'
+  });
+  assert.ok(candPoolAlias.id);
+  assert.equal(candPoolAlias.team, 'QA', 'Team is normalized to QA');
+
+  // 4. User with alias 'Quality Assurance' or multi-team 'QA, Dev'
+  const qaAliasUser = user(f.db, 'Recruiter', 'Quality Assurance');
+  const candFromAliasUser = service(f.db, qaAliasUser, 'POST', 'candidates', {
+    name: 'John Connor',
+    email: 'john.connor@example.com',
+    team: 'Quality Assurance',
+    skills: ['Security Testing', 'Penetration Testing']
+  });
+  assert.ok(candFromAliasUser.id);
+  assert.equal(candFromAliasUser.team, 'QA');
+
+  const multiTeamRecruiter = user(f.db, 'Recruiter', 'QA, Dev');
+  const candFromMultiTeam = service(f.db, multiTeamRecruiter, 'POST', 'candidates', {
+    name: 'Miles Dyson',
+    email: 'miles.dyson@example.com',
+    team: 'QA pool'
+  });
+  assert.ok(candFromMultiTeam.id);
+  assert.equal(candFromMultiTeam.team, 'QA');
+
+  // 5. User authorized for QA omitting team defaults to authorized team
+  const candDefaultTeam = service(f.db, qaRecruiter, 'POST', 'candidates', {
+    name: 'Marcus Wright',
+    email: 'marcus.wright@example.com'
+  });
+  assert.ok(candDefaultTeam.id);
+  assert.equal(candDefaultTeam.team, 'QA');
+
+  // 6. Authorized QA user can query candidate directory / pool
+  const qaDirectory = service(f.db, qaRecruiter, 'GET', 'candidates');
+  const candidateEmails = qaDirectory.map(c => c.email);
+  assert.ok(candidateEmails.includes('sarah.connor@example.com'));
+  assert.ok(candidateEmails.includes('kyle.reese@example.com'));
+  assert.ok(candidateEmails.includes('john.connor@example.com'));
+
+  // 7. Unauthorized user belonging only to 'Dev' gets 403 when creating candidate for QA pool
+  const devRecruiter = user(f.db, 'Recruiter', 'Dev');
+  assert.throws(
+    () => service(f.db, devRecruiter, 'POST', 'candidates', {
+      name: 'Unauthorized Cand',
+      email: 'unauth@example.com',
+      team: 'QA'
+    }),
+    err => {
+      assert.equal(err.status, 403);
+      assert.equal(err.message, 'This record belongs to another team.');
+      return true;
+    }
+  );
+
+  assert.throws(
+    () => service(f.db, devRecruiter, 'PUT', `candidates/${candQA.id}`, {
+      name: 'Hacked Name',
+      team: 'QA'
+    }),
+    err => {
+      assert.equal(err.status, 403);
+      assert.equal(err.message, 'This record belongs to another team.');
+      return true;
+    }
+  );
+
+  f.db.close();
+});
+
+
