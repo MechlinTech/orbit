@@ -1,5 +1,5 @@
 import { id, now, audit, transaction } from './db.js';
-import { HttpError, roles, teams, text } from './policy.js';
+import { HttpError, roles, teams, text, normalizeTeamName } from './policy.js';
 
 export const DEMO_ROLES = [
   { role: 'System Admin', title: 'System Administrator', description: 'Full access to all modules, users, themes, and settings across the organization.' },
@@ -35,7 +35,7 @@ export function validateDemoRoleAndTeam(role, team = '') {
   if (!team || !String(team).trim()) {
     throw new HttpError(400, 'Team is required for this role.');
   }
-  const cleanTeam = text(team, 'Team', 100, false);
+  const cleanTeam = normalizeTeamName(text(team, 'Team', 100, false));
   if (!teams.includes(cleanTeam)) {
     throw new HttpError(400, 'Select a supported team.');
   }
