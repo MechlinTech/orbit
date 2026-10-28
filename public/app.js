@@ -11,20 +11,37 @@ const getNavList = () => {
     return ['Portal Dashboard', 'Assigned Roles', 'Submissions', ...(isAgencyAdmin() ? ['Agency Team'] : [])];
   }
   const canManageAccess = allows('users.read') || allows('roles.read') || allows('roles.create') || allows('roles.update') || allows('roles.assign') || allows('permissions.read');
-  return [
-    ...(allows('analytics') || allows('analytics.read') ? ['Overview'] : []),
-    ...(allows('jobs') || allows('jobs.read') ? ['Requisitions'] : []),
-    ...(allows('review') || allows('recruit') || allows('candidates.read') || allows('applications.read') ? ['Candidates', 'Pipeline'] : []),
-    ...(allows('review') || allows('recruit') || allows('interview') || allows('interviews.read') ? ['Interviews'] : []),
-    ...(allows('refer') || allows('referrals.read') ? ['Referrals'] : []),
-    ...(allows('offers.templates.read') || allows('offers.read') || allows('recruit') || allows('admin') ? ['Offer Templates'] : []),
-    ...(allows('recruit') || allows('admin') || allows('applications.evaluate') ? ['Training Plans'] : []),
-    ...(allows('agencies.read') || allows('admin') || allows('recruit') ? ['Agencies'] : []),
+  const manage = [
     ...(canManageAccess || allows('admin') ? ['Administration'] : []),
     ...(allows('settings.read') || allows('settings.update') || allows('admin') ? ['Settings'] : []),
     ...(allows('audit.read') || allows('admin') ? ['Audit log'] : []),
     ...(allows('pipeline.configure') || allows('admin') ? ['Pipeline settings'] : []),
     ...(allows('integrations.read') || allows('integrations.configure') || allows('integrations.secrets.manage') || (allows('admin') && me?.role === 'System Admin') ? ['Integrations'] : [])
+  ];
+  if (!grants.length) {
+    return [
+      ...(allows('analytics') || allows('analytics.read') ? ['Overview'] : []),
+      ...(allows('jobs') || allows('jobs.read') ? ['Requisitions'] : []),
+      ...(allows('review') || allows('recruit') || allows('candidates.read') || allows('applications.read') ? ['Candidates', 'Pipeline'] : []),
+      ...(allows('review') || allows('recruit') || allows('interview') || allows('interviews.read') ? ['Interviews'] : []),
+      ...(allows('refer') || allows('referrals.read') ? ['Referrals'] : []),
+      ...(allows('offers.templates.read') || allows('offers.read') || allows('recruit') || allows('admin') ? ['Offer Templates'] : []),
+      ...(allows('recruit') || allows('admin') || allows('applications.evaluate') ? ['Training Plans'] : []),
+      ...(allows('agencies.read') || allows('admin') || allows('recruit') ? ['Agencies'] : []),
+      ...manage
+    ];
+  }
+  return [
+    ...(allows('analytics.read') ? ['Overview'] : []),
+    ...(allows('jobs.read') || allows('requisitions.read') ? ['Requisitions'] : []),
+    ...(allows('candidates.read') || allows('review') || allows('recruit') ? ['Candidates'] : []),
+    ...(allows('applications.read') || allows('review') || allows('recruit') ? ['Pipeline'] : []),
+    ...(allows('interviews.read') || allows('interviews.evaluate') || allows('interview') || allows('review') || allows('recruit') ? ['Interviews'] : []),
+    ...(allows('referrals.read') || allows('refer') ? ['Referrals'] : []),
+    ...(allows('offers.templates.read') || allows('offers.read') || allows('recruit') || allows('admin') ? ['Offer Templates'] : []),
+    ...(allows('applications.evaluate') || allows('recruit') || allows('admin') ? ['Training Plans'] : []),
+    ...(allows('agencies.read') || allows('admin') || allows('recruit') ? ['Agencies'] : []),
+    ...manage
   ];
 };
 // Every routable view is listed here so direct URL access can be checked
@@ -135,6 +152,9 @@ const initials=name=>escape(String(name).split(/\s+/).filter(Boolean).slice(0,2)
 const applyTheme=theme=>{document.documentElement.dataset.theme=theme;document.querySelector('meta[name="theme-color"]').content=theme==='midnight'?'#0b1322':'#111f35';};
 const brand=()=>`<div class="company-logo"><img src="/mechlin-logo.webp" alt="Mechlin Technologies" width="174" height="40"></div><div class="product-brand"><span class="orbit-symbol" aria-hidden="true"></span><span>Orbit<small>Talent workspace</small></span></div>`;
 const allows = p => permissions.includes(p) || grants.includes(p);
+// Persisted grants are authoritative. Legacy capability tokens are only a
+// fallback for sessions that have not received a grant list yet.
+const allowAction = (id, ...legacyFallback) => allows(id) || (!grants.length && legacyFallback.some(token => permissions.includes(token)));
 const canEditRolePermissions = role => allows('roles.update') && (!role?.is_system || role?.permissions_editable === true);
 const notice = (() => {
   const TOAST_DURATION = 2000;
@@ -1105,14 +1125,14 @@ async function render() {
     }
     if(current==='Overview') {
       const [stats,reqs]=await Promise.all([api('analytics'),api('requisitions')]);
-      html=heading(`Welcome back, ${escape(me.name.split(' ')[0])}. Let’s move great people forward.`,allows('recruit')?button('+ Add candidate','new-candidate'):'')+`<div class="metrics">${[['Open requisitions',stats.openRequisitions,'Requisitions','Ready for your next hire'],['Approved headcount',stats.approvedHeadcount,'Referrals','Positions approved to fill'],['Candidates',stats.candidates,'Candidates','People in your talent pool'],['Awaiting approval',stats.pendingApprovals,'Administration','Requisitions awaiting a decision']].map(([label,count,i,note],n)=>`<div class="metric metric-${n}"><div class="metric-top"><span>${label}</span><span class="metric-icon">${icon(i)}</span></div><strong>${count}</strong><small>${note}</small></div>`).join('')}</div><div class="split"><section class="panel"><div class="panel-head"><div><h2>Hiring momentum</h2><p class="muted">A snapshot of your recruitment pipeline</p></div><span class="subtle-label">Current applications</span></div>${Object.entries(stats.stageCounts).map(([stage,count],n)=>`<div class="bar-row stage-${n}"><span>${escape(stage)}</span><progress value="${count}" max="${Math.max(1,...Object.values(stats.stageCounts))}" aria-label="${escape(stage)}"></progress><strong>${count}</strong></div>`).join('')}</section><section class="panel panel-attention"><div class="panel-head"><div><h2>Needs your attention</h2><p class="muted">Keep the next hire moving</p></div><span class="count-pill">${stats.pendingApprovals}</span></div><div class="attention-list" id="attention-list">${reqs.filter(r=>r.status.startsWith('pending')).map(r=>`<div class="attention-card"><div class="attention-title">${icon('Requisitions')}<strong>${escape(r.title)}</strong></div><p class="muted">${escape(r.team)} · ${r.headcount} opening(s)</p><div class="attention-bottom">${badge(r.status)}${button('View role','req-details',r.id,'class="text-button"')}</div></div>`).join('')||empty('All caught up. No pending requisitions.')}</div><p class="panel-footnote">Approvals keep hiring aligned with your team’s plans.</p></section></div><section class="panel"><div class="panel-head"><div><h2>Recent requisitions</h2><p class="muted">The roles shaping your next chapter</p></div>${button('View all roles','navigate','','class="text-button" data-view="Requisitions"')}</div>${reqTable(reqs.slice(0,5))}</section>`;
+      html=heading(`Welcome back, ${escape(me.name.split(' ')[0])}. Let’s move great people forward.`,allowAction('candidates.create','recruit')?button('+ Add candidate','new-candidate'):'')+`<div class="metrics">${[['Open requisitions',stats.openRequisitions,'Requisitions','Ready for your next hire'],['Approved headcount',stats.approvedHeadcount,'Referrals','Positions approved to fill'],['Candidates',stats.candidates,'Candidates','People in your talent pool'],['Awaiting approval',stats.pendingApprovals,'Administration','Requisitions awaiting a decision']].map(([label,count,i,note],n)=>`<div class="metric metric-${n}"><div class="metric-top"><span>${label}</span><span class="metric-icon">${icon(i)}</span></div><strong>${count}</strong><small>${note}</small></div>`).join('')}</div><div class="split"><section class="panel"><div class="panel-head"><div><h2>Hiring momentum</h2><p class="muted">A snapshot of your recruitment pipeline</p></div><span class="subtle-label">Current applications</span></div>${Object.entries(stats.stageCounts).map(([stage,count],n)=>`<div class="bar-row stage-${n}"><span>${escape(stage)}</span><progress value="${count}" max="${Math.max(1,...Object.values(stats.stageCounts))}" aria-label="${escape(stage)}"></progress><strong>${count}</strong></div>`).join('')}</section><section class="panel panel-attention"><div class="panel-head"><div><h2>Needs your attention</h2><p class="muted">Keep the next hire moving</p></div><span class="count-pill">${stats.pendingApprovals}</span></div><div class="attention-list" id="attention-list">${reqs.filter(r=>r.status.startsWith('pending')).map(r=>`<div class="attention-card"><div class="attention-title">${icon('Requisitions')}<strong>${escape(r.title)}</strong></div><p class="muted">${escape(r.team)} · ${r.headcount} opening(s)</p><div class="attention-bottom">${badge(r.status)}${button('View role','req-details',r.id,'class="text-button"')}</div></div>`).join('')||empty('All caught up. No pending requisitions.')}</div><p class="panel-footnote">Approvals keep hiring aligned with your team’s plans.</p></section></div><section class="panel"><div class="panel-head"><div><h2>Recent requisitions</h2><p class="muted">The roles shaping your next chapter</p></div>${button('View all roles','navigate','','class="text-button" data-view="Requisitions"')}</div>${reqTable(reqs.slice(0,5))}</section>`;
     }
     if(current==='Requisitions') {
       const reqs=await api('requisitions');
       const {paged,page,totalPages,total,start}=paginate(reqs,pageState.Requisitions||1,10);
       pageState.Requisitions=page;reqPage=page;
       const pag=renderPagination('Requisitions',page,totalPages,total,start,10);
-      html=heading('Headcount, job descriptions and approval decisions.',allows('recruit')||allows('requisition')?button('+ New requisition','new-req'):'')+`<section class="panel">${reqTable(paged)}${pag}</section>`;
+      html=heading('Headcount, job descriptions and approval decisions.',allowAction('requisitions.create','requisition','recruit')?button('+ New requisition','new-req'):'')+`<section class="panel">${reqTable(paged)}${pag}</section>`;
     }
     if(current==='Agency portal') {
       html=heading('External agency collaboration is not available in this workspace yet.')+`<section class="panel"><h2>Agency portal is not available yet</h2><p class="muted">Agency functionality has not been enabled for this workspace. Your Agency role does not have access to the internal ATS. Contact your Talent Acquisition administrator if you need help with a submission.</p></section>`;
@@ -1137,7 +1157,7 @@ async function render() {
         const pag=renderPagination('Candidates',page,totalPages,total,start,10);
         return `${candidateTable(paged)}${pag}`;
       };
-      html=heading('Search skills, experience and candidate records.',allows('recruit')?button('+ Add candidate','new-candidate'):'')+`<section class="panel candidates-panel"><div class="panel-head"><h2>Candidate directory</h2><label class="search">Search<input id="candidate-search" type="search" placeholder="Search name, email or skill" value="${escape(candidateQuery)}"></label></div><div id="candidate-table">${renderCandidateTable()}</div></section>`;
+      html=heading('Search skills, experience and candidate records.',allowAction('candidates.create','recruit')?button('+ Add candidate','new-candidate'):'')+`<section class="panel candidates-panel"><div class="panel-head"><h2>Candidate directory</h2><label class="search">Search<input id="candidate-search" type="search" placeholder="Search name, email or skill" value="${escape(candidateQuery)}"></label></div><div id="candidate-table">${renderCandidateTable()}</div></section>`;
       queueMicrotask(()=>{
         const el=$('#candidate-search');
         if(el)el.oninput=()=>{
@@ -1150,7 +1170,7 @@ async function render() {
       const [apps,stages]=await Promise.all([api('applications'),api('pipeline')]);
       const isTerminalStage = s => ['Hired', 'Rejected', 'Revoked'].includes(s);
       const activeStages = stages.filter(s => !isTerminalStage(s));
-      html=heading('Move each application through a consistent hiring process.',allows('recruit')?button('+ Add application','new-application'):'')+
+      html=heading('Move each application through a consistent hiring process.',allowAction('applications.create','recruit')?button('+ Add application','new-application'):'')+
       `<div class="pipeline-wrapper">`+
         `<div class="pipeline-flow-legend" aria-label="Pipeline overview">`+
           `<div class="legend-active-flow">`+
@@ -1283,12 +1303,12 @@ async function render() {
               });
               const canSkipForward = skippableTargets.length > 0;
 
-              let actionsHtml = button('Skill match','match',a.id,'class="secondary"');
-              if (allows('recruit') && !isTerm) {
+              let actionsHtml = allowAction('applications.match','review','recruit') ? button('Skill match','match',a.id,'class="secondary"') : '';
+              if (allowAction('applications.update','recruit') && !isTerm) {
                 if (prevStage) {
                   actionsHtml += button(`Back to ${prevStage}`,'move',a.id,`data-stage="${escape(prevStage)}" class="secondary"`);
                 }
-                if (isTraining) {
+                if (isTraining && (allowAction('applications.evaluate','recruit') || allows('recruit') || allows('admin'))) {
                   actionsHtml += button('Training Details', 'view-training-details', a.id, 'class="secondary" title="View training history, evaluations, and deadline extensions" style="font-size:0.75rem;padding:4px 8px;"');
 
                   const isRevoked = a.offer_status === 'revoked';
@@ -1320,7 +1340,7 @@ async function render() {
                   if (hasPendingInv) {
                     const ready = feedbackReady(a.pending_interview);
                     const canSubmit = a.pending_interview.interviewer_id === me.id;
-                    const canProxy = allows('admin') && !canSubmit;
+                    const canProxy = (allowAction('interviews.proxy_evaluate','admin') || allows('admin')) && !canSubmit;
                     if (canSubmit && ready) {
                       actionsHtml += button('Submit Scorecard', 'scorecard', a.pending_interview.id, 'class="primary" style="font-size:0.75rem;padding:4px 8px;"');
                     } else if (canProxy && ready) {
@@ -1340,6 +1360,8 @@ async function render() {
                     actionsHtml += button('Revoke', 'revoke-app', a.id, 'class="secondary text-button" style="color:var(--negative);font-size:0.74rem;"');
                   }
                 }
+              } else if (isTraining && !isTerm && (allowAction('applications.evaluate','recruit') || allows('recruit') || allows('admin'))) {
+                actionsHtml += button('Rate & Next', 'rate-training', a.id, 'class="primary training-rate-btn"');
               }
 
               const headerTitle = trainingStatusBadge
@@ -1392,25 +1414,26 @@ async function render() {
           const invHint = i.invitation_error ? ` title="${escape(i.invitation_error)}"` : '';
           meetBadge += `<span class="badge" style="display:inline-flex;align-items:center;gap:4px;font-size:0.73rem;margin-top:4px;margin-left:4px;background:#fffbeb;color:#92400e;border:1px solid #fde68a;padding:2px 6px;border-radius:4px;"${invHint}>Invite failed</span>`;
         }
-        const canManageInterview = allows('interviews.update') || allows('recruit') || allows('admin');
+        const canManageInterview = allowAction('interviews.update','recruit') || allows('recruit') || allows('admin');
         const retryTeamsBtn = (i.status === 'planned' && !isPhysical && i.calendar_status === 'sync_failed' && canManageInterview)
           ? button('Retry Teams', 'retry-meeting', i.id, 'class="secondary text-button" style="color:var(--accent);font-size:0.74rem;"')
           : '';
         const retryInviteBtn = (i.status === 'planned' && i.invitation_status === 'failed' && canManageInterview)
           ? button('Retry Invite', 'retry-invitation', i.id, 'class="secondary text-button" style="color:var(--accent);font-size:0.74rem;"')
           : '';
-        const canEdit = i.status !== 'completed' && (allows('interviews.update') || allows('recruit') || allows('admin') || i.interviewer_id === me.id);
-        const canCancel = i.status === 'planned' && (allows('interviews.cancel') || allows('recruit') || allows('admin') || i.interviewer_id === me.id);
-        return `<tr><td><strong>${escape(i.name)}</strong>${escape(i.title)}</td><td>${escape(i.interviewer)}</td><td>${escape(formatDateTimeIST(i.scheduled_at))}${meetBadge}</td><td>${badge(i.status)}</td><td><div class="actions">${i.candidate_id ? button('Candidate', 'candidate-details', i.candidate_id, 'class="secondary"') : ''}${retryTeamsBtn}${retryInviteBtn}${canSubmit && ready ? button('Submit scorecard', 'scorecard', i.id) : ''}${canProxy && ready ? button('Proxy scorecard', 'scorecard-proxy', i.id, 'class="secondary"') : ''}${canEdit ? button('Edit', 'edit-interview', i.id, 'class="secondary"') : ''}${canCancel ? button('Cancel', 'cancel-interview', i.id, 'class="secondary"') : ''}${button('View feedback', 'feedback', i.id, 'class="secondary"')}${showLock ? `<span class="muted feedback-locked">${FEEDBACK_LOCKED_MESSAGE}</span>` : ''}</div></td></tr>`;
+        const canEdit = i.status !== 'completed' && (allowAction('interviews.update','recruit') || allows('recruit') || allows('admin') || i.interviewer_id === me.id);
+        const canCancel = i.status === 'planned' && (allowAction('interviews.cancel','recruit') || allows('recruit') || allows('admin') || i.interviewer_id === me.id);
+        const canViewFeedback = allowAction('interviews.feedback.read','interview','review','recruit') || allowAction('interviews.evaluate','interview') || allows('recruit') || allows('admin') || allows('review') || allows('interview');
+        return `<tr><td><strong>${escape(i.name)}</strong>${escape(i.title)}</td><td>${escape(i.interviewer)}</td><td>${escape(formatDateTimeIST(i.scheduled_at))}${meetBadge}</td><td>${badge(i.status)}</td><td><div class="actions">${i.candidate_id ? button('Candidate', 'candidate-details', i.candidate_id, 'class="secondary"') : ''}${retryTeamsBtn}${retryInviteBtn}${canSubmit && ready ? button('Submit scorecard', 'scorecard', i.id) : ''}${canProxy && ready ? button('Proxy scorecard', 'scorecard-proxy', i.id, 'class="secondary"') : ''}${canEdit ? button('Edit', 'edit-interview', i.id, 'class="secondary"') : ''}${canCancel ? button('Cancel', 'cancel-interview', i.id, 'class="secondary"') : ''}${canViewFeedback ? button('View feedback', 'feedback', i.id, 'class="secondary"') : ''}${showLock ? `<span class="muted feedback-locked">${FEEDBACK_LOCKED_MESSAGE}</span>` : ''}</div></td></tr>`;
       });
-      html=heading('Structured interviews, independent feedback.',allows('recruit')?button('+ Plan interview','new-interview'):'')+calNotice+`<section class="panel">${table(['Candidate / role','Interviewer','Scheduled (IST)','Status','Feedback'],rows)}${pag}</section>`;
+      html=heading('Structured interviews, independent feedback.',allowAction('interviews.schedule','recruit')?button('+ Plan interview','new-interview'):'')+calNotice+`<section class="panel">${table(['Candidate / role','Interviewer','Scheduled (IST)','Status','Feedback'],rows)}${pag}</section>`;
     }
     if(current==='Referrals') {
       const refs=await api('referrals');
       const {paged,page,totalPages,total,start}=paginate(refs,pageState.Referrals||1,10);
       pageState.Referrals=page;
       const pag=renderPagination('Referrals',page,totalPages,total,start,10);
-      const canProcess=allows('recruit');
+      const canProcess=allowAction('referrals.process','recruit');
       const scopeTitle=canProcess?'Employee referrals within your team scope':'Your referrals';
       const rows=paged.map(r=>{
         const position=r.requisition_title
@@ -1422,7 +1445,7 @@ async function render() {
         if(r.can_withdraw)actions.push(button('Withdraw','withdraw-referral',r.id,'class="secondary"'));
         return `<tr><td><button type="button" class="text-button person-link" data-action="referral-details" data-id="${escape(r.id)}" title="${escape(r.name)}">${escape(r.name)}</button></td><td>${escape(r.email)}</td><td>${position}</td><td class="referral-status-cell">${badge(r.status)}</td><td>${escape(formatDateIST(r.at))}</td><td>${escape(r.referrer_name||'You')}</td><td><div class="actions">${actions.join('')}</div></td></tr>`;
       });
-      html=heading(canProcess?`Review employee referrals for ${escape(me.team||'your organization')}.`:'Recommend a colleague for an open position.',button('+ Make referral','new-referral'))+`<section class="panel"><h2>${scopeTitle}</h2>${table(['Candidate','Email','Job Position','Referral Status','Referred','Referrer','Actions'],rows,'referrals-table')}${pag}</section>`;
+      html=heading(canProcess?`Review employee referrals for ${escape(me.team||'your organization')}.`:'Recommend a colleague for an open position.',allowAction('referrals.create','refer')?button('+ Make referral','new-referral'):'')+`<section class="panel"><h2>${scopeTitle}</h2>${table(['Candidate','Email','Job Position','Referral Status','Referred','Referrer','Actions'],rows,'referrals-table')}${pag}</section>`;
     }
     if(current==='Offer Templates') {
       const [templates, assets] = await Promise.all([
@@ -1433,15 +1456,17 @@ async function render() {
       const draftCount = templates.filter(t => t.status === 'draft').length;
       const defaultTpl = templates.find(t => t.is_default);
 
-      html=heading('Design company-branded templates, manage letterheads, and configure dynamic A4 offer documents.',button('+ New Template','new-offer-template'))+
+      const canManageTemplates=allowAction('offers.templates.manage','recruit') || allows('recruit') || allows('admin');
+      const canManageAssets=allowAction('offers.assets.manage','recruit') || allows('recruit') || allows('admin');
+      html=heading('Design company-branded templates, manage letterheads, and configure dynamic A4 offer documents.',`<div style="display:flex;gap:8px;">${canManageTemplates?button('+ New Template','new-offer-template'):''}${canManageAssets?button('Upload Letterhead','upload-letterhead','','class="secondary"'):''}</div>`)+
       `<div class="metrics">${[['Total templates',templates.length,'Offer Templates','Configured offer templates'],['Active templates',activeCount,'Requisitions','Available for candidate offers'],['Draft templates',draftCount,'Settings','In design and revision'],['Default template',defaultTpl?defaultTpl.name:'None','Candidates',defaultTpl?`v${defaultTpl.version} (Active)`:'Auto-selected for new offers']].map(([label,count,i,note],n)=>`<div class="metric metric-${n}"><div class="metric-top"><span>${label}</span><span class="metric-icon">${icon(i)}</span></div><strong style="font-size:1.15rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${count}</strong><small>${note}</small></div>`).join('')}</div>`+
       `<section class="panel"><div class="panel-head"><div><h2>Offer Letter Templates</h2><p class="muted">Reusable templates with multi-page A4 flow, dynamic variables, and salary annexures</p></div></div>${templates.length?table(['Template name','Version','Status','Letterhead','Updated','Actions'],templates.map(t=>{
         const hasBg = t.background_config?.assetId || t.background_config?.firstPageAssetId;
         const bgBadge = hasBg ? `<span class="badge" style="background:#e0f2fe;color:#0369a1;">Stationery</span>` : `<span class="muted" style="font-size:0.75rem;">Standard A4</span>`;
         const defBadge = t.is_default ? ` <span class="badge" style="background:#fef3c7;color:#92400e;margin-left:6px;">Default</span>` : '';
-        return `<tr><td><strong>${escape(t.name)}</strong>${defBadge}<br><small class="muted">${escape(t.description||'No description')}</small></td><td style="text-align:center;"><span class="badge mono" style="font-size:0.75rem;">v${t.version}</span></td><td style="text-align:center;">${badge(t.status)}</td><td>${bgBadge}</td><td>${escape(formatDateIST(t.updated_at))}</td><td><div class="plan-actions-group">${button('Preview','preview-template',t.id,'class="plan-btn-action plan-btn-secondary"')}${button('Edit','edit-template',t.id,'class="plan-btn-action plan-btn-primary"')}${button('Duplicate','duplicate-template',t.id,'class="plan-btn-icon" title="Duplicate template"')}${!t.is_default?button('Set Default','set-template-default',t.id,'class="plan-btn-icon" title="Set as default"'):''}${t.status!=='archived'?button('Archive','archive-template',t.id,'class="plan-btn-icon plan-btn-danger" title="Archive"'):button('Activate','activate-template',t.id,'class="plan-btn-icon plan-btn-success" title="Activate"')}</div></td></tr>`;
+        return `<tr><td><strong>${escape(t.name)}</strong>${defBadge}<br><small class="muted">${escape(t.description||'No description')}</small></td><td style="text-align:center;"><span class="badge mono" style="font-size:0.75rem;">v${t.version}</span></td><td style="text-align:center;">${badge(t.status)}</td><td>${bgBadge}</td><td>${escape(formatDateIST(t.updated_at))}</td><td><div class="plan-actions-group">${button('Preview','preview-template',t.id,'class="plan-btn-action plan-btn-secondary"')}${canManageTemplates?`${button('Edit','edit-template',t.id,'class="plan-btn-action plan-btn-primary"')}${button('Duplicate','duplicate-template',t.id,'class="plan-btn-icon" title="Duplicate template"')}${!t.is_default?button('Set Default','set-template-default',t.id,'class="plan-btn-icon" title="Set as default"'):''}${t.status!=='archived'?button('Archive','archive-template',t.id,'class="plan-btn-icon plan-btn-danger" title="Archive"'):button('Activate','activate-template',t.id,'class="plan-btn-icon plan-btn-success" title="Activate"')}`:''}</div></td></tr>`;
       }), 'offer-templates-table') : empty('No offer templates created yet. Click "+ New Template" to create your first company offer letter.')}</section>`+
-      `<section class="panel"><div class="panel-head"><div><h2>Company Letterhead & Background Stationery</h2><p class="muted">Upload official PNG, JPG, PDF, or DOCX stationery for multi-page branding</p></div>${button('+ Upload Letterhead','upload-letterhead','','class="secondary"')}</div>${assets.length?table(['Asset name','Format','Dimensions','File size','Uploaded','Actions'],assets.map(a=>`<tr><td><strong>${escape(a.name||a.filename)}</strong><br><small class="muted mono">${escape(a.filename)}</small></td><td><span class="badge mono" style="font-size:0.72rem;text-transform:uppercase;">${escape(a.file_format||a.format)}</span></td><td><small class="mono">${a.width&&a.height?`${a.width} × ${a.height} px`:'A4 Document'}</small></td><td><small class="mono">${a.file_size?`${Math.round(a.file_size/1024)} KB`:'—'}</small></td><td>${escape(formatDateIST(a.created_at))}</td><td><div class="plan-actions-group"><a href="/api/offer-letter-assets/${a.id}" target="_blank" class="button secondary" style="font-size:0.78rem;padding:4px 8px;">View File</a>${button('Delete','delete-letterhead-asset',a.id,'class="plan-btn-icon plan-btn-danger" title="Delete letterhead asset"')}</div></td></tr>`)):empty('No company letterhead uploaded yet. Click "+ Upload Letterhead" to add company stationery.')}</section>`;
+      `<section class="panel"><div class="panel-head"><div><h2>Company Letterhead & Background Stationery</h2><p class="muted">Upload official PNG, JPG, PDF, or DOCX stationery for multi-page branding</p></div>${canManageAssets?button('+ Upload Letterhead','upload-letterhead','','class="secondary"'):''}</div>${assets.length?table(['Asset name','Format','Dimensions','File size','Uploaded','Actions'],assets.map(a=>`<tr><td><strong>${escape(a.name||a.filename)}</strong><br><small class="muted mono">${escape(a.filename)}</small></td><td><span class="badge mono" style="font-size:0.72rem;text-transform:uppercase;">${escape(a.file_format||a.format)}</span></td><td><small class="mono">${a.width&&a.height?`${a.width} × ${a.height} px`:'A4 Document'}</small></td><td><small class="mono">${a.file_size?`${Math.round(a.file_size/1024)} KB`:'—'}</small></td><td>${escape(formatDateIST(a.created_at))}</td><td><div class="plan-actions-group"><a href="/api/offer-letter-assets/${a.id}" target="_blank" class="button secondary" style="font-size:0.78rem;padding:4px 8px;">View File</a>${canManageAssets?button('Delete','delete-letterhead-asset',a.id,'class="plan-btn-icon plan-btn-danger" title="Delete letterhead asset"'):''}</div></td></tr>`)):empty('No company letterhead uploaded yet. Click "+ Upload Letterhead" to add company stationery.')}</section>`;
     }
     if(current==='Training Plans') {
       const templates = await api('training-plans/templates').catch(() => []);
@@ -1464,7 +1489,8 @@ async function render() {
         );
       }
 
-      html = heading('Configure position- and role-specific training plans, learning resources, and candidate preparation workflows.', button('+ New Training Plan','new-training-template'))+
+      const canManageTraining=allowAction('applications.evaluate','recruit') || allows('recruit') || allows('admin');
+      html = heading('Configure position- and role-specific training plans, learning resources, and candidate preparation workflows.', canManageTraining?button('+ New Training Plan','new-training-template'):'')+
       `<div class="metrics">${[['Total plans',templates.length,'Training Plans','Configured training plans'],['Active plans',activeCount,'Requisitions','Available for candidate training'],['Draft plans',draftCount,'Settings','In design and revision'],['Default plan',defaultTpl?defaultTpl.name:'None','Candidates',defaultTpl?`v${defaultTpl.version} (Active)`:'Auto-selected fallback']].map(([label,count,i,note],n)=>`<div class="metric metric-${n}"><div class="metric-top"><span>${label}</span><span class="metric-icon">${icon(i)}</span></div><strong style="font-size:1.15rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${count}</strong><small>${note}</small></div>`).join('')}</div>`+
       `<section class="panel">`+
         `<div class="training-toolbar">`+
@@ -1638,7 +1664,8 @@ async function render() {
       html=heading('Administrative actions, authentication and hiring changes.')+filters+`<section class="panel"><p class="muted">Filtered audit results, newest first. Access changes and authorization denials are recorded here.</p>${table(['Time (IST)','Event','Actor','Target','Detail'],rows)}${pag}</section>`;
     }
     if(current==='Settings') {
-      html=heading('Make Orbit feel like your team’s workspace.')+`<section class="panel appearance-panel"><div class="panel-head"><div><h2>Appearance</h2><p class="muted">Choose a look that helps your team do their best work.</p></div><span class="subtle-label">${icon('Administration')} Admin controlled</span></div><form id="appearance-form"><fieldset class="theme-fieldset"><legend>Workspace theme</legend><div class="theme-grid">${appearance.themes.map(t=>`<label class="theme-option"><input type="radio" name="theme" value="${t.id}" ${t.id===appearance.theme?'checked':''}><span class="theme-thumbnail theme-${t.id}"><span class="mini-sidebar"><i></i><i></i><i></i></span><span class="mini-workspace"><span class="mini-topline"></span><span class="mini-metrics"><i></i><i></i><i></i></span><span class="mini-panel"><i></i><i></i><i></i></span></span><span class="theme-check" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span></span><span class="theme-name">${t.name}</span><span class="theme-description">${t.description}</span></label>`).join('')}</div></fieldset><div class="theme-scope">${icon('Candidates')}<div><strong>One look, for the whole team</strong><p>The saved theme applies to every user and the sign-in screen. Existing sessions pick it up on their next page change or refresh.</p></div></div><p id="appearance-status" role="status" aria-live="polite" class="muted">${escape(appearance.themes.find(t=>t.id===appearance.theme).name)} is your saved workspace theme.</p><div class="settings-actions"><button type="button" class="secondary" data-action="reset-theme">Reset preview</button><button type="submit" id="save-theme" disabled>Save workspace theme</button></div></form></section><section class="panel brand-panel"><div><p class="eyebrow">OUR WORKSPACE</p><h2>Orbit, by Mechlin</h2><p class="muted">A place for people, possibility and your next great hire.</p></div><div class="brand-lockup"><img src="/mechlin-logo.webp" alt="Mechlin Technologies" width="174" height="40"></div></section>`;
+      const canSaveTheme=allows('settings.update');
+      html=heading('Make Orbit feel like your team’s workspace.')+`<section class="panel appearance-panel"><div class="panel-head"><div><h2>Appearance</h2><p class="muted">Choose a look that helps your team do their best work.</p></div><span class="subtle-label">${icon('Administration')} Admin controlled</span></div><form id="appearance-form"><fieldset class="theme-fieldset" ${canSaveTheme?'':'disabled'}><legend>Workspace theme</legend><div class="theme-grid">${appearance.themes.map(t=>`<label class="theme-option"><input type="radio" name="theme" value="${t.id}" ${t.id===appearance.theme?'checked':''} ${canSaveTheme?'':'disabled'}><span class="theme-thumbnail theme-${t.id}"><span class="mini-sidebar"><i></i><i></i><i></i></span><span class="mini-workspace"><span class="mini-topline"></span><span class="mini-metrics"><i></i><i></i><i></i></span><span class="mini-panel"><i></i><i></i><i></i></span></span><span class="theme-check" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span></span><span class="theme-name">${t.name}</span><span class="theme-description">${t.description}</span></label>`).join('')}</div></fieldset><div class="theme-scope">${icon('Candidates')}<div><strong>One look, for the whole team</strong><p>The saved theme applies to every user and the sign-in screen. Existing sessions pick it up on their next page change or refresh.</p></div></div><p id="appearance-status" role="status" aria-live="polite" class="muted">${escape(appearance.themes.find(t=>t.id===appearance.theme).name)} is your saved workspace theme.</p><div class="settings-actions">${canSaveTheme?`<button type="button" class="secondary" data-action="reset-theme">Reset preview</button><button type="submit" id="save-theme" disabled>Save workspace theme</button>`:'<p class="muted">You can view the workspace theme. Saving it requires settings update permission.</p>'}</div></form></section><section class="panel brand-panel"><div><p class="eyebrow">OUR WORKSPACE</p><h2>Orbit, by Mechlin</h2><p class="muted">A place for people, possibility and your next great hire.</p></div><div class="brand-lockup"><img src="/mechlin-logo.webp" alt="Mechlin Technologies" width="174" height="40"></div></section>`;
     }
     if(current==='Pipeline settings') {
       const stages=await api('pipeline');
@@ -1900,7 +1927,7 @@ async function render() {
 function reqTable(reqs) {return table(['Position','Team','Headcount','Status','Actions'],reqs.map(r=>{
   const canReviewManager = r.status==='pending_manager' && allows('approve_manager') && (r.created_by !== me?.id || allows('requisitions.override') || allows('system.override'));
   const canReviewFinance = r.status==='pending_finance' && allows('approve_finance') && (r.created_by !== me?.id || allows('requisitions.override') || allows('system.override'));
-  return `<tr><td><strong>${escape(r.title)}</strong><small>${escape(r.skills.join(', '))}</small></td><td>${escape(r.team)}</td><td>${r.headcount}</td><td>${badge(r.status)}</td><td><div class="actions">${button('Details','req-details',r.id,'class="secondary"')}${['draft','open'].includes(r.status)&&(allows('recruit')||allows('requisition'))?button('Edit','edit-req',r.id,'class="secondary"'):''}${r.status==='draft'&&(allows('recruit')||allows('requisition'))?button('Submit','submit-req',r.id):''}${(canReviewManager||canReviewFinance)?button('Review','approve-req',r.id):''}</div></td></tr>`;
+  return `<tr><td><strong>${escape(r.title)}</strong><small>${escape(r.skills.join(', '))}</small></td><td>${escape(r.team)}</td><td>${r.headcount}</td><td>${badge(r.status)}</td><td><div class="actions">${button('Details','req-details',r.id,'class="secondary"')}${['draft','open'].includes(r.status)&&allowAction('requisitions.update','requisition','recruit')?button('Edit','edit-req',r.id,'class="secondary"'):''}${r.status==='draft'&&allowAction('requisitions.submit','requisition','recruit')?button('Submit','submit-req',r.id):''}${(canReviewManager||canReviewFinance)?button('Review','approve-req',r.id):''}</div></td></tr>`;
 }),'requisitions-table');}
 const requisitionSectionHeadings=new Set(['purpose','role overview','about the role','required skills','required skills and experience','responsibilities','key responsibilities','what success looks like','interview process','accessibility']);
 const requisitionHeading=line=>{const label=line.trim().replace(/\s*:\s*$/,'');return requisitionSectionHeadings.has(label.toLowerCase())?label:null;};
@@ -1922,7 +1949,7 @@ function requisitionDescription(value='') {
   return html;
 }
 function requisitionDetail(r,{readOnly=false}={}) {
-  const canEdit=!readOnly&&((['draft','open'].includes(r.status)||((allows('requisitions.override')||allows('system.override'))&&['pending_manager','pending_finance'].includes(r.status)))&&(allows('recruit')||allows('requisition')));
+  const canEdit=!readOnly&&((['draft','open'].includes(r.status)||((allows('requisitions.override')||allows('system.override'))&&['pending_manager','pending_finance'].includes(r.status)))&&allowAction('requisitions.update','requisition','recruit'));
   const skillsList=Array.isArray(r.skills)?r.skills:[];
   return `<div class="requisition-detail"><p class="detail-meta">${badge(r.status)} · ${escape(r.team)} · ${r.headcount} opening(s)</p>${r.salary_min!==undefined?`<p class="detail-salary">${r.salary_min}–${r.salary_max} ${escape(r.currency)}</p>`:''}${requisitionDescription(r.description)}${skillsList.length?`<h3 class="detail-section-title">Required skills</h3><div class="skill-list">${skillsList.map(s=>`<span class="skill-chip">${escape(s)}</span>`).join('')}</div>`:''}${readOnly?`<p class="read-only-note" role="status">${icon('Administration')}<span>Read-only view. Editing is available from the Requisitions page for authorized users.</span></p>`:''}${canEdit?`<div class="actions detail-actions">${button('Edit','edit-req',r.id)}</div>`:''}</div>`;
 }
@@ -1933,7 +1960,7 @@ function candidateStatusCell(c){
     return `<div class="candidate-status-pair"><span class="candidate-status-role" title="${title}">${title}</span> <span class="status-sep" aria-hidden="true">—</span> ${badge(a.stage||'Applied')}</div>`;
   }).join('')}</div>`;
 }
-function candidateTable(cs){return table(['Candidate','Skills','Source','Status','Actions'],cs.map(c=>`<tr><td><div class="person-cell"><span class="avatar">${initials(c.name)}</span><div><strong title="${escape(c.name)}">${escape(c.name)}</strong><small title="${escape(c.email)}">${escape(c.email)}</small></div></div></td><td><div class="skill-list">${c.skills.map(s=>`<span class="skill-chip" title="${escape(s)}">${escape(s)}</span>`).join('')}</div></td><td><span title="${escape(c.source)}">${escape(c.source)}</span></td><td>${candidateStatusCell(c)}</td><td><div class="actions">${button('View profile','candidate-details',c.id,'class="secondary"')}${allows('recruit')?button('Edit','edit-candidate',c.id,'class="secondary"'):''}</div></td></tr>`),'candidates-table');}
+function candidateTable(cs){return table(['Candidate','Skills','Source','Status','Actions'],cs.map(c=>`<tr><td><div class="person-cell"><span class="avatar">${initials(c.name)}</span><div><strong title="${escape(c.name)}">${escape(c.name)}</strong><small title="${escape(c.email)}">${escape(c.email)}</small></div></div></td><td><div class="skill-list">${c.skills.map(s=>`<span class="skill-chip" title="${escape(s)}">${escape(s)}</span>`).join('')}</div></td><td><span title="${escape(c.source)}">${escape(c.source)}</span></td><td>${candidateStatusCell(c)}</td><td><div class="actions">${button('View profile','candidate-details',c.id,'class="secondary"')}${allowAction('candidates.update','recruit')?button('Edit','edit-candidate',c.id,'class="secondary"'):''}</div></td></tr>`),'candidates-table');}
 
 
 function getIntegrationFeatureTags(item) {
@@ -4487,7 +4514,7 @@ document.addEventListener('click',async event=>{
         if(allows('requisitions.override')||allows('system.override')) payload.admin_override = true;
         await api(`requisitions/${id}`,'PUT',payload);
         return 'Requisition updated successfully.';
-      },{ actions: formActions({ deleteAction:'delete-req', deleteId:id }) });
+      },{ actions: formActions({ deleteAction: allowAction('requisitions.delete','requisition','recruit') ? 'delete-req' : '', deleteId:id }) });
       bindValidation('currency',checkCurrency);
       bindValidation('skills',checkSkills);
       bindSalaryInput('salary_min');
@@ -4594,7 +4621,7 @@ document.addEventListener('click',async event=>{
         const normTeam = normalizeTeam(v.team) || v.team;
         await api(`candidates/${id}`,'PUT',{...v,team:normTeam,skills:skills(v.skills),experience:v.resume_text,resume_id:v.resume_id||undefined});
         return 'Candidate updated successfully.';
-      },{ actions: formActions({ deleteAction: inPipeline ? '' : 'delete-candidate', deleteId: id }) });
+      },{ actions: formActions({ deleteAction: (!inPipeline && allowAction('candidates.delete','recruit')) ? 'delete-candidate' : '', deleteId: id }) });
       bindValidation('email',checkEmail);
       bindValidation('phone',checkPhone);
       bindValidation('skills',checkSkills);
@@ -4757,22 +4784,22 @@ document.addEventListener('click',async event=>{
 
           // Document action button:
           const docAction = isDone
-            ? `<a href="/api/signatures/${s.id}/document?version=signed" target="_blank" class="button" style="font-size:0.78rem;padding:5px 12px;">Download Signed PDF</a>`
-            : `<a href="/api/signatures/${s.id}/document?version=original" target="_blank" class="button secondary" style="font-size:0.78rem;padding:5px 12px;">View Document</a>`;
+            ? (allowAction('signatures.download','recruit') ? `<a href="/api/signatures/${s.id}/document?version=signed" target="_blank" class="button" style="font-size:0.78rem;padding:5px 12px;">Download Signed PDF</a>` : '')
+            : (allowAction('signatures.read','review','recruit') || allowAction('offers.read','review','recruit') ? `<a href="/api/signatures/${s.id}/document?version=original" target="_blank" class="button secondary" style="font-size:0.78rem;padding:5px 12px;">View Document</a>` : '');
 
           // Resend email invitation button:
-          const sendEmailBtn = (isPending && allows('recruit'))
+          const sendEmailBtn = (isPending && allowAction('signatures.manage','recruit'))
             ? `<button type="button" class="button secondary" data-action="resend-sig-email" data-id="${s.id}" data-candidate-id="${c.id}" style="font-size:0.78rem;padding:5px 11px;" title="Invitation email was dispatched upon request creation. Click to resend to candidate.">Resend Email</button>`
             : '';
 
           // Copy sign link ONLY if pending/viewed - NEVER when completed, cancelled, or declined
           const firstSigner = (s.signers && s.signers[0]) || null;
-          const copyLinkBtn = (isPending)
+          const copyLinkBtn = (isPending && allowAction('signatures.manage','recruit'))
             ? `<button type="button" class="button secondary" data-action="copy-sig-link" data-id="${s.id}" data-token="${escape(firstSigner?.token || '')}" style="font-size:0.78rem;padding:5px 11px;" title="Copy secure electronic signing link">Copy Link</button>`
             : '';
 
           // Cancel action ONLY if pending/viewed
-          const cancelBtn = (isPending && allows('recruit'))
+          const cancelBtn = (isPending && allowAction('signatures.manage','recruit'))
             ? `<button type="button" class="secondary text-button" data-action="cancel-signature-request" data-id="${s.id}" data-candidate-id="${c.id}" style="font-size:0.78rem;color:var(--negative);padding:0 6px;">Cancel</button>`
             : '';
 
@@ -4918,9 +4945,11 @@ document.addEventListener('click',async event=>{
         `;
       }
 
-      const showFooterOfferBtn = allows('recruit') && signatureState.eligible && !hasCompleted && !hasActivePending;
+      const showFooterOfferBtn = (allowAction('offers.create','recruit') || allowAction('signatures.request','recruit')) && signatureState.eligible && !hasCompleted && !hasActivePending;
       const offerFooterBtn = showFooterOfferBtn ? button('Offer & E-Sign','new-signature-request',c.id,'class="secondary" style="margin-right:8px;"') : '';
-      const emailAction = allows('recruit') ? `${offerFooterBtn}${button('Send email','send-candidate-email',c.id,'class="primary" style="margin-right:8px;"')}${button('Edit','edit-candidate',c.id,'class="secondary"')}` : '';
+      const canEmailCandidate = allowAction('candidates.communications.send','recruit');
+      const canEditCandidate = allowAction('candidates.update','recruit');
+      const emailAction = (showFooterOfferBtn || canEmailCandidate || canEditCandidate) ? `${offerFooterBtn}${canEmailCandidate?button('Send email','send-candidate-email',c.id,'class="primary" style="margin-right:8px;"'):''}${canEditCandidate?button('Edit','edit-candidate',c.id,'class="secondary"'):''}` : '';
       const limitedNotice = limitedView
         ? `<div class="notice-inline" role="status" style="margin-bottom:12px;"><strong>Interviewer access:</strong> You can see this candidate's contact details, skills and the applications linked to your assigned interviews. Resume files, offer data and unrelated applications are restricted.</div>`
         : '';
@@ -6077,7 +6106,7 @@ document.addEventListener('click',async event=>{
       const reductionsBlock = (r.reasons_for_reductions && r.reasons_for_reductions.length)
         ? `<div style="margin:8px 0;"><h4 style="margin:0 0 4px;font-size:0.85rem;">Score Deductions & Notes</h4><ul style="font-size:0.82rem;margin:0;padding-left:18px;">${r.reasons_for_reductions.map(red=>`<li>${escape(red)}</li>`).join('')}</ul></div>`
         : '';
-      const recalcAction = allows('recruit')
+      const recalcAction = allowAction('applications.match','recruit')
         ? `<div style="margin-top:10px;">${button('Recalculate match','recalc-match',id,'class="secondary" style="font-size:0.82rem;"')}</div>`
         : '';
       modal('Skill match explanation',`
@@ -6846,13 +6875,13 @@ document.addEventListener('click',async event=>{
       const ass = details.assignments || ag.assignments || [];
       const subs = details.submissions || ag.submissions || [];
 
-      const statusActionButtons = (allows('agencies.update') || allows('agencies.delete')) ? `
+      const statusActionButtons = (allows('agencies.update') || allows('agencies.delete') || allows('agencies.assign')) ? `
         <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
-          ${ag.status!=='active'?button('Activate agency','set-agency-status',ag.id,'data-status="active" class="primary"'):''}
-          ${ag.status==='active'?button('Suspend agency','set-agency-status',ag.id,'data-status="suspended" class="secondary"'):''}
-          ${ag.status!=='deactivated'?button('Deactivate agency','set-agency-status',ag.id,'data-status="deactivated" class="secondary"'):''}
-          ${button('Assign role','agency-assign-job',ag.id,'class="secondary"')}
-          ${button('Add recruiter','agency-add-recruiter-modal',ag.id,'class="secondary"')}
+          ${allows('agencies.update') && ag.status!=='active'?button('Activate agency','set-agency-status',ag.id,'data-status="active" class="primary"'):''}
+          ${allows('agencies.update') && ag.status==='active'?button('Suspend agency','set-agency-status',ag.id,'data-status="suspended" class="secondary"'):''}
+          ${allows('agencies.delete') && ag.status!=='deactivated'?button('Deactivate agency','set-agency-status',ag.id,'data-status="deactivated" class="secondary"'):''}
+          ${allows('agencies.assign')?button('Assign role','agency-assign-job',ag.id,'class="secondary"'):''}
+          ${allows('agencies.update')?button('Add recruiter','agency-add-recruiter-modal',ag.id,'class="secondary"'):''}
         </div>
       ` : '';
 
@@ -6875,7 +6904,7 @@ document.addEventListener('click',async event=>{
       const subsList = subs.length ? `
         <div class="table-wrap" style="margin-top:8px;">
           <table class="table"><thead><tr><th scope="col">Ref</th><th scope="col">Candidate</th><th scope="col">Role</th><th scope="col">Status</th><th scope="col">Feedback</th></tr></thead>
-          <tbody>${subs.map(s=>`<tr><td class="mono">${escape(s.submission_ref)}</td><td><strong>${escape(s.candidate_name)}</strong></td><td>${escape(s.requisition_title)}</td><td>${badge(s.agency_status)}</td><td>${button('Publish feedback','publish-agency-feedback',s.id,'class="secondary text-button"')}</td></tr>`).join('')}</tbody>
+          <tbody>${subs.map(s=>`<tr><td class="mono">${escape(s.submission_ref)}</td><td><strong>${escape(s.candidate_name)}</strong></td><td>${escape(s.requisition_title)}</td><td>${badge(s.agency_status)}</td><td>${allows('agencies.feedback')?button('Publish feedback','publish-agency-feedback',s.id,'class="secondary text-button"'):(s.published_feedback?'Published':'—')}</td></tr>`).join('')}</tbody>
           </table>
         </div>
       ` : '<p class="muted" style="font-size:0.85rem;margin-top:6px;">No candidate submissions received from this agency yet.</p>';
