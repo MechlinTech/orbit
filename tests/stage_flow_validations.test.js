@@ -96,7 +96,7 @@ test('Stage Flow: Scheduled interview blocks moving forward until scorecard rati
   );
 
   // Mark interview time as past so scorecard can be submitted
-  f.db.prepare("UPDATE interviews SET scheduled_at = datetime('now', '-1 hour') WHERE id = ?").run(interview.id);
+  f.db.prepare("UPDATE interviews SET scheduled_at = ? WHERE id = ?").run(new Date(Date.now() - 3600000).toISOString(), interview.id);
 
   // Submit scorecard with passing recommendation
   service(f.db, f.interviewer, 'POST', `interviews/${interview.id}/scorecards`, {
@@ -123,7 +123,7 @@ test('Stage Flow: Negative scorecard recommendation blocks advancing without adm
     competencies: ['Coding'],
     round: 'Screening Round'
   });
-  f.db.prepare("UPDATE interviews SET scheduled_at = datetime('now', '-1 hour') WHERE id = ?").run(interview.id);
+  f.db.prepare("UPDATE interviews SET scheduled_at = ? WHERE id = ?").run(new Date(Date.now() - 3600000).toISOString(), interview.id);
 
   // Submit scorecard with 'No' recommendation
   service(f.db, f.interviewer, 'POST', `interviews/${interview.id}/scorecards`, {
