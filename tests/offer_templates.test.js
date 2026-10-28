@@ -12,7 +12,7 @@ import { createSignatureRequest, getSignatureRequest } from '../src/signature/se
 import {
   listOfferTemplates, getOfferTemplate, createOfferTemplate, updateOfferTemplate,
   duplicateOfferTemplate, setOfferTemplateStatus, uploadLetterheadAsset,
-  previewOfferTemplate, compileTemplateToPdf
+  previewOfferTemplate, compileTemplateToPdf, listOfferLetterAssets, deleteOfferLetterAsset
 } from '../src/signature/template_service.js';
 import {
   VARIABLE_REGISTRY, resolveOfferVariables, validateTemplateVariables,
@@ -422,5 +422,26 @@ test('Offer Letter Module: HTTP service API endpoints for variables, templates, 
   });
   assert.ok(asset.id);
   assert.equal(asset.format, 'png');
+  assert.equal(asset.name, 'PNG Logo Header');
+
+  // 9. GET /offer-letter-assets (listing assets)
+  const assetsList = await service(db, recruiter, 'GET', 'offer-letter-assets');
+  assert.ok(Array.isArray(assetsList));
+  assert.equal(assetsList.length, 1);
+  assert.equal(assetsList[0].id, asset.id);
+  assert.equal(assetsList[0].name, 'PNG Logo Header');
+  assert.equal(assetsList[0].scaling_mode, 'fit');
+  assert.equal(assetsList[0].page_target, 'first_page');
+
+  // 10. GET /offer-letter-assets/:id (raw download)
+  const rawAsset = await service(db, recruiter, 'GET', `offer-letter-assets/${asset.id}`);
+  assert.equal(rawAsset.isRaw, true);
+  assert.equal(rawAsset.contentType, 'image/png');
+
+  // 11. DELETE /offer-letter-assets/:id
+  const delRes = await service(db, recruiter, 'DELETE', `offer-letter-assets/${asset.id}`);
+  assert.equal(delRes.success, true);
+  const assetsAfterDelete = await service(db, recruiter, 'GET', 'offer-letter-assets');
+  assert.equal(assetsAfterDelete.length, 0);
 });
 

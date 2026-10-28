@@ -1192,5 +1192,855 @@ input[type="checkbox"],input[type="radio"]{width:18px!important;min-height:18px!
 .audit-detail{max-height:220px;overflow:auto;background:var(--surface-alt);border:1px solid var(--line);border-radius:6px;padding:8px;font-size:.72rem;white-space:pre-wrap;overflow-wrap:anywhere;margin:6px 0 0}
 .role-history table{margin-top:4px}
 
+/* ==========================================================================
+   Pre-Onboarding Training Plans & Review Popup
+   ========================================================================== */
+
+#modal[open]:has(.training-studio),
+#modal[open]:has(.training-plan-review-modal) {
+  max-width: 1380px;
+  width: 96vw;
+  height: 92vh;
+  max-height: 92vh;
+  padding: 0;
+  overflow: hidden;
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+}
+#modal[open]:has(.training-studio) #close-modal,
+#modal[open]:has(.training-plan-review-modal) #close-modal {
+  top: 12px;
+  right: 14px;
+}
+#modal[open]:has(.training-studio) #modal-body,
+#modal[open]:has(.training-plan-review-modal) #modal-body {
+  padding: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.training-studio,
+.training-plan-review-modal {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  width: 100%;
+  background: var(--surface);
+}
+
+.training-studio-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.training-studio-header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 280px;
+}
+
+.training-studio-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-right: 36px;
+}
+
+.training-studio-layout {
+  display: grid;
+  grid-template-columns: minmax(480px, 1.25fr) minmax(380px, 1fr);
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+@media (max-width: 1080px) {
+  .training-studio-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.training-studio-editor {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--line);
+  background: var(--surface);
+  overflow-y: auto;
+  padding: 16px 20px;
+  gap: 16px;
+}
+
+.training-studio-preview {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--surface-alt);
+  padding: 16px;
+  overflow: hidden;
+}
+
+.training-studio-preview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 10px;
+  flex-shrink: 0;
+}
+
+.training-studio-preview-frame-wrap {
+  flex: 1;
+  min-height: 0;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow-y: auto;
+  box-shadow: inset 0 1px 4px rgba(0,0,0,.03);
+  position: relative;
+  padding: 16px;
+}
+
+.training-warning-banner {
+  background: #fffbeb;
+  border: 1px solid #fef3c7;
+  border-left: 4px solid #f59e0b;
+  border-radius: 6px;
+  padding: 10px 14px;
+  font-size: 0.82rem;
+  color: #92400e;
+  line-height: 1.5;
+}
+
+.training-ambiguity-banner {
+  background: #fef2f2;
+  border: 1px solid #fee2e2;
+  border-left: 4px solid #ef4444;
+  border-radius: 6px;
+  padding: 10px 14px;
+  font-size: 0.82rem;
+  color: #991b1b;
+  line-height: 1.5;
+}
+
+.training-match-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 550;
+  background: #ecfdf5;
+  color: #065f46;
+  border: 1px solid #a7f3d0;
+}
+
+.training-section-card {
+  background: var(--surface-alt);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  position: relative;
+}
+
+.training-section-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.training-link-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--surface-alt);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+
+.training-var-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 10px;
+  background: var(--surface-alt);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  margin-top: 4px;
+}
+
+.training-var-pill {
+  font-size: 0.72rem;
+  font-family: monospace;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  padding: 2px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--accent);
+  transition: all 0.15s;
+}
+
+.training-var-pill:hover {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+/* =====================================================================
+   Pre-Onboarding Training Plans & Offer Templates Modern Table Styling
+   ===================================================================== */
+.training-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.training-toolbar-title {
+  min-width: 220px;
+  flex: 1 1 auto;
+}
+
+.training-toolbar-title h2 {
+  margin: 0;
+  font-size: 1.12rem;
+  font-weight: 700;
+  color: var(--ink);
+  letter-spacing: -0.015em;
+}
+
+.training-toolbar-title p {
+  margin: 4px 0 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.training-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.training-search-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 210px;
+}
+
+.training-search-icon {
+  position: absolute;
+  left: 10px;
+  width: 14px;
+  height: 14px;
+  color: var(--muted);
+  pointer-events: none;
+  flex-shrink: 0;
+}
+
+.training-search-wrap input[type="search"] {
+  height: 34px;
+  min-height: 34px;
+  width: 100%;
+  padding: 0 10px 0 30px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 0.8rem;
+  box-sizing: border-box;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+
+.training-search-wrap input[type="search"]:focus {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: 0 0 0 3px var(--tint);
+}
+
+.training-filter-select {
+  height: 34px;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  box-sizing: border-box;
+  transition: border-color .15s ease;
+}
+
+.training-filter-select:hover {
+  border-color: var(--muted);
+}
+
+.training-filter-select:focus {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: 0 0 0 3px var(--tint);
+}
+
+.training-btn-new {
+  height: 34px;
+  min-height: 34px;
+  padding: 0 13px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  border-radius: 7px;
+  background: var(--accent);
+  color: var(--on-accent);
+  border: 1px solid transparent;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  white-space: nowrap;
+  box-sizing: border-box;
+  transition: background-color .15s ease, transform .05s ease;
+}
+
+.training-btn-new:hover {
+  background: var(--accent-hover);
+}
+
+.training-btn-new:active {
+  transform: translateY(1px);
+}
+
+/* Training Plans Fixed Proportional Table Layout with Safe Minimum Width */
+.training-plans-table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  width: 100%;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  scrollbar-width: thin;
+}
+
+.training-plans-table {
+  table-layout: fixed;
+  width: 100%;
+  min-width: 1080px;
+  border-collapse: collapse;
+}
+
+.training-plans-table th:nth-child(1),
+.training-plans-table td:nth-child(1) {
+  width: 23%;
+  min-width: 220px;
+}
+
+.training-plans-table th:nth-child(2),
+.training-plans-table td:nth-child(2) {
+  width: 15%;
+  min-width: 150px;
+}
+
+.training-plans-table th:nth-child(3),
+.training-plans-table td:nth-child(3) {
+  width: 16%;
+  min-width: 165px;
+}
+
+.training-plans-table th:nth-child(4),
+.training-plans-table td:nth-child(4) {
+  width: 8%;
+  min-width: 85px;
+}
+
+.training-plans-table th:nth-child(5),
+.training-plans-table td:nth-child(5) {
+  width: 6%;
+  min-width: 65px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.training-plans-table th:nth-child(6),
+.training-plans-table td:nth-child(6) {
+  width: 8%;
+  min-width: 85px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.training-plans-table th:nth-child(7),
+.training-plans-table td:nth-child(7) {
+  width: 8%;
+  min-width: 85px;
+  white-space: nowrap;
+}
+
+.training-plans-table th:nth-child(8),
+.training-plans-table td:nth-child(8) {
+  width: 16%;
+  min-width: 225px;
+  text-align: right;
+  overflow: visible;
+}
+
+.training-plans-table th {
+  padding: 11px 10px;
+  font-size: 0.70rem;
+  letter-spacing: 0.04em;
+  font-weight: 650;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: var(--surface-alt);
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+  box-sizing: border-box;
+}
+
+.training-plans-table td {
+  padding: 12px 10px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+  box-sizing: border-box;
+}
+
+.training-plans-table tbody tr {
+  transition: background-color .12s ease;
+}
+
+.training-plans-table tbody tr:hover {
+  background: var(--surface-alt);
+}
+
+/* Plan Title & Description */
+.plan-name-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.plan-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.plan-title-text {
+  font-size: 0.87rem;
+  font-weight: 650;
+  color: var(--ink);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.plan-default-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: var(--warning-bg);
+  color: var(--warning);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: 9999px;
+  padding: 2px 6.5px;
+  font-size: 0.67rem;
+  font-weight: 650;
+  flex-shrink: 0;
+  line-height: 1.2;
+}
+
+.plan-desc-text {
+  font-size: 0.76rem;
+  color: var(--muted);
+  line-height: 1.36;
+  margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
+}
+
+/* Chips Cloud & Badges */
+.chips-cloud {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.plan-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2.5px 6.5px;
+  border-radius: 4px;
+  font-size: 0.70rem;
+  font-weight: 550;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.25;
+  box-sizing: border-box;
+}
+
+.plan-chip-pos {
+  background: rgba(34, 197, 94, 0.12);
+  color: var(--positive);
+  border: 1px solid rgba(34, 197, 94, 0.25);
+}
+
+.plan-chip-dept {
+  background: var(--tint);
+  color: var(--accent);
+  border: 1px solid rgba(8, 107, 151, 0.22);
+}
+
+.plan-chip-more {
+  background: var(--surface-alt);
+  color: var(--muted);
+  border: 1px dashed var(--line);
+  font-size: 0.68rem;
+  font-weight: 600;
+  cursor: help;
+}
+
+.plan-chip-scope {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.76rem;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.plan-duration-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.78rem;
+  font-weight: 550;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.plan-duration-cell .duration-icon {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.plan-version-badge {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-family: Consolas, monospace;
+  font-size: 0.73rem;
+  font-weight: 650;
+  background: var(--surface-alt);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  text-align: center;
+  white-space: nowrap;
+}
+
+.plan-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2.5px 8px;
+  border-radius: 9999px;
+  font-size: 0.71rem;
+  font-weight: 650;
+  text-transform: capitalize;
+  white-space: nowrap;
+  line-height: 1.2;
+}
+
+.plan-status-pill .status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.plan-status-pill.status-active {
+  background: var(--positive-bg);
+  color: var(--positive);
+  border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+.plan-status-pill.status-active .status-dot {
+  background: #10b981;
+  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.25);
+}
+
+.plan-status-pill.status-draft {
+  background: var(--warning-bg);
+  color: var(--warning);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.plan-status-pill.status-draft .status-dot {
+  background: #f59e0b;
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.25);
+}
+
+.plan-status-pill.status-archived {
+  background: var(--surface-alt);
+  color: var(--muted);
+  border: 1px solid var(--line);
+}
+
+.plan-status-pill.status-archived .status-dot {
+  background: #94a3b8;
+}
+
+.plan-date-cell {
+  font-size: 0.78rem;
+  color: var(--ink);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+/* Modern Compact Horizontal Actions Cluster */
+.plan-actions-group {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 3.5px;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+
+.plan-btn-action {
+  height: 28px;
+  min-height: 28px;
+  padding: 0 8px;
+  font-size: 0.74rem;
+  font-weight: 600;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3.5px;
+  cursor: pointer;
+  white-space: nowrap;
+  box-sizing: border-box;
+  transition: all .15s ease;
+  line-height: 1;
+}
+
+.plan-btn-primary {
+  background: var(--accent);
+  color: var(--on-accent);
+  border: 1px solid transparent;
+}
+
+.plan-btn-primary:hover {
+  background: var(--accent-hover);
+  color: var(--on-accent);
+}
+
+.plan-btn-secondary {
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--line);
+}
+
+.plan-btn-secondary:hover {
+  background: var(--surface-alt);
+  border-color: var(--muted);
+  color: var(--ink);
+}
+
+.plan-btn-icon {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--muted);
+  border: 1px solid var(--line);
+  cursor: pointer;
+  box-sizing: border-box;
+  transition: all .15s ease;
+  line-height: 1;
+}
+
+.plan-btn-icon:hover {
+  background: var(--surface-alt);
+  color: var(--ink);
+  border-color: var(--muted);
+}
+
+.plan-btn-icon:focus-visible,
+.plan-btn-action:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.plan-btn-icon.plan-btn-danger:hover {
+  background: var(--negative-bg);
+  color: var(--negative);
+  border-color: rgba(225, 29, 72, 0.35);
+}
+
+.plan-btn-icon.plan-btn-success:hover {
+  background: var(--positive-bg);
+  color: var(--positive);
+  border-color: rgba(34, 197, 94, 0.35);
+}
+
+/* Offer Templates Table Shared Quality Layout */
+.offer-templates-table {
+  table-layout: fixed;
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.offer-templates-table th:nth-child(1),
+.offer-templates-table td:nth-child(1) {
+  width: 33%;
+  min-width: 220px;
+}
+
+.offer-templates-table th:nth-child(2),
+.offer-templates-table td:nth-child(2) {
+  width: 7%;
+  min-width: 55px;
+  text-align: center;
+}
+
+.offer-templates-table th:nth-child(3),
+.offer-templates-table td:nth-child(3) {
+  width: 9%;
+  min-width: 75px;
+  text-align: center;
+}
+
+.offer-templates-table th:nth-child(4),
+.offer-templates-table td:nth-child(4) {
+  width: 14%;
+  min-width: 100px;
+}
+
+.offer-templates-table th:nth-child(5),
+.offer-templates-table td:nth-child(5) {
+  width: 11%;
+  min-width: 85px;
+}
+
+.offer-templates-table th:nth-child(6),
+.offer-templates-table td:nth-child(6) {
+  width: 16%;
+  min-width: 145px;
+  text-align: right;
+}
+
+.offer-templates-table th {
+  padding: 12px 14px;
+  font-size: 0.71rem;
+  letter-spacing: 0.05em;
+  font-weight: 650;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: var(--surface-alt);
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.offer-templates-table td {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+
+.offer-templates-table tbody tr:hover {
+  background: var(--surface-alt);
+}
+
+/* Pre-Onboarding Training Pipeline Card & Lifecycle Styles */
+.training-card-box {
+  margin: 8px 0;
+  padding: 8px 10px;
+  background: var(--surface-alt);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 0.78rem;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.training-card-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.training-card-row .label {
+  color: var(--muted);
+  font-size: 0.74rem;
+}
+.training-card-row .value {
+  font-weight: 600;
+  color: var(--ink);
+}
+.training-overdue-highlight {
+  color: var(--negative, #dc2626) !important;
+  font-weight: 700 !important;
+}
+.training-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 9999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.training-badge-in-progress { background: #f0fdf4; color: #15803d; border: 1px solid #86efac; }
+.training-badge-extended { background: #f5f3ff; color: #6d28d9; border: 1px solid #c4b5fd; }
+.training-badge-retraining { background: #eff6ff; color: #1d4ed8; border: 1px solid #93c5fd; }
+.training-badge-failed { background: #fef2f2; color: #b91c1c; border: 1px solid #fca5a5; }
+.training-badge-overdue { background: #fee2e2; color: #991b1b; border: 1px solid #f87171; font-weight: 700; }
+.training-badge-completed { background: #ecfdf5; color: #047857; border: 1px solid #6ee7b7; }
+.training-badge-revoked { background: #450a0a; color: #fee2e2; border: 1px solid #991b1b; }
+.training-badge-not-started { background: #f8fafc; color: #475569; border: 1px solid #cbd5e1; }
+
+
+
+
 
 

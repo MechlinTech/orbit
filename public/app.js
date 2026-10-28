@@ -1,7 +1,7 @@
 const $ = s => document.querySelector(s);
 const escape = v => String(v ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let me, csrf, permissions = [], grants = [], adminTab = 'users', auditFilters = { event: '', q: '', from: '', to: '' }, current = 'Overview', renderVersion = 0, reqPage = 1, candidateQuery = '';
-const pageState = { Requisitions: 1, Candidates: 1, Interviews: 1, Referrals: 1, Administration: 1, 'Audit log': 1, Agencies: 1, 'Portal Dashboard': 1, 'Assigned Roles': 1, Submissions: 1, 'Agency Team': 1, 'Offer Templates': 1 };
+const pageState = { Requisitions: 1, Candidates: 1, Interviews: 1, Referrals: 1, Administration: 1, 'Audit log': 1, Agencies: 1, 'Portal Dashboard': 1, 'Assigned Roles': 1, Submissions: 1, 'Agency Team': 1, 'Offer Templates': 1, 'Training Plans': 1 };
 const isAgencyMember = () => Boolean(me?.agency || ['Agency Admin','Agency Recruiter'].includes(me?.role));
 const isAgencyUser = () => Boolean(isAgencyMember() || me?.role === 'Agency' || me?.user?.isAgency || me?.isAgency);
 const isAgencyAdmin = () => Boolean(isAgencyUser() && (me?.role === 'Agency Admin' || me?.agency?.role === 'Agency Admin'));
@@ -17,18 +17,19 @@ const getNavList = () => {
     ...(allows('review') || allows('recruit') || allows('candidates.read') || allows('applications.read') ? ['Candidates', 'Pipeline'] : []),
     ...(allows('review') || allows('recruit') || allows('interview') || allows('interviews.read') ? ['Interviews'] : []),
     ...(allows('refer') || allows('referrals.read') ? ['Referrals'] : []),
-    ...(allows('offers.templates.read') || allows('offers.read') ? ['Offer Templates'] : []),
-    ...(allows('agencies.read') ? ['Agencies'] : []),
-    ...(canManageAccess ? ['Administration'] : []),
-    ...(allows('settings.read') || allows('settings.update') ? ['Settings'] : []),
-    ...(allows('audit.read') ? ['Audit log'] : []),
-    ...(allows('pipeline.configure') ? ['Pipeline settings'] : []),
-    ...(allows('integrations.read') || allows('integrations.configure') || allows('integrations.secrets.manage') ? ['Integrations'] : [])
+    ...(allows('offers.templates.read') || allows('offers.read') || allows('recruit') || allows('admin') ? ['Offer Templates'] : []),
+    ...(allows('recruit') || allows('admin') || allows('applications.evaluate') ? ['Training Plans'] : []),
+    ...(allows('agencies.read') || allows('admin') || allows('recruit') ? ['Agencies'] : []),
+    ...(canManageAccess || allows('admin') ? ['Administration'] : []),
+    ...(allows('settings.read') || allows('settings.update') || allows('admin') ? ['Settings'] : []),
+    ...(allows('audit.read') || allows('admin') ? ['Audit log'] : []),
+    ...(allows('pipeline.configure') || allows('admin') ? ['Pipeline settings'] : []),
+    ...(allows('integrations.read') || allows('integrations.configure') || allows('integrations.secrets.manage') || (allows('admin') && me?.role === 'System Admin') ? ['Integrations'] : [])
   ];
 };
 // Every routable view is listed here so direct URL access can be checked
 // against the same server-provided permission set that builds the navigation.
-const knownViews = ['Overview','Requisitions','Candidates','Pipeline','Interviews','Referrals','Offer Templates','Agencies','Administration','Settings','Audit log','Pipeline settings','Integrations','Agency portal','Portal Dashboard','Assigned Roles','Submissions','Agency Team'];
+const knownViews = ['Overview','Requisitions','Candidates','Pipeline','Interviews','Referrals','Offer Templates','Training Plans','Agencies','Administration','Settings','Audit log','Pipeline settings','Integrations','Agency portal','Portal Dashboard','Assigned Roles','Submissions','Agency Team'];
 let deniedView = '';
 const resolveRouteName = raw => {
   const value = String(raw || '').replace(/^#\/?/, '').split('?')[0].trim();
@@ -128,7 +129,7 @@ const loadSavedPages = () => {
   } catch {}
 };
 let appearance={theme:document.documentElement.dataset.theme || 'mechlin',themes:[]};
-const iconPaths={Overview:'M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z',Requisitions:'M8 6V4h8v2 M3 7h18v13H3z M3 12h18 M10 11v3h4v-3',Candidates:'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M9 3a4 4 0 1 0 0 8a4 4 0 0 0 0-8 M17 4a4 4 0 0 1 0 8 M22 21v-2a4 4 0 0 0-3-4',Pipeline:'M4 4h4v16H4z M10 4h4v11h-4z M16 4h4v7h-4z',Interviews:'M4 5h16v16H4z M8 2v6 M16 2v6 M4 10h16 M8 14h3 M14 14h2 M8 17h3',Referrals:'M12 20V10 M7 15l5-5 5 5 M4 4h16v4H4z','Offer Templates':'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M16 13H8 M16 17H8 M10 9H8 M18 21H6',Agencies:'M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2 M9 3a4 4 0 1 0 0 8a4 4 0 0 0 0-8 M23 21v-2a4 4 0 0 0-3-3.87 M16 3.13a4 4 0 0 1 0 7.75','Portal Dashboard':'M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z','Assigned Roles':'M8 6V4h8v2 M3 7h18v13H3z M3 12h18 M10 11v3h4v-3',Submissions:'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M16 13H8 M16 17H8 M10 9H8','Agency Team':'M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2 M9 3a4 4 0 1 0 0 8a4 4 0 0 0 0-8 M23 21v-2a4 4 0 0 0-3-3.87 M16 3.13a4 4 0 0 1 0 7.75',Administration:'M12 3l8 4v6c0 4-4 7-8 9-4-2-8-5-8-9V7z M8 12l3 3 5-6','Audit log':'M6 3h12v18H6z M9 7h6 M9 11h6 M9 15h4','Pipeline settings':'M4 7h16 M4 17h16 M8 4v6 M16 14v6',Settings:'M12 8a4 4 0 1 0 0 8a4 4 0 0 0 0-8 M12 2v3 M12 19v3 M2 12h3 M19 12h3 M5 5l2 2 M17 17l2 2 M5 19l2-2 M17 7l2-2',Integrations:'M8 3v5 M16 3v5 M5 8h14v4a7 7 0 0 1-14 0z M12 19v3','Agency portal':'M4 21v-8a8 8 0 0 1 16 0v8 M9 21v-4a3 3 0 0 1 6 0v4 M2 21h20'};
+const iconPaths={Overview:'M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z',Requisitions:'M8 6V4h8v2 M3 7h18v13H3z M3 12h18 M10 11v3h4v-3',Candidates:'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M9 3a4 4 0 1 0 0 8a4 4 0 0 0 0-8 M17 4a4 4 0 0 1 0 8 M22 21v-2a4 4 0 0 0-3-4',Pipeline:'M4 4h4v16H4z M10 4h4v11h-4z M16 4h4v7h-4z',Interviews:'M4 5h16v16H4z M8 2v6 M16 2v6 M4 10h16 M8 14h3 M14 14h2 M8 17h3',Referrals:'M12 20V10 M7 15l5-5 5 5 M4 4h16v4H4z','Offer Templates':'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M16 13H8 M16 17H8 M10 9H8 M18 21H6','Training Plans':'M12 14l9-5-9-5-9 5 9 5z M12 14l6.16-3.422a12.083 12.083 0 0 1 .665 6.479A11.952 11.952 0 0 0 12 20.055a11.952 11.952 0 0 0-6.824-2.998 12.078 12.078 0 0 1 .665-6.479L12 14z M12 14v7 M7 11.5v4 M17 11.5v4',Agencies:'M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2 M9 3a4 4 0 1 0 0 8a4 4 0 0 0 0-8 M23 21v-2a4 4 0 0 0-3-3.87 M16 3.13a4 4 0 0 1 0 7.75','Portal Dashboard':'M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z','Assigned Roles':'M8 6V4h8v2 M3 7h18v13H3z M3 12h18 M10 11v3h4v-3',Submissions:'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M16 13H8 M16 17H8 M10 9H8','Agency Team':'M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2 M9 3a4 4 0 1 0 0 8a4 4 0 0 0 0-8 M23 21v-2a4 4 0 0 0-3-3.87 M16 3.13a4 4 0 0 1 0 7.75',Administration:'M12 3l8 4v6c0 4-4 7-8 9-4-2-8-5-8-9V7z M8 12l3 3 5-6','Audit log':'M6 3h12v18H6z M9 7h6 M9 11h6 M9 15h4','Pipeline settings':'M4 7h16 M4 17h16 M8 4v6 M16 14v6',Settings:'M12 8a4 4 0 1 0 0 8a4 4 0 0 0 0-8 M12 2v3 M12 19v3 M2 12h3 M19 12h3 M5 5l2 2 M17 17l2 2 M5 19l2-2 M17 7l2-2',Integrations:'M8 3v5 M16 3v5 M5 8h14v4a7 7 0 0 1-14 0z M12 19v3','Agency portal':'M4 21v-8a8 8 0 0 1 16 0v8 M9 21v-4a3 3 0 0 1 6 0v4 M2 21h20'};
 const icon=name=>`<svg class="ui-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${iconPaths[name]||iconPaths.Overview}"/></svg>`;
 const initials=name=>escape(String(name).split(/\s+/).filter(Boolean).slice(0,2).map(n=>n[0]).join('').toUpperCase());
 const applyTheme=theme=>{document.documentElement.dataset.theme=theme;document.querySelector('meta[name="theme-color"]').content=theme==='midnight'?'#0b1322':'#111f35';};
@@ -820,7 +821,7 @@ function openRoleModal(role = null, readOnly = false, duplicate = false) {
     ['assigned', 'Assigned', 'Records assigned to the user'],
     ['none', 'None', 'No record access']
   ];
-  const scopeField = `<fieldset class="full scope-field"><legend>Record scope</legend><input type="hidden" name="scope" id="role-scope" value="${escape(scope)}"><div class="scope-choices" role="radiogroup" aria-label="Record scope">${scopeChoices.map(([value, label, hint]) => {
+  const scopeField = `<fieldset class="full scope-field"><legend>Record scope</legend><input type="hidden" name="scope" id="role-scope" value="${escape(scope)}" ${identityLocked ? 'disabled' : ''}><div class="scope-choices" role="radiogroup" aria-label="Record scope">${scopeChoices.map(([value, label, hint]) => {
     const blocked = value === 'organization' && !canUseOrganizationScope;
     return `<button type="button" class="scope-choice${scope === value ? ' is-selected' : ''}" data-scope="${value}" ${identityLocked || blocked ? 'disabled' : ''} aria-pressed="${scope === value}"><strong>${label}</strong><small>${hint}</small></button>`;
   }).join('')}</div></fieldset><p class="full muted scope-note">${policyNote}</p>`;
@@ -1145,7 +1146,93 @@ async function render() {
               const hasEval = Boolean(a.training_evaluation || a.training_rating);
               const evalRating = a.training_rating || a.training_evaluation?.rating;
               const evalDec = a.training_decision || a.training_evaluation?.decision || 'next';
-              const evalChip = hasEval ? `<div class="training-card-chip"><span class="badge ${evalDec==='rejected'||evalDec==='revoked'?'rejected':'completed'}" style="font-size:0.72rem;">${evalRating}/5 ${evalDec==='next'?'Passed':(evalDec==='revoked'?'Revoked':'Failed')}</span></div>` : '';
+              const evalChip = (isTraining && hasEval) ? `<div class="training-card-chip"><span class="badge ${evalDec==='rejected'||evalDec==='revoked'?'rejected':'completed'}" style="font-size:0.72rem;">${evalRating}/5 ${evalDec==='next'?'Passed':(evalDec==='revoked'?'Revoked':'Failed')}</span></div>` : '';
+
+              let planChip = '';
+              if (isTraining) {
+                const st = a.training_plan_status;
+                if (st === 'sent') {
+                  planChip = `<div class="training-card-chip" style="margin-top:2px;"><span class="badge" style="background:#ecfdf5;color:#065f46;border:1px solid #a7f3d0;font-size:0.72rem;">Plan Sent</span></div>`;
+                } else if (st === 'draft_saved') {
+                  planChip = `<div class="training-card-chip" style="margin-top:2px;"><span class="badge" style="background:#e0e7ff;color:#3730a3;border:1px solid #c7d2fe;font-size:0.72rem;">Plan Draft Saved</span></div>`;
+                } else if (st === 'failed') {
+                  planChip = `<div class="training-card-chip" style="margin-top:2px;"><span class="badge" style="background:#fee2e2;color:#991b1b;border:1px solid #fecaca;font-size:0.72rem;">Plan Send Failed</span></div>`;
+                } else {
+                  planChip = `<div class="training-card-chip" style="margin-top:2px;"><span class="badge" style="background:#fef3c7;color:#92400e;border:1px solid #fde68a;font-size:0.72rem;">Plan Pending Review</span></div>`;
+                }
+              }
+              let interviewChip = '';
+              const isInterviewStage = !isTraining && !isTerm && !/onboarding|offer/i.test(stage);
+              if (isInterviewStage) {
+                if (a.pending_interview) {
+                  const ready = feedbackReady(a.pending_interview);
+                  interviewChip = `<div class="interview-card-chip" style="margin-top:2px;"><span class="badge ${ready ? 'pending' : 'active'}" style="font-size:0.72rem;background:${ready ? '#fef3c7' : '#ecfdf5'};color:${ready ? '#92400e' : '#065f46'};border:1px solid ${ready ? '#fde68a' : '#a7f3d0'};">📅 ${ready ? 'Rating Required' : 'Interview Scheduled'} (${escape(a.pending_interview.interviewer_name)})</span></div>`;
+                } else if (a.latest_scorecard) {
+                  let avg = '';
+                  try {
+                    const r = typeof a.latest_scorecard.ratings === 'string' ? JSON.parse(a.latest_scorecard.ratings) : a.latest_scorecard.ratings;
+                    const vals = Object.values(r).map(Number).filter(Boolean);
+                    if (vals.length) avg = (vals.reduce((x, y) => x + y, 0) / vals.length).toFixed(1) + '/5';
+                  } catch {}
+                  const isNeg = ['No', 'Strong no'].includes(a.latest_scorecard.recommendation);
+                  interviewChip = `<div class="interview-card-chip" style="margin-top:2px;"><span class="badge ${isNeg ? 'rejected' : 'completed'}" style="font-size:0.72rem;">★ ${avg ? avg + ' · ' : ''}${escape(a.latest_scorecard.recommendation)}</span></div>`;
+                }
+              }
+
+              let trainingBoxHtml = '';
+              let trainingStatusBadge = '';
+              if (isTraining) {
+                const isOverdue = Boolean(a.is_overdue || (a.training_end_at && new Date(a.training_end_at).getTime() < Date.now() && !['completed','offer_revoked'].includes(a.training_status)));
+                const tStatus = a.offer_status === 'revoked' ? 'offer_revoked' : (a.training_status || 'not_started');
+
+                let badgeClass = 'training-badge-not-started';
+                let badgeLabel = 'Not Started';
+                if (a.offer_status === 'revoked') {
+                  badgeClass = 'training-badge-revoked';
+                  badgeLabel = 'Offer Revoked';
+                } else if (tStatus === 'completed') {
+                  badgeClass = 'training-badge-completed';
+                  badgeLabel = 'Training Passed';
+                } else if (tStatus === 'evaluation_failed') {
+                  badgeClass = 'training-badge-failed';
+                  badgeLabel = 'Evaluation Failed';
+                } else if (isOverdue) {
+                  badgeClass = 'training-badge-overdue';
+                  badgeLabel = '⚠ Overdue';
+                } else if (tStatus === 'retraining') {
+                  badgeClass = 'training-badge-retraining';
+                  badgeLabel = 'Retraining';
+                } else if (tStatus === 'extended') {
+                  badgeClass = 'training-badge-extended';
+                  badgeLabel = 'Extended';
+                } else if (tStatus === 'in_progress') {
+                  badgeClass = 'training-badge-in-progress';
+                  badgeLabel = 'In Progress';
+                }
+
+                trainingStatusBadge = `<span class="training-status-badge ${badgeClass}">${badgeLabel}</span>`;
+
+                trainingBoxHtml = `
+                  <div class="training-card-box">
+                    <div class="training-card-row">
+                      <span class="label">Training started:</span>
+                      <span class="value">${a.training_start_at ? formatDateIST(a.training_start_at) : '—'}</span>
+                    </div>
+                    <div class="training-card-row">
+                      <span class="label">Training deadline:</span>
+                      <span class="value ${isOverdue ? 'training-overdue-highlight' : ''}">${a.training_end_at ? formatDateIST(a.training_end_at) : '—'} ${isOverdue ? '⚠' : ''}</span>
+                    </div>
+                    <div class="training-card-row">
+                      <span class="label">Attempt:</span>
+                      <span class="value">#${a.training_attempt || 1}</span>
+                    </div>
+                    <div class="training-card-row">
+                      <span class="label">Offer:</span>
+                      <span class="value" style="color:${a.offer_status === 'revoked' ? 'var(--negative,#dc2626)' : 'var(--positive,#16a34a)'};">${a.offer_status === 'revoked' ? 'Revoked' : 'Active'}</span>
+                    </div>
+                  </div>
+                `;
+              }
 
               const curStageIdx = stages.indexOf(stage);
               const nextStage = stages[curStageIdx + 1];
@@ -1166,24 +1253,64 @@ async function render() {
                   actionsHtml += button(`Back to ${prevStage}`,'move',a.id,`data-stage="${escape(prevStage)}" class="secondary"`);
                 }
                 if (isTraining) {
-                  actionsHtml += button('Rate & Next', 'rate-training', a.id, 'class="primary training-rate-btn"');
-                  if (nextStage) {
-                    actionsHtml += button(`Move to ${nextStage}`, 'move', a.id, `data-stage="${escape(nextStage)}" class="secondary"`);
+                  actionsHtml += button('Training Details', 'view-training-details', a.id, 'class="secondary" title="View training history, evaluations, and deadline extensions" style="font-size:0.75rem;padding:4px 8px;"');
+
+                  const isRevoked = a.offer_status === 'revoked';
+                  const isDone = a.training_status === 'completed';
+                  const isFailed = a.training_status === 'evaluation_failed';
+                  const notStarted = !a.training_start_at || a.training_status === 'not_started';
+
+                  if (!isRevoked) {
+                    if (notStarted) {
+                      actionsHtml += button('Start Training', 'start-training', a.id, 'class="primary"');
+                    } else if (isFailed) {
+                      actionsHtml += button('Restart Training', 'restart-training', a.id, 'class="primary" title="Start retraining attempt"');
+                      actionsHtml += button('Extend Deadline', 'extend-training-deadline', a.id, 'class="secondary"');
+                      actionsHtml += button('Revoke Offer', 'training-revoke-offer', a.id, 'class="secondary text-button" style="color:var(--negative);"');
+                    } else if (isDone) {
+                      if (nextStage) {
+                        actionsHtml += button(`Move to ${nextStage}`, 'move', a.id, `data-stage="${escape(nextStage)}" class="primary"`);
+                      }
+                    } else {
+                      // in_progress, extended, retraining, or overdue
+                      actionsHtml += button('Evaluate', 'rate-training', a.id, 'class="primary training-rate-btn"');
+                      actionsHtml += button('Extend Deadline', 'extend-training-deadline', a.id, 'class="secondary"');
+                      actionsHtml += button('Revoke Offer', 'training-revoke-offer', a.id, 'class="secondary text-button" style="color:var(--negative);"');
+                    }
+                    actionsHtml += button('Training Plan', 'review-training-plan', a.id, 'class="secondary" style="font-size:0.75rem;padding:4px 8px;"');
                   }
                 } else {
+                  const hasPendingInv = Boolean(a.pending_interview);
+                  if (hasPendingInv) {
+                    const ready = feedbackReady(a.pending_interview);
+                    const canSubmit = a.pending_interview.interviewer_id === me.id;
+                    const canProxy = allows('admin') && !canSubmit;
+                    if (canSubmit && ready) {
+                      actionsHtml += button('Submit Scorecard', 'scorecard', a.pending_interview.id, 'class="primary" style="font-size:0.75rem;padding:4px 8px;"');
+                    } else if (canProxy && ready) {
+                      actionsHtml += button('Proxy Scorecard', 'scorecard-proxy', a.pending_interview.id, 'class="secondary" style="font-size:0.75rem;padding:4px 8px;"');
+                    } else if (!ready) {
+                      actionsHtml += button('Feedback Pending', 'feedback-pending', a.pending_interview.id, 'class="secondary" style="font-size:0.75rem;padding:4px 8px;opacity:0.75;" title="Interview is scheduled. Feedback unlocks after the scheduled interview time."');
+                    }
+                  }
                   if (nextStage) {
                     actionsHtml += button(`Move to ${nextStage}`, 'move', a.id, `data-stage="${escape(nextStage)}"`);
                   }
-                }
-                if (canSkipForward) {
-                  actionsHtml += button('Skip to...', 'skip-stage', a.id, 'class="secondary skip-stage-btn" title="Skip intermediate interview or evaluation rounds"');
-                }
-                actionsHtml += button('Reject', 'reject-app', a.id, 'class="secondary"');
-                if (stages.includes('Revoked') && (stage === 'Offer' || /hr round|onboarding|training/i.test(stage))) {
-                  actionsHtml += button('Revoke', 'revoke-app', a.id, 'class="secondary text-button" style="color:var(--negative);font-size:0.74rem;"');
+                  if (canSkipForward && !hasPendingInv) {
+                    actionsHtml += button('Skip to...', 'skip-stage', a.id, 'class="secondary skip-stage-btn" title="Skip intermediate interview or evaluation rounds"');
+                  }
+                  actionsHtml += button('Reject', 'reject-app', a.id, 'class="secondary"');
+                  if (stages.includes('Revoked') && (stage === 'Offer' || /hr round|onboarding/i.test(stage))) {
+                    actionsHtml += button('Revoke', 'revoke-app', a.id, 'class="secondary text-button" style="color:var(--negative);font-size:0.74rem;"');
+                  }
                 }
               }
-              return `<article class="card"><h3>${escape(a.name)}</h3><p class="muted card-role" title="${escape(a.title)}">${escape(a.title)}</p>${evalChip}<div class="actions">${actionsHtml}</div></article>`;
+
+              const headerTitle = trainingStatusBadge
+                ? `<div style="display:flex;align-items:center;justify-content:space-between;gap:6px;flex-wrap:wrap;margin-bottom:2px;"><h3>${escape(a.name)}</h3>${trainingStatusBadge}</div>`
+                : `<h3>${escape(a.name)}</h3>`;
+
+              return `<article class="card">${headerTitle}<p class="muted card-role" title="${escape(a.title)}">${escape(a.title)}</p>${evalChip}${planChip}${interviewChip}${trainingBoxHtml}<div class="actions">${actionsHtml}</div></article>`;
             }).join('')||'<p class="muted column-empty">No applications</p>'}</div></section>`;
         }).join('')}</div>`+
         `<div class="pipeline-scroll-bar pipeline-scroll-bottom" id="pipeline-bottom-scroll" aria-label="Horizontal scroll sticky at bottom of screen"><div class="pipeline-scroll-track"></div></div>`+
@@ -1216,10 +1343,29 @@ async function render() {
         const canProxy=allows('interviews.proxy_evaluate')&&i.interviewer_id!==me.id&&i.status!=='completed';
         const showLock=(canSubmit||canProxy)&&!ready;
         const isPhysical = i.interview_type === 'in_person';
-        const meetBadge = isPhysical
-          ? `<br><span class="badge" style="display:inline-flex;align-items:center;gap:4px;font-size:0.75rem;margin-top:4px;background:#f0f9ff;color:#0369a1;border:1px solid #bae6fd;padding:2px 8px;border-radius:4px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>In-Person • ${escape(i.location || 'Office')}</span>`
-          : (i.meeting_url ? `<br><a href="${escape(i.meeting_url)}" target="_blank" rel="noopener noreferrer" class="teams-link" style="display:inline-flex;align-items:center;gap:4px;font-size:0.8rem;margin-top:4px;color:var(--accent,#4f46e5);font-weight:600;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>Join Teams</a>` : '');
-        return `<tr><td><strong>${escape(i.name)}</strong>${escape(i.title)}</td><td>${escape(i.interviewer)}</td><td>${escape(formatDateTimeIST(i.scheduled_at))}${meetBadge}</td><td>${badge(i.status)}</td><td><div class="actions">${i.candidate_id?button('Candidate','candidate-details',i.candidate_id,'class="secondary"'):''}${canSubmit&&ready?button('Submit scorecard','scorecard',i.id):''}${canProxy&&ready?button('Proxy scorecard','scorecard-proxy',i.id,'class="secondary"'):''}${i.status!=='completed'&&(allows('interviews.update')||i.interviewer_id===me.id)?button('Edit','edit-interview',i.id,'class="secondary"'):''}${i.status==='planned'&&(allows('interviews.cancel')||i.interviewer_id===me.id)?button('Cancel','cancel-interview',i.id,'class="secondary"'):''}${button('View feedback','feedback',i.id,'class="secondary"')}${showLock?`<span class="muted feedback-locked">${FEEDBACK_LOCKED_MESSAGE}</span>`:''}</div></td></tr>`;
+        let meetBadge = '';
+        if (isPhysical) {
+          meetBadge = `<br><span class="badge" style="display:inline-flex;align-items:center;gap:4px;font-size:0.75rem;margin-top:4px;background:#f0f9ff;color:#0369a1;border:1px solid #bae6fd;padding:2px 8px;border-radius:4px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>In-Person • ${escape(i.location || 'Office')}</span>`;
+        } else if (i.meeting_url) {
+          meetBadge = `<br><a href="${escape(i.meeting_url)}" target="_blank" rel="noopener noreferrer" class="teams-link" style="display:inline-flex;align-items:center;gap:4px;font-size:0.8rem;margin-top:4px;color:var(--accent,#4f46e5);font-weight:600;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>Join Teams</a>`;
+        } else if (i.calendar_status === 'sync_failed') {
+          const errHint = i.meeting_error ? ` title="${escape(i.meeting_error)}"` : '';
+          meetBadge = `<br><button type="button" class="badge" style="display:inline-flex;align-items:center;gap:4px;font-size:0.73rem;margin-top:4px;background:#fef2f2;color:#991b1b;border:1px solid #fecaca;padding:2px 6px;border-radius:4px;cursor:pointer;" data-action="view-meeting-error" data-id="${escape(i.id)}"${errHint}>Teams sync failed ℹ</button>`;
+        }
+        if (i.invitation_status === 'failed') {
+          const invHint = i.invitation_error ? ` title="${escape(i.invitation_error)}"` : '';
+          meetBadge += `<span class="badge" style="display:inline-flex;align-items:center;gap:4px;font-size:0.73rem;margin-top:4px;margin-left:4px;background:#fffbeb;color:#92400e;border:1px solid #fde68a;padding:2px 6px;border-radius:4px;"${invHint}>Invite failed</span>`;
+        }
+        const canManageInterview = allows('interviews.update') || allows('recruit') || allows('admin');
+        const retryTeamsBtn = (i.status === 'planned' && !isPhysical && i.calendar_status === 'sync_failed' && canManageInterview)
+          ? button('Retry Teams', 'retry-meeting', i.id, 'class="secondary text-button" style="color:var(--accent);font-size:0.74rem;"')
+          : '';
+        const retryInviteBtn = (i.status === 'planned' && i.invitation_status === 'failed' && canManageInterview)
+          ? button('Retry Invite', 'retry-invitation', i.id, 'class="secondary text-button" style="color:var(--accent);font-size:0.74rem;"')
+          : '';
+        const canEdit = i.status !== 'completed' && (allows('interviews.update') || allows('recruit') || allows('admin') || i.interviewer_id === me.id);
+        const canCancel = i.status === 'planned' && (allows('interviews.cancel') || allows('recruit') || allows('admin') || i.interviewer_id === me.id);
+        return `<tr><td><strong>${escape(i.name)}</strong>${escape(i.title)}</td><td>${escape(i.interviewer)}</td><td>${escape(formatDateTimeIST(i.scheduled_at))}${meetBadge}</td><td>${badge(i.status)}</td><td><div class="actions">${i.candidate_id ? button('Candidate', 'candidate-details', i.candidate_id, 'class="secondary"') : ''}${retryTeamsBtn}${retryInviteBtn}${canSubmit && ready ? button('Submit scorecard', 'scorecard', i.id) : ''}${canProxy && ready ? button('Proxy scorecard', 'scorecard-proxy', i.id, 'class="secondary"') : ''}${canEdit ? button('Edit', 'edit-interview', i.id, 'class="secondary"') : ''}${canCancel ? button('Cancel', 'cancel-interview', i.id, 'class="secondary"') : ''}${button('View feedback', 'feedback', i.id, 'class="secondary"')}${showLock ? `<span class="muted feedback-locked">${FEEDBACK_LOCKED_MESSAGE}</span>` : ''}</div></td></tr>`;
       });
       html=heading('Structured interviews, independent feedback.',allows('recruit')?button('+ Plan interview','new-interview'):'')+calNotice+`<section class="panel">${table(['Candidate / role','Interviewer','Scheduled (IST)','Status','Feedback'],rows)}${pag}</section>`;
     }
@@ -1251,15 +1397,157 @@ async function render() {
       const draftCount = templates.filter(t => t.status === 'draft').length;
       const defaultTpl = templates.find(t => t.is_default);
 
-      html=heading('Design company-branded templates, manage letterheads, and configure dynamic A4 offer documents.',`<div style="display:flex;gap:8px;">${button('+ New Template','new-offer-template')}${button('Upload Letterhead','upload-letterhead','','class="secondary"')}</div>`)+
+      html=heading('Design company-branded templates, manage letterheads, and configure dynamic A4 offer documents.',button('+ New Template','new-offer-template'))+
       `<div class="metrics">${[['Total templates',templates.length,'Offer Templates','Configured offer templates'],['Active templates',activeCount,'Requisitions','Available for candidate offers'],['Draft templates',draftCount,'Settings','In design and revision'],['Default template',defaultTpl?defaultTpl.name:'None','Candidates',defaultTpl?`v${defaultTpl.version} (Active)`:'Auto-selected for new offers']].map(([label,count,i,note],n)=>`<div class="metric metric-${n}"><div class="metric-top"><span>${label}</span><span class="metric-icon">${icon(i)}</span></div><strong style="font-size:1.15rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${count}</strong><small>${note}</small></div>`).join('')}</div>`+
       `<section class="panel"><div class="panel-head"><div><h2>Offer Letter Templates</h2><p class="muted">Reusable templates with multi-page A4 flow, dynamic variables, and salary annexures</p></div></div>${templates.length?table(['Template name','Version','Status','Letterhead','Updated','Actions'],templates.map(t=>{
         const hasBg = t.background_config?.assetId || t.background_config?.firstPageAssetId;
         const bgBadge = hasBg ? `<span class="badge" style="background:#e0f2fe;color:#0369a1;">Stationery</span>` : `<span class="muted" style="font-size:0.75rem;">Standard A4</span>`;
         const defBadge = t.is_default ? ` <span class="badge" style="background:#fef3c7;color:#92400e;margin-left:6px;">Default</span>` : '';
-        return `<tr><td><strong>${escape(t.name)}</strong>${defBadge}<br><small class="muted">${escape(t.description||'No description')}</small></td><td><span class="badge mono" style="font-size:0.75rem;">v${t.version}</span></td><td>${badge(t.status)}</td><td>${bgBadge}</td><td>${escape(formatDateIST(t.updated_at))}</td><td><div class="actions" style="gap:4px;">${button('Preview','preview-template',t.id,'class="secondary" style="font-size:0.78rem;padding:4px 8px;"')}${button('Edit','edit-template',t.id,'style="font-size:0.78rem;padding:4px 8px;"')}${button('Duplicate','duplicate-template',t.id,'class="secondary text-button" style="font-size:0.78rem;padding:4px 8px;"')}${!t.is_default?button('Set Default','set-template-default',t.id,'class="secondary text-button" style="font-size:0.78rem;padding:4px 8px;"'):''}${t.status!=='archived'?button('Archive','archive-template',t.id,'class="secondary text-button" style="font-size:0.78rem;padding:4px 8px;color:var(--negative);"'):button('Activate','activate-template',t.id,'class="secondary text-button" style="font-size:0.78rem;padding:4px 8px;color:var(--positive);"')}</div></td></tr>`;
-      })) : empty('No offer templates created yet. Click "+ New Template" to create your first company offer letter.')}</section>`+
-      `<section class="panel"><div class="panel-head"><div><h2>Company Letterhead & Background Stationery</h2><p class="muted">Upload official PNG, JPG, PDF, or DOCX stationery for multi-page branding</p></div>${button('+ Upload asset','upload-letterhead','','class="secondary"')}</div>${assets.length?table(['Asset name','Format','Dimensions','Scaling mode','Target pages','Uploaded','Actions'],assets.map(a=>`<tr><td><strong>${escape(a.name)}</strong><br><small class="muted mono">${escape(a.filename)}</small></td><td><span class="badge mono" style="font-size:0.72rem;text-transform:uppercase;">${escape(a.file_format)}</span></td><td><small class="mono">${a.width&&a.height?`${a.width} × ${a.height} px`:'A4 Document'}</small></td><td><span class="badge" style="font-size:0.72rem;background:#f1f5f9;color:#334155;">${escape(a.scaling_mode)}</span></td><td><small>${escape(a.page_target)}</small></td><td>${escape(formatDateIST(a.created_at))}</td><td><a href="/api/offer-letter-assets/${a.id}" target="_blank" class="button secondary" style="font-size:0.78rem;padding:4px 8px;">View File</a></td></tr>`)):empty('No company letterhead uploaded yet. Click "+ Upload asset" to add company stationery.')}</section>`;
+        return `<tr><td><strong>${escape(t.name)}</strong>${defBadge}<br><small class="muted">${escape(t.description||'No description')}</small></td><td style="text-align:center;"><span class="badge mono" style="font-size:0.75rem;">v${t.version}</span></td><td style="text-align:center;">${badge(t.status)}</td><td>${bgBadge}</td><td>${escape(formatDateIST(t.updated_at))}</td><td><div class="plan-actions-group">${button('Preview','preview-template',t.id,'class="plan-btn-action plan-btn-secondary"')}${button('Edit','edit-template',t.id,'class="plan-btn-action plan-btn-primary"')}${button('Duplicate','duplicate-template',t.id,'class="plan-btn-icon" title="Duplicate template"')}${!t.is_default?button('Set Default','set-template-default',t.id,'class="plan-btn-icon" title="Set as default"'):''}${t.status!=='archived'?button('Archive','archive-template',t.id,'class="plan-btn-icon plan-btn-danger" title="Archive"'):button('Activate','activate-template',t.id,'class="plan-btn-icon plan-btn-success" title="Activate"')}</div></td></tr>`;
+      }), 'offer-templates-table') : empty('No offer templates created yet. Click "+ New Template" to create your first company offer letter.')}</section>`+
+      `<section class="panel"><div class="panel-head"><div><h2>Company Letterhead & Background Stationery</h2><p class="muted">Upload official PNG, JPG, PDF, or DOCX stationery for multi-page branding</p></div>${button('+ Upload Letterhead','upload-letterhead','','class="secondary"')}</div>${assets.length?table(['Asset name','Format','Dimensions','File size','Uploaded','Actions'],assets.map(a=>`<tr><td><strong>${escape(a.name||a.filename)}</strong><br><small class="muted mono">${escape(a.filename)}</small></td><td><span class="badge mono" style="font-size:0.72rem;text-transform:uppercase;">${escape(a.file_format||a.format)}</span></td><td><small class="mono">${a.width&&a.height?`${a.width} × ${a.height} px`:'A4 Document'}</small></td><td><small class="mono">${a.file_size?`${Math.round(a.file_size/1024)} KB`:'—'}</small></td><td>${escape(formatDateIST(a.created_at))}</td><td><div class="plan-actions-group"><a href="/api/offer-letter-assets/${a.id}" target="_blank" class="button secondary" style="font-size:0.78rem;padding:4px 8px;">View File</a>${button('Delete','delete-letterhead-asset',a.id,'class="plan-btn-icon plan-btn-danger" title="Delete letterhead asset"')}</div></td></tr>`)):empty('No company letterhead uploaded yet. Click "+ Upload Letterhead" to add company stationery.')}</section>`;
+    }
+    if(current==='Training Plans') {
+      const templates = await api('training-plans/templates').catch(() => []);
+      const activeCount = templates.filter(t => t.status === 'active').length;
+      const draftCount = templates.filter(t => t.status === 'draft').length;
+      const defaultTpl = templates.find(t => t.is_default);
+
+      let filteredTemplates = templates;
+      if (window._trainingFilterStatus && window._trainingFilterStatus !== 'all') {
+        filteredTemplates = filteredTemplates.filter(t => t.status === window._trainingFilterStatus);
+      }
+      if (window._trainingSearchTerm) {
+        const s = window._trainingSearchTerm.toLowerCase();
+        filteredTemplates = filteredTemplates.filter(t =>
+          (t.name || '').toLowerCase().includes(s) ||
+          (t.description || '').toLowerCase().includes(s) ||
+          (t.positions || []).some(p => String(p).toLowerCase().includes(s)) ||
+          (t.departments || []).some(d => String(d).toLowerCase().includes(s)) ||
+          (t.roles || []).some(r => String(r).toLowerCase().includes(s))
+        );
+      }
+
+      html = heading('Configure position- and role-specific training plans, learning resources, and candidate preparation workflows.', button('+ New Training Plan','new-training-template'))+
+      `<div class="metrics">${[['Total plans',templates.length,'Training Plans','Configured training plans'],['Active plans',activeCount,'Requisitions','Available for candidate training'],['Draft plans',draftCount,'Settings','In design and revision'],['Default plan',defaultTpl?defaultTpl.name:'None','Candidates',defaultTpl?`v${defaultTpl.version} (Active)`:'Auto-selected fallback']].map(([label,count,i,note],n)=>`<div class="metric metric-${n}"><div class="metric-top"><span>${label}</span><span class="metric-icon">${icon(i)}</span></div><strong style="font-size:1.15rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${count}</strong><small>${note}</small></div>`).join('')}</div>`+
+      `<section class="panel">`+
+        `<div class="training-toolbar">`+
+          `<div class="training-toolbar-title">`+
+            `<h2>Pre-Onboarding Training Plans</h2>`+
+            `<p class="muted">Position-mapped onboarding curricula, external learning resources, and candidate emails</p>`+
+          `</div>`+
+          `<div class="training-toolbar-actions">`+
+            `<div class="training-search-wrap">`+
+              `<svg class="training-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>`+
+              `<input type="search" id="training-search-input" value="${escape(window._trainingSearchTerm||'')}" placeholder="Search plans or positions..." aria-label="Search training plans">`+
+            `</div>`+
+            `<select id="training-status-filter" class="training-filter-select" aria-label="Filter plans by status">`+
+              `<option value="all" ${!window._trainingFilterStatus||window._trainingFilterStatus==='all'?'selected':''}>All statuses</option>`+
+              `<option value="active" ${window._trainingFilterStatus==='active'?'selected':''}>Active only</option>`+
+              `<option value="draft" ${window._trainingFilterStatus==='draft'?'selected':''}>Drafts only</option>`+
+              `<option value="archived" ${window._trainingFilterStatus==='archived'?'selected':''}>Archived only</option>`+
+            `</select>`+
+            `<button type="button" class="training-btn-new" data-action="new-training-template">`+
+              `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>`+
+              `<span>New Plan</span>`+
+            `</button>`+
+          `</div>`+
+        `</div>`+
+        (templates.length ? (
+          table(
+            ['Plan name', 'Mapped Positions', 'Departments & Roles', 'Duration', 'Version', 'Status', 'Updated', 'Actions'],
+            templates.map(t => {
+              const defBadge = t.is_default
+                ? `<span class="plan-default-badge" title="Default fallback plan for all candidates"><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg> Default</span>`
+                : '';
+
+              const positions = Array.isArray(t.positions) ? t.positions : [];
+              const maxPosVisible = (positions[0] && positions[0].length > 18) ? 1 : 2;
+              const posChips = positions.length
+                ? `<div class="chips-cloud" title="${escape(positions.join(', '))}">` +
+                    positions.slice(0, maxPosVisible).map(p => `<span class="plan-chip plan-chip-pos" title="${escape(p)}">${escape(p)}</span>`).join('') +
+                    (positions.length > maxPosVisible ? `<span class="plan-chip plan-chip-more" title="${escape(positions.slice(maxPosVisible).join(', '))}">+${positions.length - maxPosVisible} more</span>` : '') +
+                  `</div>`
+                : `<span class="plan-chip-scope"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg> All / General</span>`;
+
+              const deptRoles = [...(t.departments || []), ...(t.roles || [])];
+              const maxDeptVisible = (deptRoles[0] && deptRoles[0].length > 18) ? 1 : 2;
+              const deptChips = deptRoles.length
+                ? `<div class="chips-cloud" title="${escape(deptRoles.join(', '))}">` +
+                    deptRoles.slice(0, maxDeptVisible).map(d => `<span class="plan-chip plan-chip-dept" title="${escape(d)}">${escape(d)}</span>`).join('') +
+                    (deptRoles.length > maxDeptVisible ? `<span class="plan-chip plan-chip-more" title="${escape(deptRoles.slice(maxDeptVisible).join(', '))}">+${deptRoles.length - maxDeptVisible} more</span>` : '') +
+                  `</div>`
+                : `<span class="plan-chip-scope muted">All Depts</span>`;
+
+              const isMatch = filteredTemplates.some(f => f.id === t.id);
+              const hideRowAttr = !isMatch ? 'style="display:none;"' : '';
+              const searchBlob = `${t.name || ''} ${t.description || ''} ${(t.positions || []).join(' ')} ${(t.departments || []).join(' ')} ${(t.roles || []).join(' ')}`.toLowerCase();
+
+              return `<tr class="training-plan-row" data-id="${t.id}" data-name="${escape(t.name||'')}" data-desc="${escape(t.description||'')}" data-positions="${escape((t.positions||[]).join(','))}" data-departments="${escape((t.departments||[]).join(','))}" data-status="${escape(t.status||'')}" data-search="${escape(searchBlob)}" ${hideRowAttr}>` +
+                `<td>` +
+                  `<div class="plan-name-cell">` +
+                    `<div class="plan-title-row">` +
+                      `<strong class="plan-title-text" title="${escape(t.name)}">${escape(t.name)}</strong>` +
+                      `${defBadge}` +
+                    `</div>` +
+                    `<p class="plan-desc-text" title="${escape(t.description || 'No description')}">${escape(t.description || 'No description provided')}</p>` +
+                  `</div>` +
+                `</td>` +
+                `<td>${posChips}</td>` +
+                `<td>${deptChips}</td>` +
+                `<td>` +
+                  `<div class="plan-duration-cell">` +
+                    `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="duration-icon"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>` +
+                    `<span>${escape(t.duration_text || 'Flexible')}</span>` +
+                  `</div>` +
+                `</td>` +
+                `<td style="text-align:center;">` +
+                  `<span class="plan-version-badge">v${t.version}</span>` +
+                `</td>` +
+                `<td style="text-align:center;">` +
+                  `<span class="plan-status-pill status-${t.status}">` +
+                    `<span class="status-dot"></span>` +
+                    `<span>${escape(t.status ? (t.status.charAt(0).toUpperCase() + t.status.slice(1)) : 'Active')}</span>` +
+                  `</span>` +
+                `</td>` +
+                `<td>` +
+                  `<div class="plan-date-cell">${escape(formatDateIST(t.updated_at))}</div>` +
+                `</td>` +
+                `<td>` +
+                  `<div class="plan-actions-group">` +
+                    `<button type="button" class="plan-btn-action plan-btn-primary" data-action="edit-training-template" data-id="${t.id}" title="Edit plan modules and syllabus">` +
+                      `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>` +
+                      `<span>Edit</span>` +
+                    `</button>` +
+                    `<button type="button" class="plan-btn-action plan-btn-secondary" data-action="preview-training-template" data-id="${t.id}" title="Preview syllabus & resource portal">` +
+                      `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>` +
+                      `<span>Preview</span>` +
+                    `</button>` +
+                    `<button type="button" class="plan-btn-icon" data-action="duplicate-training-template" data-id="${t.id}" title="Duplicate this training plan" aria-label="Duplicate plan">` +
+                      `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>` +
+                    `</button>` +
+                    `${!t.is_default ? `
+                      <button type="button" class="plan-btn-icon" data-action="set-training-default" data-id="${t.id}" title="Set as default fallback plan" aria-label="Set as default">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                      </button>
+                    ` : ''}` +
+                    `${t.status !== 'archived' ? `
+                      <button type="button" class="plan-btn-icon plan-btn-danger" data-action="archive-training-template" data-id="${t.id}" title="Archive plan" aria-label="Archive plan">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>
+                      </button>
+                    ` : `
+                      <button type="button" class="plan-btn-icon plan-btn-success" data-action="activate-training-template" data-id="${t.id}" title="Reactivate plan" aria-label="Reactivate plan">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+                      </button>
+                    `}` +
+                  `</div>` +
+                `</td>` +
+              `</tr>`;
+            }),
+            'training-plans-table'
+          ) + `<div id="training-filter-empty" class="empty" style="display:${filteredTemplates.length===0?'block':'none'};">No training plans match your filter.</div>`
+        ) : empty('No training plans created yet. Click "+ New Training Plan" to create one.')) +
+      `</section>`;
     }
     if(current==='Administration') {
       const canUsers=allows('users.read'), canCreateUsers=allows('users.create');
@@ -1569,6 +1857,7 @@ async function render() {
       }
       if(current === 'Pipeline') syncPipelineScroll(prevBoardLeft);
       if(current === 'Integrations') bindIntegrationsFilter();
+      if(current === 'Training Plans') bindTrainingPlansFilter();
     }
   }catch(e){if(me)$('#main').innerHTML=`<section class="panel"><h1>Could not load this view</h1><p class="error">${escape(e.message)}</p>${button('Try again','refresh')}</section>`;}
 }
@@ -1661,6 +1950,46 @@ function bindIntegrationsFilter() {
       applyFilter();
     });
   });
+}
+
+function bindTrainingPlansFilter() {
+  const input = document.getElementById('training-search-input');
+  const select = document.getElementById('training-status-filter');
+  const table = document.querySelector('.training-plans-table');
+  const emptyNotice = document.getElementById('training-filter-empty');
+  if (!table) return;
+
+  const rows = Array.from(table.querySelectorAll('tbody tr.training-plan-row'));
+
+  const applyFilter = () => {
+    const q = (input?.value || '').trim().toLowerCase();
+    const st = select?.value || 'all';
+    window._trainingSearchTerm = q;
+    window._trainingFilterStatus = st;
+
+    let visibleCount = 0;
+    rows.forEach(tr => {
+      const searchBlob = tr.dataset.search || `${tr.dataset.name || ''} ${tr.dataset.desc || ''} ${tr.dataset.positions || ''} ${tr.dataset.departments || ''}`.toLowerCase();
+      const status = tr.dataset.status || '';
+
+      const matchesStatus = (st === 'all' || status === st);
+      const matchesSearch = !q || searchBlob.includes(q);
+
+      if (matchesStatus && matchesSearch) {
+        tr.style.display = '';
+        visibleCount++;
+      } else {
+        tr.style.display = 'none';
+      }
+    });
+
+    if (emptyNotice) {
+      emptyNotice.style.display = (visibleCount === 0 && rows.length > 0) ? 'block' : 'none';
+    }
+  };
+
+  if (input) input.addEventListener('input', applyFilter);
+  if (select) select.addEventListener('change', applyFilter);
 }
 
 async function openIntegrationConfigModal(integrationId) {
@@ -2516,8 +2845,12 @@ async function openOfferTemplateEditor(templateId) {
                   <strong class="full" style="font-size:0.82rem;grid-column:1/-1;">Company Letterhead Stationery</strong>
                   <label><span class="label-heading">First Page Letterhead</span><select id="cfg-first-page-asset">${assetOptions.map(([id, title]) => `<option value="${id}" ${backgroundConfig?.firstPageAssetId === id ? 'selected' : ''}>${escape(title)}</option>`).join('')}</select></label>
                   <label><span class="label-heading">Continuation Pages Letterhead</span><select id="cfg-continuation-asset">${assetOptions.map(([id, title]) => `<option value="${id}" ${backgroundConfig?.continuationAssetId === id ? 'selected' : ''}>${escape(title)}</option>`).join('')}</select></label>
-                  <div class="full" style="display:flex;justify-content:flex-end;">
-                    <button type="button" class="secondary" id="btn-studio-upload-asset" style="font-size:0.78rem;padding:4px 10px;">Upload Letterhead Asset</button>
+                  <div class="full" style="display:flex;align-items:center;justify-content:space-between;padding-top:4px;">
+                    <span class="muted" style="font-size:0.76rem;">Upload new stationery directly into this template:</span>
+                    <div>
+                      <input type="file" id="studio-quick-upload-file" accept=".png,.jpg,.jpeg,.pdf,.docx" style="display:none;">
+                      <button type="button" class="secondary" id="btn-studio-upload-asset" style="font-size:0.78rem;padding:4px 10px;">+ Upload Letterhead File</button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -3002,9 +3335,70 @@ async function openOfferTemplateEditor(templateId) {
     if (refBtn1) refBtn1.onclick = triggerLivePreview;
     if (refBtn2) refBtn2.onclick = triggerLivePreview;
 
-    // Upload asset shortcut
+    // Wire asset select changes to live preview
+    const selFirst = $('#cfg-first-page-asset');
+    const selCont = $('#cfg-continuation-asset');
+    if (selFirst) selFirst.onchange = triggerLivePreview;
+    if (selCont) selCont.onchange = triggerLivePreview;
+
+    // Quick upload letterhead directly in studio without destroying template modal
     const uploadAssetBtn = $('#btn-studio-upload-asset');
-    if (uploadAssetBtn) uploadAssetBtn.onclick = () => openLetterheadUploadModal();
+    const quickFileInput = $('#studio-quick-upload-file');
+    if (uploadAssetBtn && quickFileInput) {
+      uploadAssetBtn.onclick = () => quickFileInput.click();
+      quickFileInput.onchange = async () => {
+        const file = quickFileInput.files?.[0];
+        if (!file) return;
+        if (file.size > 10 * 1024 * 1024) {
+          notice('File exceeds maximum upload size of 10MB.', 'error');
+          quickFileInput.value = '';
+          return;
+        }
+        uploadAssetBtn.disabled = true;
+        uploadAssetBtn.textContent = 'Uploading...';
+        try {
+          const base64 = await new Promise((res, rej) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+              const r = reader.result;
+              res(String(r).split(',')[1] || String(r));
+            };
+            reader.onerror = () => rej(new Error('Failed to read file.'));
+            reader.readAsDataURL(file);
+          });
+          const newAsset = await api('offer-letter-assets', 'POST', {
+            name: file.name.replace(/\.[^/.]+$/, ''),
+            filename: file.name,
+            fileBase64: base64,
+            scaling: 'fit',
+            pageTarget: 'all'
+          });
+          const optLabel = `${newAsset.name || newAsset.filename} (${(newAsset.format || newAsset.file_format || 'IMG').toUpperCase()})`;
+          if (selFirst) {
+            const opt = document.createElement('option');
+            opt.value = newAsset.id;
+            opt.textContent = optLabel;
+            selFirst.appendChild(opt);
+            selFirst.value = newAsset.id;
+            backgroundConfig.firstPageAssetId = newAsset.id;
+          }
+          if (selCont) {
+            const opt = document.createElement('option');
+            opt.value = newAsset.id;
+            opt.textContent = optLabel;
+            selCont.appendChild(opt);
+          }
+          notice('Letterhead uploaded and applied to first page!', 'success');
+          triggerLivePreview();
+        } catch (err) {
+          notice(err.message, 'error');
+        } finally {
+          uploadAssetBtn.disabled = false;
+          uploadAssetBtn.textContent = '+ Upload Letterhead File';
+          quickFileInput.value = '';
+        }
+      };
+    }
 
     // Save button
     const saveBtn = $('#btn-studio-save-tpl');
@@ -3059,6 +3453,752 @@ async function openOfferTemplateEditor(templateId) {
   } catch (err) {
     notice(err.message, 'error');
   }
+}
+
+// ==========================================================================
+// Pre-Onboarding Training Plans: Client Functions & Review Modals
+// ==========================================================================
+
+function renderTrainingPlanPreviewHtml(vars, sections = [], links = [], supportContact = {}) {
+  const replaceVars = str => String(str || '').replace(/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g, (_, k) => escape(vars[k] ?? ''));
+  const candidateName = escape(vars['candidate.name'] || 'Alex Johnson');
+  const position = escape(vars['employment.designation'] || vars['requisition.title'] || 'Software Engineer');
+  const planName = replaceVars(vars['training.plan_name'] || 'Pre-Onboarding Training Plan');
+  const duration = replaceVars(vars['training.duration'] || '2 Weeks');
+  const subject = replaceVars(vars.subject || `Pre-Onboarding Training Plan: ${position}`);
+  const intro = replaceVars(vars.introduction || 'Welcome to Mechlin! We have prepared this pre-onboarding training plan to support your preparation prior to your start date.');
+  const objectives = replaceVars(vars.objectives || '');
+
+  const sectionsHtml = (sections || []).map((s, idx) => `
+    <div style="margin-bottom:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:14px 16px;">
+      <h3 style="margin-top:0;margin-bottom:8px;font-size:14px;font-weight:600;color:#0f172a;">${replaceVars(s.title || `Section ${idx + 1}`)}</h3>
+      <p style="margin:0;font-size:13px;color:#334155;line-height:1.5;white-space:pre-wrap;">${replaceVars(s.content || '')}</p>
+    </div>
+  `).join('');
+
+  const linksHtml = (links || []).length ? `
+    <div style="margin-top:20px;">
+      <h4 style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#64748b;margin-bottom:10px;">Recommended Learning Links & Resources</h4>
+      ${(links || []).map(l => `
+        <div style="margin-bottom:8px;padding:10px 12px;background:#ffffff;border:1px solid #cbd5e1;border-radius:6px;">
+          <a href="${escape(l.url||'#')}" target="_blank" rel="noopener noreferrer" style="font-weight:600;color:#0284c7;text-decoration:none;font-size:13px;">${escape(l.title || l.url)} &rarr;</a>
+          ${l.description ? `<p style="margin:4px 0 0;font-size:12px;color:#475569;">${escape(l.description)}</p>` : ''}
+        </div>
+      `).join('')}
+    </div>
+  ` : '';
+
+  const supName = escape(supportContact.name || vars['support.contact_name'] || 'The Mechlin Talent Team');
+  const supEmail = escape(supportContact.email || vars['support.contact_email'] || 'hr@mechlintech.com');
+
+  return `
+    <div style="background:#ffffff;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#0f172a;max-width:580px;margin:0 auto;box-shadow:0 2px 8px rgba(0,0,0,0.04);">
+      <div style="background:#0f172a;padding:20px 24px;color:#ffffff;display:flex;align-items:center;justify-content:space-between;">
+        <div>
+          <span style="font-size:18px;font-weight:700;letter-spacing:-0.5px;">Orbit</span>
+          <span style="font-size:13px;color:#cbd5e1;margin-left:8px;">&middot; Pre-Onboarding Preparation</span>
+        </div>
+        <span style="font-size:11px;background:#334155;color:#e2e8f0;padding:2px 8px;border-radius:4px;text-transform:uppercase;">Confidential</span>
+      </div>
+      <div style="padding:24px;">
+        <h2 style="font-size:17px;font-weight:700;color:#0f172a;margin-top:0;margin-bottom:14px;">${subject}</h2>
+        <p style="font-size:14px;margin-bottom:14px;line-height:1.5;">Dear ${candidateName},</p>
+        <p style="font-size:14px;margin-bottom:16px;line-height:1.5;color:#334155;">${intro}</p>
+        <div style="background:#f1f5f9;border-radius:6px;padding:12px 14px;margin:16px 0;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+          <div><small class="muted" style="display:block;font-size:11px;text-transform:uppercase;">Role / Position</small><strong style="font-size:13px;">${position}</strong></div>
+          ${duration ? `<div><small class="muted" style="display:block;font-size:11px;text-transform:uppercase;">Duration</small><span class="badge" style="background:#e0e7ff;color:#3730a3;font-size:12px;font-weight:600;">${duration}</span></div>` : ''}
+        </div>
+        ${objectives ? `
+          <div style="background:#eff6ff;border-left:4px solid #3b82f6;border-radius:4px;padding:12px 14px;margin:16px 0;">
+            <h4 style="margin:0 0 6px 0;font-size:13px;font-weight:700;color:#1e40af;">Training Objectives & Learning Outcomes</h4>
+            <div style="font-size:13px;color:#1e3a8a;line-height:1.5;white-space:pre-wrap;">${objectives}</div>
+          </div>
+        ` : ''}
+        ${sectionsHtml}
+        ${linksHtml}
+        <div style="margin-top:24px;padding:12px 14px;background:#f8fafc;border-radius:6px;border:1px solid #e2e8f0;font-size:12px;color:#475569;">
+          <strong>Need Assistance?</strong> Your onboarding coordinator is <strong>${supName}</strong> (<a href="mailto:${supEmail}" style="color:#0284c7;">${supEmail}</a>).
+        </div>
+        <div style="margin-top:24px;padding-top:16px;border-top:1px solid #e2e8f0;font-size:13px;color:#475569;">
+          Warm regards,<br>
+          <strong>The Mechlin Talent Acquisition Team</strong>
+        </div>
+      </div>
+      <div style="background:#f1f5f9;padding:12px 24px;font-size:11px;color:#64748b;border-top:1px solid #e2e8f0;">
+        This email was sent to ${escape(vars['candidate.email'] || 'candidate@example.com')} regarding approved pre-onboarding training with Mechlin Technologies.
+      </div>
+    </div>
+  `;
+}
+
+async function openTrainingTemplateEditor(templateId = null) {
+  try {
+    const tpl = templateId ? await api(`training-plans/templates/${templateId}`) : null;
+    let sections = tpl ? JSON.parse(JSON.stringify(tpl.sections || [])) : [
+      { id: 'sec-1', title: '1. Orientation & Workspace Setup', content: 'Install required runtime tools, configure version control credentials, and review development guides.', order: 1 },
+      { id: 'sec-2', title: '2. Architecture & Codebase Guidelines', content: 'Review system design documentation, database schemas, coding standards, and test suites.', order: 2 }
+    ];
+    let links = tpl ? JSON.parse(JSON.stringify(tpl.learning_links || [])) : [
+      { id: 'link-1', title: 'Official Documentation', url: 'https://nodejs.org/docs/latest/api/', description: 'Runtime and standard APIs' }
+    ];
+
+    const testVars = {
+      'candidate.name': 'Alex Johnson',
+      'candidate.first_name': 'Alex',
+      'candidate.email': 'alex.johnson@example.com',
+      'company.name': 'Mechlin Technologies',
+      'requisition.title': 'Software Engineer',
+      'employment.designation': 'Software Engineer',
+      'requisition.department': 'Engineering',
+      'training.duration': tpl?.duration_text || '2 Weeks',
+      'support.contact_name': tpl?.support_contact?.name || 'Mechlin Talent Team',
+      'support.contact_email': tpl?.support_contact?.email || 'hr@mechlintech.com'
+    };
+
+    const modalHtml = `
+      <div class="training-studio">
+        <div class="training-studio-header">
+          <div class="training-studio-header-left">
+            <input type="text" id="tpl-name" class="offer-studio-title-input" value="${escape(tpl?.name || 'New Training Plan')}" placeholder="Plan Name..." style="max-width:320px;">
+            <select id="tpl-status" style="font-size:0.78rem;padding:4px 8px;min-height:28px;">
+              <option value="active" ${tpl?.status === 'active' || !tpl ? 'selected' : ''}>Active</option>
+              <option value="draft" ${tpl?.status === 'draft' ? 'selected' : ''}>Draft</option>
+            </select>
+            <label class="checkbox-row" style="font-size:0.78rem;margin:0;cursor:pointer;">
+              <input type="checkbox" id="tpl-default" value="1" ${tpl?.is_default ? 'checked' : ''}>
+              <span>Default Plan</span>
+            </label>
+          </div>
+          <div class="training-studio-header-actions">
+            <button type="button" id="btn-save-tpl" class="primary" style="font-size:0.8rem;padding:6px 16px;">${templateId ? 'Save Changes' : 'Create Plan'}</button>
+            <button type="button" class="secondary" data-action="close-modal" style="font-size:0.8rem;padding:6px 14px;">Cancel</button>
+          </div>
+        </div>
+        <div class="training-studio-layout">
+          <!-- Left: Editor Pane -->
+          <div class="training-studio-editor">
+            <div>
+              <label style="font-weight:600;font-size:0.82rem;">Internal Description</label>
+              <input type="text" id="tpl-desc" value="${escape(tpl?.description || '')}" placeholder="Brief internal description of target audience and goals..." style="width:100%;margin-top:4px;">
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+              <div>
+                <label style="font-weight:600;font-size:0.82rem;">Mapped Positions / Designations <small class="muted">(comma-separated)</small></label>
+                <input type="text" id="tpl-positions" value="${escape((tpl?.positions || []).join(', '))}" placeholder="e.g. Software Engineer, Full Stack Developer" style="width:100%;margin-top:4px;">
+              </div>
+              <div>
+                <label style="font-weight:600;font-size:0.82rem;">Mapped Departments & Roles <small class="muted">(comma-separated)</small></label>
+                <input type="text" id="tpl-departments" value="${escape((tpl?.departments || []).join(', '))}" placeholder="e.g. Engineering, Product" style="width:100%;margin-top:4px;">
+              </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+              <div>
+                <label style="font-weight:600;font-size:0.82rem;">Suggested Duration</label>
+                <input type="text" id="tpl-duration" value="${escape(tpl?.duration_text || '2 Weeks')}" placeholder="e.g. 2 Weeks, 10 business days" style="width:100%;margin-top:4px;">
+              </div>
+              <div>
+                <label style="font-weight:600;font-size:0.82rem;">Support Contact Email</label>
+                <input type="email" id="tpl-contact-email" value="${escape(tpl?.support_contact?.email || 'hr@mechlintech.com')}" style="width:100%;margin-top:4px;">
+              </div>
+            </div>
+            <div>
+              <label style="font-weight:600;font-size:0.82rem;">Candidate-Facing Email Subject</label>
+              <input type="text" id="tpl-subject" value="${escape(tpl?.subject || 'Pre-Onboarding Training Plan: {{employment.designation}} at {{company.name}}')}" style="width:100%;margin-top:4px;">
+              <div class="training-var-pills">
+                <span class="muted" style="font-size:0.72rem;margin-right:4px;">Click to copy:</span>
+                <span class="training-var-pill" data-var="{{candidate.name}}">{{candidate.name}}</span>
+                <span class="training-var-pill" data-var="{{employment.designation}}">{{employment.designation}}</span>
+                <span class="training-var-pill" data-var="{{requisition.department}}">{{requisition.department}}</span>
+                <span class="training-var-pill" data-var="{{company.name}}">{{company.name}}</span>
+                <span class="training-var-pill" data-var="{{training.duration}}">{{training.duration}}</span>
+              </div>
+            </div>
+            <div>
+              <label style="font-weight:600;font-size:0.82rem;">Candidate Introduction & Instructions</label>
+              <textarea id="tpl-intro" rows="3" style="width:100%;margin-top:4px;font-size:0.85rem;">${escape(tpl?.introduction || 'Welcome to Mechlin! We have prepared this pre-onboarding technical training plan to support your preparation prior to your start date.')}</textarea>
+            </div>
+            <div>
+              <label style="font-weight:600;font-size:0.82rem;">Training Objectives & Learning Outcomes</label>
+              <textarea id="tpl-objectives" rows="3" style="width:100%;margin-top:4px;font-size:0.85rem;">${escape(tpl?.objectives || '• Configure and verify your development environment.\n• Review system architecture and API conventions.\n• Understand coding standards, testing practices, and security rules.')}</textarea>
+            </div>
+            <div>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                <label style="font-weight:600;font-size:0.85rem;">Ordered Content Sections</label>
+                <button type="button" class="secondary" id="btn-add-section" style="font-size:0.75rem;padding:3px 8px;">+ Add Section</button>
+              </div>
+              <div id="sections-container" style="display:flex;flex-direction:column;gap:10px;"></div>
+            </div>
+            <div>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                <label style="font-weight:600;font-size:0.85rem;">External Learning Links</label>
+                <button type="button" class="secondary" id="btn-add-link" style="font-size:0.75rem;padding:3px 8px;">+ Add Learning Link</button>
+              </div>
+              <div id="links-container" style="display:flex;flex-direction:column;gap:8px;"></div>
+            </div>
+          </div>
+          <!-- Right: Live Preview Pane -->
+          <div class="training-studio-preview">
+            <div class="training-studio-preview-head">
+              <span style="font-weight:600;font-size:0.85rem;color:var(--ink);">Real-Time Candidate Email Preview</span>
+              <span class="muted" style="font-size:0.75rem;">Dynamic sample data interpolated</span>
+            </div>
+            <div class="training-studio-preview-frame-wrap" id="preview-render-box"></div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    $('#modal-body').innerHTML = modalHtml;
+    $('#modal').showModal();
+
+    const renderSections = () => {
+      const container = $('#sections-container');
+      if (!container) return;
+      container.innerHTML = sections.map((s, idx) => `
+        <div class="training-section-card" data-idx="${idx}">
+          <div class="training-section-card-head">
+            <span style="font-weight:600;font-size:0.8rem;color:var(--ink);">Section ${idx + 1}</span>
+            <button type="button" class="secondary text-button btn-del-sec" data-idx="${idx}" style="color:var(--negative);font-size:0.75rem;">Remove</button>
+          </div>
+          <input type="text" class="sec-title-input" data-idx="${idx}" value="${escape(s.title || '')}" placeholder="Section Title..." style="font-weight:600;font-size:0.82rem;">
+          <textarea class="sec-content-input" data-idx="${idx}" rows="2" placeholder="Section description, instructions, or curriculum steps..." style="font-size:0.8rem;">${escape(s.content || '')}</textarea>
+        </div>
+      `).join('') || '<p class="muted" style="font-size:0.8rem;">No content sections added yet. Click "+ Add Section".</p>';
+
+      container.querySelectorAll('.btn-del-sec').forEach(btn => {
+        btn.onclick = () => {
+          const idx = Number(btn.dataset.idx);
+          sections.splice(idx, 1);
+          renderSections();
+          updateLivePreview();
+        };
+      });
+      container.querySelectorAll('.sec-title-input').forEach(inp => {
+        inp.oninput = () => {
+          sections[Number(inp.dataset.idx)].title = inp.value;
+          updateLivePreview();
+        };
+      });
+      container.querySelectorAll('.sec-content-input').forEach(inp => {
+        inp.oninput = () => {
+          sections[Number(inp.dataset.idx)].content = inp.value;
+          updateLivePreview();
+        };
+      });
+    };
+
+    const renderLinks = () => {
+      const container = $('#links-container');
+      if (!container) return;
+      container.innerHTML = links.map((l, idx) => `
+        <div class="training-link-item" data-idx="${idx}">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <input type="text" class="link-title-input" data-idx="${idx}" value="${escape(l.title || '')}" placeholder="Resource Title..." style="font-weight:600;font-size:0.82rem;flex:1;margin-right:8px;">
+            <button type="button" class="secondary text-button btn-del-link" data-idx="${idx}" style="color:var(--negative);font-size:0.75rem;">Remove</button>
+          </div>
+          <input type="url" class="link-url-input" data-idx="${idx}" value="${escape(l.url || '')}" placeholder="https://example.com/docs" style="font-size:0.8rem;">
+          <input type="text" class="link-desc-input" data-idx="${idx}" value="${escape(l.description || '')}" placeholder="Optional link description..." style="font-size:0.78rem;">
+        </div>
+      `).join('') || '<p class="muted" style="font-size:0.8rem;">No external links added. Click "+ Add Learning Link".</p>';
+
+      container.querySelectorAll('.btn-del-link').forEach(btn => {
+        btn.onclick = () => {
+          links.splice(Number(btn.dataset.idx), 1);
+          renderLinks();
+          updateLivePreview();
+        };
+      });
+      container.querySelectorAll('.link-title-input').forEach(inp => {
+        inp.oninput = () => { links[Number(inp.dataset.idx)].title = inp.value; updateLivePreview(); };
+      });
+      container.querySelectorAll('.link-url-input').forEach(inp => {
+        inp.oninput = () => { links[Number(inp.dataset.idx)].url = inp.value; updateLivePreview(); };
+      });
+      container.querySelectorAll('.link-desc-input').forEach(inp => {
+        inp.oninput = () => { links[Number(inp.dataset.idx)].description = inp.value; updateLivePreview(); };
+      });
+    };
+
+    const updateLivePreview = () => {
+      const box = $('#preview-render-box');
+      if (!box) return;
+      const currentVars = {
+        ...testVars,
+        'training.duration': $('#tpl-duration')?.value || '2 Weeks',
+        subject: $('#tpl-subject')?.value || '',
+        introduction: $('#tpl-intro')?.value || '',
+        objectives: $('#tpl-objectives')?.value || ''
+      };
+      box.innerHTML = renderTrainingPlanPreviewHtml(currentVars, sections, links, { email: $('#tpl-contact-email')?.value });
+    };
+
+    renderSections();
+    renderLinks();
+    updateLivePreview();
+
+    ['tpl-name', 'tpl-subject', 'tpl-intro', 'tpl-objectives', 'tpl-duration', 'tpl-contact-email'].forEach(id => {
+      const el = $('#' + id);
+      if (el) el.oninput = updateLivePreview;
+    });
+
+    $('#btn-add-section').onclick = () => {
+      sections.push({ id: 'sec-' + Date.now(), title: `Section ${sections.length + 1}`, content: '', order: sections.length + 1 });
+      renderSections();
+      updateLivePreview();
+    };
+    $('#btn-add-link').onclick = () => {
+      links.push({ id: 'link-' + Date.now(), title: '', url: 'https://', description: '' });
+      renderLinks();
+      updateLivePreview();
+    };
+
+    document.querySelectorAll('.training-var-pill').forEach(pill => {
+      pill.onclick = () => {
+        const v = pill.dataset.var;
+        navigator.clipboard?.writeText(v);
+        notice(`Copied ${v} to clipboard!`, 'success');
+      };
+    });
+
+    $('#btn-save-tpl').onclick = async () => {
+      const name = String($('#tpl-name')?.value || '').trim();
+      const subject = String($('#tpl-subject')?.value || '').trim();
+      if (!name) { notice('Plan name is required.', 'error'); return; }
+      if (!subject) { notice('Candidate email subject is required.', 'error'); return; }
+
+      const positions = String($('#tpl-positions')?.value || '').split(',').map(s => s.trim()).filter(Boolean);
+      const departments = String($('#tpl-departments')?.value || '').split(',').map(s => s.trim()).filter(Boolean);
+
+      const payload = {
+        name,
+        description: $('#tpl-desc')?.value || '',
+        status: $('#tpl-status')?.value || 'active',
+        is_default: $('#tpl-default')?.checked ? 1 : 0,
+        positions,
+        departments,
+        duration_text: $('#tpl-duration')?.value || '2 Weeks',
+        subject,
+        introduction: $('#tpl-intro')?.value || '',
+        objectives: $('#tpl-objectives')?.value || '',
+        sections,
+        learning_links: links,
+        support_contact: {
+          email: $('#tpl-contact-email')?.value || 'hr@mechlintech.com'
+        }
+      };
+
+      const btn = $('#btn-save-tpl');
+      btn.disabled = true;
+      btn.textContent = 'Saving...';
+      try {
+        if (templateId) {
+          await api(`training-plans/templates/${templateId}`, 'PUT', payload);
+          notice('Training plan updated successfully.', 'success');
+        } else {
+          await api('training-plans/templates', 'POST', payload);
+          notice('Training plan created successfully.', 'success');
+        }
+        closeModal();
+        await render();
+      } catch (err) {
+        notice(err.message, 'error');
+        btn.disabled = false;
+        btn.textContent = templateId ? 'Save Changes' : 'Create Plan';
+      }
+    };
+  } catch (err) {
+    notice(err.message, 'error');
+  }
+}
+
+async function openTrainingTemplatePreview(templateId) {
+  try {
+    const tpl = await api(`training-plans/templates/${templateId}`);
+    const testVars = {
+      'candidate.name': 'Alex Johnson',
+      'candidate.first_name': 'Alex',
+      'candidate.email': 'alex.johnson@example.com',
+      'company.name': 'Mechlin Technologies',
+      'requisition.title': (tpl.positions && tpl.positions[0]) || 'Software Engineer',
+      'employment.designation': (tpl.positions && tpl.positions[0]) || 'Software Engineer',
+      'requisition.department': (tpl.departments && tpl.departments[0]) || 'Engineering',
+      'training.duration': tpl.duration_text || '2 Weeks',
+      subject: tpl.subject,
+      introduction: tpl.introduction,
+      objectives: tpl.objectives,
+      'support.contact_name': tpl.support_contact?.name || 'Mechlin Talent Team',
+      'support.contact_email': tpl.support_contact?.email || 'hr@mechlintech.com'
+    };
+
+    modal(`Preview: ${escape(tpl.name)}`, `
+      <div style="max-height:80vh;overflow-y:auto;padding:12px 0;">
+        ${renderTrainingPlanPreviewHtml(testVars, tpl.sections, tpl.learning_links, tpl.support_contact)}
+      </div>
+    `, null, { actions: `<div class="form-actions"><button type="button" class="secondary" data-action="close-modal">Close</button></div>` });
+  } catch (err) {
+    notice(err.message, 'error');
+  }
+}
+
+async function openTrainingPlanReviewModal(applicationId) {
+  try {
+    const data = await api(`applications/${applicationId}/training-plan`);
+    const { draft, candidate, position, department, stage, suggestedTemplate, matchPriority, matchReason, isAmbiguous, ambiguousTemplates, allActiveTemplates } = data;
+
+    let currentDraft = JSON.parse(JSON.stringify(draft));
+    let selectedTplId = currentDraft.template_id || (suggestedTemplate ? suggestedTemplate.id : (allActiveTemplates[0]?.id || ''));
+
+    const candVars = {
+      'candidate.name': candidate.name,
+      'candidate.first_name': candidate.name.split(/\s+/)[0],
+      'candidate.email': candidate.email,
+      'company.name': 'Mechlin Technologies',
+      'requisition.title': position,
+      'employment.designation': position,
+      'requisition.department': department,
+      'training.duration': currentDraft.duration_text || '2 Weeks',
+      subject: currentDraft.subject,
+      introduction: currentDraft.introduction,
+      objectives: currentDraft.objectives,
+      'support.contact_name': currentDraft.support_contact?.name || 'The Mechlin Talent Team',
+      'support.contact_email': currentDraft.support_contact?.email || 'hr@mechlintech.com'
+    };
+
+    const isPositionMismatch = (tplId) => {
+      const t = allActiveTemplates.find(x => x.id === tplId);
+      if (!t || t.is_default) return false;
+      const norm = s => String(s || '').toLowerCase().trim();
+      return !(t.positions || []).some(p => norm(p) === norm(position) || norm(position).includes(norm(p)));
+    };
+
+    const modalHtml = `
+      <div class="training-plan-review-modal">
+        <div class="training-studio-header">
+          <div class="training-studio-header-left">
+            <div>
+              <strong style="font-size:1rem;color:var(--ink);">Pre-Onboarding Training Plan</strong>
+              <div class="muted" style="font-size:0.78rem;">${escape(candidate.name)} &middot; ${escape(position)} (${escape(department)})</div>
+            </div>
+          </div>
+          <div class="training-studio-header-actions">
+            <button type="button" id="btn-save-draft" class="secondary" style="font-size:0.8rem;padding:6px 14px;">Save Draft</button>
+            <button type="button" id="btn-discard-draft" class="secondary text-button" style="font-size:0.78rem;padding:6px 10px;color:var(--negative);">Reset Edits</button>
+            <button type="button" id="btn-open-send-confirm" class="primary" style="font-size:0.8rem;padding:6px 16px;">${currentDraft.status === 'sent' ? 'Resend Plan...' : 'Send Training Plan...'}</button>
+            <button type="button" class="secondary" data-action="close-modal" style="font-size:0.8rem;padding:6px 14px;">Close</button>
+          </div>
+        </div>
+
+        <!-- Notification Banner Strip -->
+        <div style="padding:10px 20px;border-bottom:1px solid var(--line);background:var(--surface-alt);display:flex;flex-direction:column;gap:6px;">
+          ${isAmbiguous ? `
+            <div class="training-ambiguity-banner">
+              <strong>Ambiguous Match Warning:</strong> Multiple active training plans match candidate criteria at priority level ${matchPriority} (${(ambiguousTemplates || []).map(t => escape(t.name)).join(', ')}). Manual template selection is required.
+            </div>
+          ` : (suggestedTemplate ? `
+            <div style="display:flex;align-items:center;gap:8px;font-size:0.82rem;">
+              <span class="training-match-chip">&bull; Suggested: ${escape(suggestedTemplate.name)}</span>
+              <span class="muted">(Priority ${matchPriority}: ${escape(matchReason || '')})</span>
+            </div>
+          ` : `<div class="muted" style="font-size:0.82rem;">No position-specific training plan suggested. Please select an active plan below.</div>`)}
+          <div id="mismatch-warning-box" class="training-warning-banner" style="${isPositionMismatch(selectedTplId) ? 'display:block;' : 'display:none;'}">
+            <strong>Position Mismatch Notice:</strong> The selected plan is configured for other roles and differs from candidate's position <em>(${escape(position)})</em>. An authorized override will be applied.
+          </div>
+        </div>
+
+        <div class="training-studio-layout">
+          <!-- Left: Candidate-Specific Editor Pane -->
+          <div class="training-studio-editor">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;background:var(--surface-alt);padding:10px 14px;border-radius:8px;border:1px solid var(--line);">
+              <div style="flex:1;">
+                <label style="font-weight:600;font-size:0.8rem;display:block;">Select Training Plan Template</label>
+                <select id="review-tpl-select" style="width:100%;font-size:0.82rem;padding:5px 8px;margin-top:4px;">
+                  ${allActiveTemplates.map(t => `<option value="${t.id}" ${t.id === selectedTplId ? 'selected' : ''}>${escape(t.name)} ${t.is_default ? '(Default)' : ''} — ${(t.positions || []).join(', ') || 'All Roles'}</option>`).join('')}
+                </select>
+              </div>
+              <button type="button" class="secondary" id="btn-apply-tpl-content" style="font-size:0.75rem;padding:6px 10px;margin-top:16px;" title="Reset candidate fields using selected template content">Load Template Content</button>
+            </div>
+
+            <div>
+              <label style="font-weight:600;font-size:0.82rem;">Candidate Email Subject</label>
+              <input type="text" id="review-subject" value="${escape(currentDraft.subject || '')}" style="width:100%;margin-top:4px;">
+            </div>
+
+            <div>
+              <label style="font-weight:600;font-size:0.82rem;">Personalized Introduction</label>
+              <textarea id="review-intro" rows="3" style="width:100%;margin-top:4px;font-size:0.82rem;">${escape(currentDraft.introduction || '')}</textarea>
+            </div>
+
+            <div>
+              <label style="font-weight:600;font-size:0.82rem;">Training Objectives & Learning Outcomes</label>
+              <textarea id="review-objectives" rows="3" style="width:100%;margin-top:4px;font-size:0.82rem;">${escape(currentDraft.objectives || '')}</textarea>
+            </div>
+
+            <div>
+              <label style="font-weight:600;font-size:0.82rem;">Training Duration</label>
+              <input type="text" id="review-duration" value="${escape(currentDraft.duration_text || '2 Weeks')}" style="width:100%;margin-top:4px;">
+            </div>
+
+            <div>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                <label style="font-weight:600;font-size:0.85rem;">Curriculum Sections</label>
+                <button type="button" class="secondary" id="btn-review-add-sec" style="font-size:0.75rem;padding:3px 8px;">+ Add Section</button>
+              </div>
+              <div id="review-sections-container" style="display:flex;flex-direction:column;gap:10px;"></div>
+            </div>
+
+            <div>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                <label style="font-weight:600;font-size:0.85rem;">Learning Links & Resources</label>
+                <button type="button" class="secondary" id="btn-review-add-link" style="font-size:0.75rem;padding:3px 8px;">+ Add Learning Link</button>
+              </div>
+              <div id="review-links-container" style="display:flex;flex-direction:column;gap:8px;"></div>
+            </div>
+
+            <div style="background:var(--surface-alt);border:1px solid var(--line);border-radius:8px;padding:12px;">
+              <label style="font-weight:600;font-size:0.82rem;">Support Contact Details</label>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px;">
+                <input type="text" id="review-contact-name" value="${escape(currentDraft.support_contact?.name || 'Mechlin Talent Team')}" placeholder="Contact Name" style="font-size:0.8rem;">
+                <input type="email" id="review-contact-email" value="${escape(currentDraft.support_contact?.email || 'hr@mechlintech.com')}" placeholder="Contact Email" style="font-size:0.8rem;">
+              </div>
+            </div>
+          </div>
+
+          <!-- Right: Real-time Live Candidate Email Preview -->
+          <div class="training-studio-preview">
+            <div class="training-studio-preview-head">
+              <div>
+                <span style="font-weight:600;font-size:0.85rem;color:var(--ink);">Candidate-Facing Email Preview</span>
+                <div class="muted" style="font-size:0.75rem;">Delivered to: <strong>${escape(candidate.email)}</strong></div>
+              </div>
+              <span class="badge ${currentDraft.status === 'sent' ? 'completed' : 'active'}" style="font-size:0.75rem;">Status: ${escape(currentDraft.status || 'pending_review')}</span>
+            </div>
+            <div class="training-studio-preview-frame-wrap" id="review-preview-box"></div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    $('#modal-body').innerHTML = modalHtml;
+    $('#modal').showModal();
+
+    let sections = currentDraft.sections || [];
+    let links = currentDraft.learning_links || [];
+
+    const syncSectionsDom = () => {
+      const container = $('#review-sections-container');
+      if (!container) return;
+      container.innerHTML = sections.map((s, idx) => `
+        <div class="training-section-card" data-idx="${idx}">
+          <div class="training-section-card-head">
+            <span style="font-weight:600;font-size:0.8rem;color:var(--ink);">Section ${idx + 1}</span>
+            <button type="button" class="secondary text-button btn-del-sec" data-idx="${idx}" style="color:var(--negative);font-size:0.75rem;">Remove</button>
+          </div>
+          <input type="text" class="sec-title-input" data-idx="${idx}" value="${escape(s.title || '')}" placeholder="Title..." style="font-weight:600;font-size:0.82rem;">
+          <textarea class="sec-content-input" data-idx="${idx}" rows="2" style="font-size:0.8rem;">${escape(s.content || '')}</textarea>
+        </div>
+      `).join('') || '<p class="muted" style="font-size:0.8rem;">No content sections added.</p>';
+
+      container.querySelectorAll('.btn-del-sec').forEach(btn => {
+        btn.onclick = () => { sections.splice(Number(btn.dataset.idx), 1); syncSectionsDom(); updateLivePreview(); };
+      });
+      container.querySelectorAll('.sec-title-input').forEach(inp => {
+        inp.oninput = () => { sections[Number(inp.dataset.idx)].title = inp.value; updateLivePreview(); };
+      });
+      container.querySelectorAll('.sec-content-input').forEach(inp => {
+        inp.oninput = () => { sections[Number(inp.dataset.idx)].content = inp.value; updateLivePreview(); };
+      });
+    };
+
+    const syncLinksDom = () => {
+      const container = $('#review-links-container');
+      if (!container) return;
+      container.innerHTML = links.map((l, idx) => `
+        <div class="training-link-item" data-idx="${idx}">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <input type="text" class="link-title-input" data-idx="${idx}" value="${escape(l.title || '')}" placeholder="Title..." style="font-weight:600;font-size:0.82rem;flex:1;margin-right:8px;">
+            <button type="button" class="secondary text-button btn-del-link" data-idx="${idx}" style="color:var(--negative);font-size:0.75rem;">Remove</button>
+          </div>
+          <input type="url" class="link-url-input" data-idx="${idx}" value="${escape(l.url || '')}" placeholder="https://..." style="font-size:0.8rem;">
+          <input type="text" class="link-desc-input" data-idx="${idx}" value="${escape(l.description || '')}" placeholder="Description..." style="font-size:0.78rem;">
+        </div>
+      `).join('') || '<p class="muted" style="font-size:0.8rem;">No external links added.</p>';
+
+      container.querySelectorAll('.btn-del-link').forEach(btn => {
+        btn.onclick = () => { links.splice(Number(btn.dataset.idx), 1); syncLinksDom(); updateLivePreview(); };
+      });
+      container.querySelectorAll('.link-title-input').forEach(inp => {
+        inp.oninput = () => { links[Number(inp.dataset.idx)].title = inp.value; updateLivePreview(); };
+      });
+      container.querySelectorAll('.link-url-input').forEach(inp => {
+        inp.oninput = () => { links[Number(inp.dataset.idx)].url = inp.value; updateLivePreview(); };
+      });
+      container.querySelectorAll('.link-desc-input').forEach(inp => {
+        inp.oninput = () => { links[Number(inp.dataset.idx)].description = inp.value; updateLivePreview(); };
+      });
+    };
+
+    const updateLivePreview = () => {
+      const box = $('#review-preview-box');
+      if (!box) return;
+      const previewVars = {
+        ...candVars,
+        'training.duration': $('#review-duration')?.value || '2 Weeks',
+        subject: $('#review-subject')?.value || '',
+        introduction: $('#review-intro')?.value || '',
+        objectives: $('#review-objectives')?.value || ''
+      };
+      box.innerHTML = renderTrainingPlanPreviewHtml(previewVars, sections, links, {
+        name: $('#review-contact-name')?.value,
+        email: $('#review-contact-email')?.value
+      });
+    };
+
+    syncSectionsDom();
+    syncLinksDom();
+    updateLivePreview();
+
+    ['review-subject', 'review-intro', 'review-objectives', 'review-duration', 'review-contact-name', 'review-contact-email'].forEach(id => {
+      const el = $('#' + id);
+      if (el) el.oninput = updateLivePreview;
+    });
+
+    $('#btn-review-add-sec').onclick = () => {
+      sections.push({ id: 'sec-' + Date.now(), title: `Section ${sections.length + 1}`, content: '', order: sections.length + 1 });
+      syncSectionsDom();
+      updateLivePreview();
+    };
+    $('#btn-review-add-link').onclick = () => {
+      links.push({ id: 'link-' + Date.now(), title: '', url: 'https://', description: '' });
+      syncLinksDom();
+      updateLivePreview();
+    };
+
+    const tplSelect = $('#review-plan-template-select') || $('#review-tpl-select');
+    if (tplSelect) {
+      tplSelect.onchange = () => {
+        selectedTplId = tplSelect.value;
+        const mismatchBox = $('#mismatch-warning-box');
+        if (mismatchBox) mismatchBox.style.display = isPositionMismatch(selectedTplId) ? 'block' : 'none';
+      };
+    }
+
+    $('#btn-apply-tpl-content').onclick = () => {
+      const chosenTpl = allActiveTemplates.find(x => x.id === selectedTplId);
+      if (!chosenTpl) return;
+      if (!window.confirm('Replace current editor contents with template defaults? Any manual edits will be overwritten.')) return;
+      $('#review-subject').value = chosenTpl.subject || '';
+      $('#review-intro').value = chosenTpl.introduction || '';
+      $('#review-objectives').value = chosenTpl.objectives || '';
+      $('#review-duration').value = chosenTpl.duration_text || '2 Weeks';
+      if (chosenTpl.support_contact?.email) $('#review-contact-email').value = chosenTpl.support_contact.email;
+      sections = JSON.parse(JSON.stringify(chosenTpl.sections || []));
+      links = JSON.parse(JSON.stringify(chosenTpl.learning_links || []));
+      syncSectionsDom();
+      syncLinksDom();
+      updateLivePreview();
+      notice('Loaded content from selected template.', 'success');
+    };
+
+    const buildDraftPayload = () => ({
+      template_id: selectedTplId,
+      subject: $('#review-subject')?.value || '',
+      introduction: $('#review-intro')?.value || '',
+      objectives: $('#review-objectives')?.value || '',
+      duration_text: $('#review-duration')?.value || '2 Weeks',
+      sections,
+      learning_links: links,
+      support_contact: {
+        name: $('#review-contact-name')?.value || 'Mechlin Talent Team',
+        email: $('#review-contact-email')?.value || 'hr@mechlintech.com'
+      }
+    });
+
+    $('#btn-save-draft').onclick = async () => {
+      const payload = buildDraftPayload();
+      try {
+        await api(`applications/${applicationId}/training-plan`, 'PUT', payload);
+        notice('Training plan draft saved. (Email not sent)', 'success');
+        await render();
+      } catch (err) {
+        notice(err.message, 'error');
+      }
+    };
+
+    $('#btn-discard-draft').onclick = async () => {
+      if (!window.confirm('Discard all custom edits and re-initialize from suggested template?')) return;
+      try {
+        await api(`applications/${applicationId}/training-plan/discard`, 'POST');
+        notice('Draft reset to original suggestion.', 'success');
+        openTrainingPlanReviewModal(applicationId);
+      } catch (err) {
+        notice(err.message, 'error');
+      }
+    };
+
+    $('#btn-open-send-confirm').onclick = async () => {
+      const payload = buildDraftPayload();
+      if (!payload.subject.trim()) { notice('Email subject is required before sending.', 'error'); return; }
+      // Auto-save draft before confirming send so changes are persisted
+      await api(`applications/${applicationId}/training-plan`, 'PUT', payload).catch(() => {});
+      openTrainingSendConfirmation(applicationId, {
+        ...payload,
+        candidate,
+        position,
+        templateName: allActiveTemplates.find(x => x.id === selectedTplId)?.name || 'Custom Training Plan'
+      }, currentDraft.status === 'sent');
+    };
+  } catch (err) {
+    notice(err.message, 'error');
+  }
+}
+
+function openTrainingSendConfirmation(applicationId, draftData, isResend = false) {
+  const modalHtml = `
+    <div style="display:flex;flex-direction:column;gap:14px;">
+      <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:14px;color:#1e3a8a;font-size:0.85rem;line-height:1.5;">
+        <strong style="font-size:0.95rem;color:#1e40af;display:block;margin-bottom:8px;">Deliver Pre-Onboarding Training Plan</strong>
+        <div>Candidate: <strong>${escape(draftData.candidate?.name || 'Candidate')}</strong></div>
+        <div>Recipient Email: <strong>${escape(draftData.candidate?.email || '')}</strong></div>
+        <div>Assigned Position: <strong>${escape(draftData.position || '')}</strong></div>
+        <div>Selected Plan: <strong>${escape(draftData.templateName || 'Training Plan')}</strong></div>
+        <div>Email Subject: <em>${escape(draftData.subject || '')}</em></div>
+      </div>
+
+      <div style="background:#fffbeb;border:1px solid #fef3c7;border-left:4px solid #f59e0b;padding:12px;border-radius:6px;font-size:0.82rem;color:#92400e;line-height:1.5;">
+        <strong>Critical Requirement:</strong> The training-plan email is only sent when you explicitly confirm below. Pipeline transitions or previous stage notifications are separate and will not be re-sent. This action is permanently audited.
+      </div>
+
+      <div class="form-actions" style="margin-top:12px;">
+        <button type="button" class="secondary" id="btn-cancel-send">Cancel</button>
+        <button type="button" class="primary" id="btn-confirm-send" style="padding:6px 18px;">${isResend ? 'Confirm & Resend Email' : 'Confirm & Send Email'}</button>
+      </div>
+    </div>
+  `;
+
+  modal(isResend ? 'Confirm Training Plan Resend' : 'Confirm Training Plan Email Delivery', modalHtml, null, { actions: false });
+
+  $('#btn-cancel-send').onclick = () => {
+    closeModal();
+    openTrainingPlanReviewModal(applicationId);
+  };
+
+  $('#btn-confirm-send').onclick = async () => {
+    const btn = $('#btn-confirm-send');
+    btn.disabled = true;
+    btn.textContent = 'Sending email...';
+
+    try {
+      const endpoint = `applications/${applicationId}/training-plan/${isResend ? 'resend' : 'send'}`;
+      await api(endpoint, 'POST', { sendConfirmation: true });
+      closeModal();
+      notice(`Training plan successfully delivered to ${draftData.candidate?.email}!`, 'success');
+      await render();
+    } catch (err) {
+      notice(err.message, 'error');
+      btn.disabled = false;
+      btn.textContent = isResend ? 'Confirm & Resend Email' : 'Confirm & Send Email';
+    }
+  };
 }
 
 document.addEventListener('change',event=>{
@@ -3143,7 +4283,46 @@ document.addEventListener('click',async event=>{
       await render();
       return;
     }
+    if(a==='new-training-template'){await openTrainingTemplateEditor();return;}
+    if(a==='edit-training-template'){await openTrainingTemplateEditor(id);return;}
+    if(a==='preview-training-template'){await openTrainingTemplatePreview(id);return;}
+    if(a==='duplicate-training-template'){
+      await api(`training-plans/templates/${id}/duplicate`, 'POST', {});
+      notice('Training plan duplicated successfully.', 'success');
+      await render();
+      return;
+    }
+    if(a==='set-training-default'){
+      await api(`training-plans/templates/${id}/status`, 'POST', { is_default: 1 });
+      notice('Training plan set as default.', 'success');
+      await render();
+      return;
+    }
+    if(a==='archive-training-template'){
+      if(!window.confirm('Archive this training plan template? Historical records will remain intact.'))return;
+      await api(`training-plans/templates/${id}/archive`, 'POST', {});
+      notice('Training plan archived.', 'success');
+      await render();
+      return;
+    }
+    if(a==='activate-training-template'){
+      await api(`training-plans/templates/${id}/status`, 'POST', { status: 'active' });
+      notice('Training plan activated.', 'success');
+      await render();
+      return;
+    }
+    if(a==='review-training-plan'){
+      await openTrainingPlanReviewModal(id);
+      return;
+    }
     if(a==='upload-letterhead'){await openLetterheadUploadModal();return;}
+    if(a==='delete-letterhead-asset'){
+      if(!confirm('Are you sure you want to delete this letterhead asset? Templates using it will fall back to plain background.'))return;
+      await api(`offer-letter-assets/${id}`,'DELETE');
+      notice('Letterhead asset deleted.','success');
+      await render();
+      return;
+    }
     if(a==='new-req'){
       modal('New requisition',`<div class="form-grid">${field('Position title','title')}${teamSelect('Team','team',me.team||'Dev',false)}${field('Headcount','headcount','number','1')}${field('Currency','currency','text','INR')}${field('Minimum annual salary','salary_min','number','0')}${field('Maximum annual salary','salary_max','number','0')}${field('Required skills, comma separated','skills','text','',false)}${area('Job description','description','',true)}</div>${button('Draft description from title & skills','draft-jd','','class="secondary"')}`,async v=>{
         const cErr=checkCurrency(v.currency);
@@ -3418,6 +4597,36 @@ document.addEventListener('click',async event=>{
           `;
         }
       }
+      // Pre-Onboarding Training Plan block if candidate has an application in Pre-Onboarding Training
+      let trainingPlanCardHtml = '';
+      const appForTraining = candAppsList.find(a => /pre-onboarding|training/i.test(a.stage));
+      if (appForTraining) {
+        const st = appForTraining.training_plan_status || 'pending_review';
+        let stBadge = `<span class="badge" style="background:#fef3c7;color:#92400e;font-size:0.75rem;">Pending Review</span>`;
+        if (st === 'sent') {
+          stBadge = `<span class="badge completed" style="font-size:0.75rem;">Plan Sent</span>`;
+        } else if (st === 'draft_saved') {
+          stBadge = `<span class="badge" style="background:#e0e7ff;color:#3730a3;font-size:0.75rem;">Draft Saved</span>`;
+        } else if (st === 'failed') {
+          stBadge = `<span class="badge rejected" style="font-size:0.75rem;">Send Failed</span>`;
+        }
+
+        trainingPlanCardHtml = `
+          <div class="training-evaluation-card" style="margin:12px 0;border:1px solid var(--line);border-radius:8px;padding:12px;background:var(--surface);">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+              <div>
+                <h3 style="margin:0;font-size:0.95rem;">Pre-Onboarding Training Plan</h3>
+                <div class="muted" style="font-size:0.78rem;">Role: ${escape(appForTraining.title || 'Candidate')} &middot; Stage: ${escape(appForTraining.stage)}</div>
+              </div>
+              ${stBadge}
+            </div>
+            <div style="margin-top:10px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+              <span class="muted" style="font-size:0.8rem;">Review curated learning materials, dynamic email content, and verify before manual confirmation.</span>
+              ${allows('recruit') || allows('admin') ? `<button type="button" class="button secondary" data-action="review-training-plan" data-id="${appForTraining.id}" style="font-size:0.8rem;padding:5px 12px;">${st === 'sent' ? 'View Sent Plan / Resend' : (st === 'draft_saved' ? 'Resume Training Draft' : 'Review Training Plan')}</button>` : ''}
+            </div>
+          </div>
+        `;
+      }
       const resumeHtml=!limitedView&&c.resume?`<div class="resume-info" style="margin:10px 0;padding:10px 12px;background:var(--surface-alt);border:1px solid var(--line);border-radius:8px;font-size:0.85rem;"><span class="muted">Attached resume:</span> <strong>${escape(c.resume.filename)}</strong> <span class="badge clean" style="margin-left:6px;font-size:0.75rem;">${escape(c.resume.file_format.toUpperCase())}</span> <span class="muted">(${Math.round(c.resume.file_size/1024)} KB)</span></div>`:'';
       const consent = commsData.consent || { opted_out: false };
       const commsList = commsData.communications || [];
@@ -3652,7 +4861,7 @@ document.addEventListener('click',async event=>{
       const limitedNotice = limitedView
         ? `<div class="notice-inline" role="status" style="margin-bottom:12px;"><strong>Interviewer access:</strong> You can see this candidate's contact details, skills and the applications linked to your assigned interviews. Resume files, offer data and unrelated applications are restricted.</div>`
         : '';
-      modal(c.name,`${limitedNotice}<p>${escape(c.email)}${c.phone?` · ${escape(c.phone)}`:''}${consentBadge}</p><p>${escape((c.skills||[]).join(', '))}</p>${appsHtml}${limitedView?'':resumeHtml}${limitedView?'':signaturesHtml}${limitedView?'':trainingEvalHtml}${limitedView?'':`<h3>Experience / Resume</h3><p class="score-note">${escape(c.resume_text||c.experience||'No resume text provided.')}</p>`}${fraudHtml}${commsHtml}${emailAction?`<div class="actions" style="margin-top:16px">${emailAction}</div>`:''}`);
+      modal(c.name,`${limitedNotice}<p>${escape(c.email)}${c.phone?` · ${escape(c.phone)}`:''}${consentBadge}</p><p>${escape((c.skills||[]).join(', '))}</p>${appsHtml}${limitedView?'':resumeHtml}${limitedView?'':signaturesHtml}${limitedView?'':trainingPlanCardHtml}${limitedView?'':trainingEvalHtml}${limitedView?'':`<h3>Experience / Resume</h3><p class="score-note">${escape(c.resume_text||c.experience||'No resume text provided.')}</p>`}${fraudHtml}${commsHtml}${emailAction?`<div class="actions" style="margin-top:16px">${emailAction}</div>`:''}`);
     }
     if(a==='send-candidate-email'){
       const formKey = `comm_${id}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -3706,13 +4915,331 @@ document.addEventListener('click',async event=>{
       bindSearchableSelect('candidate_id');
       bindSearchableSelect('requisition_id');
     }
+    async function openScorecardModal(id, isProxy = false) {
+      const interviews = await api('interviews');
+      const i = interviews.find(item => item.id === id) || await api(`interviews/${id}`);
+      if (!i) throw new Error('Interview not found.');
+      if (!feedbackReady(i)) throw new Error(FEEDBACK_LOCKED_MESSAGE);
+      const comps = JSON.parse(i.competencies || '[]');
+      const title = isProxy ? `Submit proxy scorecard on behalf of ${escape(i.interviewer)}` : 'Submit independent feedback';
+      const headerNotice = isProxy
+        ? `<div class="notice-inline"><strong>Administrative Proxy Submission:</strong> You are submitting this scorecard on behalf of the assigned interviewer (${escape(i.interviewer)}). An audit log entry will record your action and reason.</div>`
+        : `<div class="notice-inline" style="margin-top:0;margin-bottom:16px;border-left-color:var(--accent);background:var(--tint,#f0fdf4);"><p style="margin:0;"><strong>Candidate:</strong> ${escape(i.name || 'Candidate')} &middot; <strong>Round:</strong> ${escape(i.title || 'Interview round')}</p></div>`;
+
+      const compSection = `
+        <div class="scorecard-competencies-section" style="margin-bottom:18px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+            <label style="font-weight:600;font-size:0.92rem;margin:0;">Evaluation Competencies &amp; Ratings <span style="color:var(--negative,#b91c1c);font-weight:bold;">*</span></label>
+            <span class="muted" id="comp-count-badge" style="font-size:0.8rem;background:var(--surface-alt);padding:2px 8px;border-radius:12px;border:1px solid var(--line);">${comps.length} ${comps.length === 1 ? 'competency' : 'competencies'}</span>
+          </div>
+          <p class="muted" style="font-size:0.82rem;margin:0 0 10px 0;line-height:1.4;">Rate planned competencies below. You can also add custom competencies to evaluate additional aspects from your perspective, or remove competencies as needed.</p>
+          <div id="scorecard-competencies-list" style="display:flex;flex-direction:column;gap:8px;max-height:260px;overflow-y:auto;padding-right:2px;margin-bottom:10px;"></div>
+          <div class="add-comp-box" style="display:flex;gap:8px;align-items:center;background:var(--surface-alt);border:1px dashed var(--line);border-radius:8px;padding:8px 10px;">
+            <input type="text" id="new-competency-input" placeholder="Add custom competency (e.g. System Design, Problem Solving, Culture Fit)..." style="flex:1;min-height:36px;padding:6px 10px;font-size:0.85rem;" maxlength="100">
+            <button type="button" id="btn-add-competency" class="secondary" style="min-height:36px;padding:6px 14px;font-size:0.85rem;white-space:nowrap;font-weight:600;">+ Add Competency</button>
+          </div>
+          <p class="error" id="competency-error" style="font-size:0.8rem;margin:6px 0 0 0;display:none;"></p>
+        </div>
+      `;
+
+      modal(title,
+        headerNotice +
+        compSection +
+        select('Recommendation', 'recommendation', ['Strong yes', 'Yes', 'No', 'Strong no']) +
+        area('Job-related evidence', 'notes', '', true) +
+        (isProxy ? area('Reason for proxy submission', 'proxy_reason', '', true) : '') +
+        '<p class="muted" style="font-size:0.82rem;margin-top:8px;">Submitted feedback is final in this phase. Other feedback stays hidden until you submit your assigned scorecards.</p>',
+        async v => {
+          if (!feedbackReady(i)) throw new Error(FEEDBACK_LOCKED_MESSAGE);
+          if (isProxy && (!v.proxy_reason || !v.proxy_reason.trim())) {
+            throw new Error('A reason for proxy submission is required.');
+          }
+          const listEl = $('#scorecard-competencies-list');
+          const rows = listEl ? listEl.querySelectorAll('.scorecard-comp-row') : [];
+          const ratings = {};
+          for (const row of rows) {
+            const compName = row.dataset.compName;
+            const sel = row.querySelector('.scorecard-rating-select');
+            if (compName && sel) {
+              ratings[compName] = Number(sel.value);
+            }
+          }
+          if (!Object.keys(ratings).length) {
+            const errEl = $('#competency-error');
+            if (errEl) { errEl.textContent = 'At least one competency rating is required.'; errEl.style.display = 'block'; }
+            throw new Error('At least one competency rating is required.');
+          }
+          const payload = {
+            ratings,
+            recommendation: v.recommendation,
+            notes: v.notes,
+            ...(isProxy ? { proxy_reason: v.proxy_reason.trim() } : {})
+          };
+          await api(`interviews/${id}/scorecards`, 'POST', payload);
+          return 'Scorecard submitted successfully.';
+        }
+      );
+
+      const listEl = $('#scorecard-competencies-list');
+      const newCompInput = $('#new-competency-input');
+      const addCompBtn = $('#btn-add-competency');
+      const errEl = $('#competency-error');
+      const countBadge = $('#comp-count-badge');
+
+      const updateBadge = () => {
+        if (!countBadge || !listEl) return;
+        const count = listEl.querySelectorAll('.scorecard-comp-row').length;
+        countBadge.textContent = `${count} ${count === 1 ? 'competency' : 'competencies'}`;
+        countBadge.style.color = count === 0 ? 'var(--negative, #b91c1c)' : '';
+      };
+
+      const renderCompRow = (name, isCustom = false) => {
+        const row = document.createElement('div');
+        row.className = 'scorecard-comp-row';
+        row.dataset.compName = name;
+        row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 12px;background:var(--surface);border:1px solid var(--line);border-radius:8px;';
+        row.innerHTML = `
+          <div style="flex:1;min-width:0;display:flex;align-items:center;gap:8px;">
+            <span style="font-weight:600;font-size:0.88rem;overflow-wrap:anywhere;color:var(--ink);">${escape(name)}</span>
+            ${isCustom ? `<span class="badge" style="font-size:0.7rem;padding:2px 6px;background:var(--tint,#e0f2fe);color:var(--accent,#0369a1);border-radius:4px;">Custom</span>` : ''}
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
+            <label style="display:flex;align-items:center;gap:6px;font-size:0.83rem;margin:0;font-weight:normal;color:var(--muted);">
+              <span>Score:</span>
+              <select class="scorecard-rating-select" data-comp="${escape(name)}" name="rating_${escape(name)}" style="min-height:34px;padding:3px 8px;font-size:0.85rem;border-radius:6px;width:auto;" aria-label="Rating for ${escape(name)}">
+                <option value="1">1 (Low)</option>
+                <option value="2">2</option>
+                <option value="3" selected>3</option>
+                <option value="4">4</option>
+                <option value="5">5 (High)</option>
+              </select>
+            </label>
+            <button type="button" class="secondary btn-remove-comp" data-comp="${escape(name)}" title="Remove ${escape(name)}" aria-label="Remove ${escape(name)}" style="min-height:34px;padding:3px 10px;font-size:0.8rem;color:var(--negative,#b91c1c);border-color:var(--line);">
+              Remove
+            </button>
+          </div>
+        `;
+        return row;
+      };
+
+      if (listEl) {
+        for (const c of comps) {
+          listEl.appendChild(renderCompRow(c, false));
+        }
+        updateBadge();
+      }
+
+      const handleAdd = () => {
+        if (!newCompInput) return;
+        const val = newCompInput.value.trim();
+        if (!val) {
+          if (errEl) { errEl.textContent = 'Please enter a competency name.'; errEl.style.display = 'block'; }
+          newCompInput.focus();
+          return;
+        }
+        if (val.length > 100) {
+          if (errEl) { errEl.textContent = 'Competency name must be at most 100 characters.'; errEl.style.display = 'block'; }
+          return;
+        }
+        const existingRows = listEl ? listEl.querySelectorAll('.scorecard-comp-row') : [];
+        const exists = Array.from(existingRows).some(r => (r.dataset.compName || '').toLowerCase() === val.toLowerCase());
+        if (exists) {
+          if (errEl) { errEl.textContent = `Competency "${val}" is already in the list.`; errEl.style.display = 'block'; }
+          return;
+        }
+        if (errEl) { errEl.textContent = ''; errEl.style.display = 'none'; }
+        if (listEl) {
+          listEl.appendChild(renderCompRow(val, true));
+          updateBadge();
+        }
+        newCompInput.value = '';
+        newCompInput.focus();
+      };
+
+      if (addCompBtn) addCompBtn.onclick = handleAdd;
+      if (newCompInput) {
+        newCompInput.onkeydown = e => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            handleAdd();
+          }
+        };
+      }
+
+      if (listEl) {
+        listEl.onclick = e => {
+          const btn = e.target.closest('.btn-remove-comp');
+          if (!btn) return;
+          e.preventDefault();
+          const row = btn.closest('.scorecard-comp-row');
+          if (row) {
+            row.remove();
+            updateBadge();
+            if (errEl) { errEl.textContent = ''; errEl.style.display = 'none'; }
+          }
+        };
+      }
+    }
+
+    async function openRateTrainingModal(id) {
+      const [apps, stages] = await Promise.all([api('applications'), api('pipeline')]);
+      const app = apps.find(x => x.id === id);
+      if (!app) throw new Error('Application not found.');
+
+      const existingEval = app.training_evaluation || (await api(`applications/${id}/training-evaluation`).catch(() => ({ evaluation: null }))).evaluation;
+      const defaultRating = existingEval?.rating || 5;
+      const defaultScore = existingEval?.practical_score !== null && existingEval?.practical_score !== undefined ? existingEval.practical_score : '';
+      const defaultNotes = existingEval?.notes || '';
+      const defaultDecision = existingEval?.decision || 'next';
+
+      const nextStageName = stages.includes('Onboarding') ? 'Onboarding' : (stages[stages.indexOf(app.stage) + 1] || 'Onboarding');
+
+      const modalHtml = `
+        <div class="form-grid">
+          <div class="full" style="background:var(--surface-alt,#f8fafc);padding:12px 14px;border-radius:8px;border:1px solid var(--line,#e2e8f0);margin-bottom:8px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:gap;gap:8px;">
+              <div><strong>Candidate:</strong> ${escape(app.name)} <span class="muted">(${escape(app.email)})</span></div>
+              <div><strong>Requisition:</strong> ${escape(app.title)}</div>
+            </div>
+            <div style="margin-top:6px;font-size:0.8rem;color:var(--muted);">
+              Active Attempt: <strong>#${app.training_attempt || 1}</strong> &middot; Deadline: <strong>${formatDateIST(app.training_end_at)}</strong> ${app.is_overdue ? '<span class="training-overdue-highlight">⚠ Overdue</span>' : ''}
+            </div>
+          </div>
+
+          <label class="full">
+            <span class="label-heading">Training Performance Rating (1–5) *</span>
+            <select name="rating" id="training-rating-select" required>
+              <option value="5" ${defaultRating === 5 ? 'selected' : ''}>5 — Outstanding (Exceeded all training benchmarks)</option>
+              <option value="4" ${defaultRating === 4 ? 'selected' : ''}>4 — Very Good (Consistent high performance)</option>
+              <option value="3" ${defaultRating === 3 ? 'selected' : ''}>3 — Competent / Meets Expectations (Cleared training)</option>
+              <option value="2" ${defaultRating === 2 ? 'selected' : ''}>2 — Marginal / Needs Improvement (Failed benchmarks)</option>
+              <option value="1" ${defaultRating === 1 ? 'selected' : ''}>1 — Unsatisfactory (Failed core training)</option>
+            </select>
+          </label>
+
+          <label class="full">
+            <span class="label-heading">Practical Assessment Score (%) <span class="field-optional">Optional</span></span>
+            <input type="number" name="practical_score" min="0" max="100" step="0.5" value="${escape(defaultScore)}" placeholder="e.g. 88.5">
+          </label>
+
+          <label class="full">
+            <span class="label-heading">Trainer & Evaluation Notes</span>
+            <textarea name="notes" rows="3" placeholder="Summary of capstone project, attendance, technical competencies, and orientation feedback...">${escape(defaultNotes)}</textarea>
+          </label>
+
+          <fieldset class="full" style="border:1px solid var(--line);border-radius:8px;padding:12px 14px;background:var(--surface);">
+            <legend style="font-size:0.85rem;font-weight:600;padding:0 6px;">Evaluation Decision & Action *</legend>
+            <div style="display:flex;flex-direction:column;gap:10px;margin-top:4px;">
+              <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;">
+                <input type="radio" name="decision" value="next" ${defaultDecision === 'next' ? 'checked' : ''} style="margin-top:3px;">
+                <span><strong style="color:var(--positive,#16a34a);">Pass & Advance to ${escape(nextStageName)}</strong><br><small class="muted">Candidate cleared pre-onboarding training and advances to the next recruitment stage.</small></span>
+              </label>
+              <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;">
+                <input type="radio" name="decision" value="rejected" ${defaultDecision === 'rejected' ? 'checked' : ''} style="margin-top:3px;">
+                <span><strong style="color:var(--negative,#dc2626);">Evaluation Failed (Candidate Remains in Training)</strong><br><small class="muted">Records failed outcome. Candidate stays in Pre-Onboarding Training for retraining or extension.</small></span>
+              </label>
+              ${stages.includes('Revoked') ? `
+                <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;">
+                  <input type="radio" name="decision" value="revoked" ${defaultDecision === 'revoked' ? 'checked' : ''} style="margin-top:3px;">
+                  <span><strong style="color:var(--negative,#dc2626);">Revoke Offer & Disqualify</strong><br><small class="muted">Concludes recruitment; transitions application to terminal Revoked stage.</small></span>
+                </label>
+              ` : ''}
+            </div>
+          </fieldset>
+        </div>
+      `;
+
+      modal(`Evaluate Pre-Onboarding Training — ${escape(app.name)}`, modalHtml, async v => {
+        const payload = {
+          rating: Number(v.rating) || 5,
+          practical_score: v.practical_score ? Number(v.practical_score) : null,
+          decision: v.decision || 'next',
+          notes: v.notes?.trim() || '',
+          status: v.decision === 'next' ? 'passed' : 'failed'
+        };
+        const res = await api(`applications/${id}/training-evaluation`, 'POST', payload);
+        const isPass = payload.decision === 'next';
+        const isRevoke = payload.decision === 'revoked';
+        if (isPass) {
+          notice(`Training passed (Rating: ${payload.rating}/5)! Candidate advanced to ${nextStageName}.`, 'success');
+        } else if (isRevoke) {
+          notice('Offer revoked during training evaluation.', 'warning');
+        } else {
+          notice(`Training evaluation recorded as Failed (Rating: ${payload.rating}/5). Candidate remains in Pre-Onboarding Training.`, 'info');
+        }
+        await render();
+        return isPass ? `Evaluation saved. Candidate advanced to ${nextStageName}.` : (isRevoke ? 'Offer revoked.' : 'Evaluation failed saved. Candidate remains in Pre-Onboarding Training.');
+      }, { saveLabel: 'Submit Evaluation' });
+    }
+
     async function executeStageMove(targetAppId, stage, isBackMove = false) {
       const id = targetAppId;
+      const apps = await api('applications');
+      const app = apps.find(x => x.id === id);
+      if(!app) throw new Error('Application not found.');
+
+      // 1. Offer revocation check
+      if (app.offer_status === 'revoked' && !['Rejected', 'Revoked'].includes(stage)) {
+        notice('Cannot advance candidate: The candidate offer has been revoked.', 'error');
+        return;
+      }
+
+      // 2. Training evaluation validation: cannot advance from Pre-Onboarding Training without passing rating
+      if (/pre-onboarding|training/i.test(app.stage) && !isBackMove && !['Rejected', 'Revoked', app.stage].includes(stage)) {
+        if (app.training_status !== 'completed') {
+          notice('Cannot advance candidate: Pre-onboarding training performance rating and passing evaluation are required before moving to the next stage.', 'error');
+          openRateTrainingModal(id);
+          return;
+        }
+      }
+
+      // 3. Interview scorecard rating validation: cannot advance with planned unrated interview
+      if (!isBackMove && !['Rejected', 'Revoked', app.stage].includes(stage) && app.pending_interview && !allows('admin')) {
+        const ready = feedbackReady(app.pending_interview);
+        const invName = app.pending_interview.interviewer_name || 'Assigned interviewer';
+        const roundName = app.pending_interview.round || app.stage;
+        notice(`Cannot advance candidate: An interview with ${invName} is scheduled for ${roundName} and requires a scorecard rating first.`, 'error');
+        if (ready) {
+          const isProxy = allows('admin') && app.pending_interview.interviewer_id !== me.id;
+          openScorecardModal(app.pending_interview.id, isProxy);
+        }
+        return;
+      }
+
+      // 4. Negative interview recommendation check: requires administrative override
+      if (!isBackMove && !['Rejected', 'Revoked', app.stage].includes(stage) && app.latest_scorecard) {
+        const isNeg = ['No', 'Strong no'].includes(app.latest_scorecard.recommendation);
+        if (isNeg) {
+          const isAdmin = allows('admin');
+          if (!isAdmin) {
+            notice(`Cannot advance candidate: Candidate received a negative recommendation ('${app.latest_scorecard.recommendation}') for ${app.latest_scorecard.round || 'interview'}. Advancing requires administrative override.`, 'error');
+            return;
+          }
+          modal(`Administrative Override — Advance Candidate with Negative Rating`, `
+            <div class="form-grid">
+              <div class="full" style="background:var(--negative-bg,#fee2e2);color:var(--negative,#991b1b);padding:10px 14px;border-radius:6px;border:1px solid #fecaca;margin-bottom:8px;">
+                <strong>Negative Evaluation Warning:</strong> The candidate received a <strong>${escape(app.latest_scorecard.recommendation)}</strong> recommendation from ${escape(app.latest_scorecard.interviewer_name || 'Interviewer')} for ${escape(app.latest_scorecard.round || 'interview')}.
+              </div>
+              <p class="full">Advancing candidate to <strong>${escape(stage)}</strong> requires an administrative justification for the audit trail.</p>
+              ${area('Administrative Override Reason *', 'override_reason', '', true, 'placeholder="Explain why this candidate is being advanced despite the negative recommendation..."')}
+            </div>
+          `, async v => {
+            if (!v.override_reason || !v.override_reason.trim()) throw new Error('An override reason is required.');
+            await api(`applications/${id}/stage`, 'POST', {
+              stage,
+              admin_override: true,
+              override_reason: v.override_reason.trim()
+            });
+            notice(`Candidate advanced to ${stage} with administrative override.`, 'success');
+            return `Candidate advanced to ${stage} with administrative override.`;
+          }, { saveLabel: 'Confirm Administrative Override & Advance' });
+          return;
+        }
+      }
+
       const isInterviewLike = /interview/i.test(stage) || stage === 'Screening Round' || stage === 'HR Round';
       if(isInterviewLike && !isBackMove){
-        const [apps, users] = await Promise.all([api('applications'), api('interviewers')]);
-        const app = apps.find(x => x.id === id);
-        if(!app) throw new Error('Application not found.');
+        const users = await api('interviewers');
         if(!users.length) throw new Error('No active interviewers found in this team. Add or activate an interviewer first.');
         const todayMin = getLocalTodayMin();
         const tomorrow = new Date(Date.now() + 86400000);
@@ -3778,7 +5305,7 @@ document.addEventListener('click',async event=>{
             round: stage,
             notes: v.notes?.trim() || undefined
           });
-          await api(`applications/${id}/stage`, 'POST', { stage, send_notification: false });
+          await api(`applications/${id}/stage`, 'POST', { stage, send_notification: true });
           const interviewerObj = users.find(u => u.id === v.interviewer_id);
           const interviewerName = interviewerObj ? interviewerObj.name : 'assigned interviewer';
           const formatMsg = isPhysical ? 'In-person interview scheduled (arrival details sent)' : 'Interview scheduled (meeting link sent)';
@@ -3792,9 +5319,32 @@ document.addEventListener('click',async event=>{
         return;
       }
       if(/pre-onboarding/i.test(stage) && !isBackMove){
-        const apps = await api('applications');
+        const [apps, candSigs] = await Promise.all([
+          api('applications'),
+          api(`signatures?application_id=${id}`).catch(() => [])
+        ]);
         const app = apps.find(x => x.id === id);
         if(!app) throw new Error('Application not found.');
+        const sigs = Array.isArray(candSigs) && candSigs.length
+          ? candSigs
+          : await api(`candidates/${app.candidate_id}/signatures`).catch(() => []);
+        const matchingSigs = (Array.isArray(sigs) ? sigs : []).filter(s =>
+          s.application_id === id || (!s.application_id && s.candidate_id === app.candidate_id)
+        );
+        const latestSig = matchingSigs[0];
+        if (!latestSig || latestSig.status !== 'completed') {
+          let reason = 'No offer letter found for this candidate. The candidate must sign the offer letter before proceeding.';
+          if (latestSig) {
+            if (latestSig.status === 'pending') reason = 'Offer letter is pending signature. The candidate must sign the offer letter before proceeding.';
+            else if (latestSig.status === 'declined') reason = 'Offer letter was declined. The candidate must sign the offer letter before proceeding.';
+            else if (latestSig.status === 'expired') reason = 'Offer letter has expired. The candidate must sign the offer letter before proceeding.';
+            else if (latestSig.status === 'cancelled') reason = 'Offer letter was cancelled. The candidate must sign the offer letter before proceeding.';
+            else reason = 'Offer letter signature is incomplete. The candidate must sign the offer letter before proceeding.';
+          }
+          const errorMsg = `Cannot advance to Pre-Onboarding Training: The candidate must sign the offer letter before starting pre-onboarding training. ${reason}`;
+          notice(errorMsg, 'error');
+          return;
+        }
         modal(`Commence Pre-Onboarding Training — ${escape(app.name)}`, `
           <div class="form-grid">
             <div class="full" style="background:var(--surface-alt, #f8fafc);padding:10px 14px;border-radius:6px;border:1px solid var(--line, #e2e8f0);margin-bottom:8px;">
@@ -3804,12 +5354,16 @@ document.addEventListener('click',async event=>{
             <p class="full status-note" style="color:#065f46;background:#ecfdf5;border:1px solid #a7f3d0;padding:12px;border-radius:8px;">
               <strong>Pre-Onboarding Training Workflow:</strong><br>
               Advancing to <strong>Pre-Onboarding Training</strong> enrolls the candidate into initial orientation and technical preparation.<br>
-              Once training is completed, evaluators can record a <strong>Performance Rating (1–5 Stars)</strong> and select <strong>Pass & Advance to Onboarding (Next)</strong> or <strong>Reject/Revoke</strong> directly from the pipeline card.
+              Once moved, the <strong>Training Plan Review</strong> popup will open for your review and customization before sending.<br>
+              <em>Note: The training plan email will not be sent automatically.</em>
             </p>
           </div>
         `, async () => {
           await api(`applications/${id}/stage`, 'POST', { stage, send_notification: true });
-          notice(`Application moved to ${stage}. Ready for training evaluation and rating!`, 'success');
+          notice(`Application moved to ${stage}. Loading training plan review...`, 'success');
+          setTimeout(() => {
+            openTrainingPlanReviewModal(id);
+          }, 300);
           return `Application moved to ${stage}.`;
         }, { saveLabel: 'Start Pre-Onboarding Training' });
         return;
@@ -3903,7 +5457,7 @@ document.addEventListener('click',async event=>{
             }]
           };
           await api('signatures', 'POST', payload);
-          await api(`applications/${id}/stage`, 'POST', { stage: 'Offer', send_notification: false });
+          await api(`applications/${id}/stage`, 'POST', { stage: 'Offer', send_notification: true });
           notice(`Offer letter generated and e-signature invitation sent to ${app.name}!`, 'success');
           return `Application moved to Offer. Official offer letter and e-signature invitation email sent to ${app.name}.`;
         }, { saveLabel: 'Generate Offer & Send Signature Email' });
@@ -4140,83 +5694,282 @@ document.addEventListener('click',async event=>{
       return;
     }
     if(a==='rate-training'){
-      const [apps, stages] = await Promise.all([api('applications'), api('pipeline')]);
-      const app = apps.find(x => x.id === id);
+      await openRateTrainingModal(id);
+      return;
+    }
+
+    if (a === 'start-training') {
+      const app = (await api('applications')).find(x => x.id === id);
       if (!app) throw new Error('Application not found.');
+      const nowIso = new Date().toISOString().slice(0, 10);
+      const defaultEndIso = new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10);
 
-      const existingEval = app.training_evaluation || (await api(`applications/${id}/training-evaluation`).catch(() => ({ evaluation: null }))).evaluation;
-      const defaultRating = existingEval?.rating || 5;
-      const defaultScore = existingEval?.practical_score !== null && existingEval?.practical_score !== undefined ? existingEval.practical_score : '';
-      const defaultNotes = existingEval?.notes || '';
-      const defaultDecision = existingEval?.decision || 'next';
-
-      const nextStageName = stages.includes('Onboarding') ? 'Onboarding' : (stages[stages.indexOf(app.stage) + 1] || 'Onboarding');
-
-      const modalHtml = `
+      modal(`Start Pre-Onboarding Training — ${escape(app.name)}`, `
         <div class="form-grid">
-          <div class="full" style="background:var(--surface-alt,#f8fafc);padding:12px 14px;border-radius:8px;border:1px solid var(--line,#e2e8f0);margin-bottom:8px;">
-            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:gap;gap:8px;">
+          <div class="full" style="background:var(--surface-alt);padding:10px 14px;border-radius:6px;border:1px solid var(--line);margin-bottom:8px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
               <div><strong>Candidate:</strong> ${escape(app.name)} <span class="muted">(${escape(app.email)})</span></div>
               <div><strong>Requisition:</strong> ${escape(app.title)}</div>
             </div>
           </div>
-
-          <label class="full">
-            <span class="label-heading">Training Performance Rating (1–5) *</span>
-            <select name="rating" id="training-rating-select" required>
-              <option value="5" ${defaultRating === 5 ? 'selected' : ''}>5 — Outstanding (Exceeded all training benchmarks)</option>
-              <option value="4" ${defaultRating === 4 ? 'selected' : ''}>4 — Very Good (Consistent high performance)</option>
-              <option value="3" ${defaultRating === 3 ? 'selected' : ''}>3 — Competent / Meets Expectations (Cleared training)</option>
-              <option value="2" ${defaultRating === 2 ? 'selected' : ''}>2 — Marginal / Needs Improvement</option>
-              <option value="1" ${defaultRating === 1 ? 'selected' : ''}>1 — Unsatisfactory (Failed key objectives)</option>
-            </select>
+          <label>
+            <span class="label-heading">Training Start Date *</span>
+            <input type="date" name="start_at" value="${nowIso}" required>
           </label>
-
-          <label class="full">
-            <span class="label-heading">Practical Assessment Score (%) <span class="field-optional">Optional</span></span>
-            <input type="number" name="practical_score" min="0" max="100" step="0.5" value="${escape(defaultScore)}" placeholder="e.g. 88.5">
+          <label>
+            <span class="label-heading">Mandatory Deadline (End Date) *</span>
+            <input type="date" name="end_at" value="${defaultEndIso}" required>
           </label>
+          <p class="full muted" style="font-size:0.8rem;margin:0;">
+            Establishing the mandatory deadline enables automated tracking, overdue alerting, and auditable milestone monitoring.
+          </p>
+        </div>
+      `, async v => {
+        if (!v.start_at || !v.end_at) throw new Error('Both start date and deadline end date are required.');
+        if (new Date(v.end_at).getTime() <= new Date(v.start_at).getTime()) {
+          throw new Error('Mandatory deadline must be strictly after the start date.');
+        }
+        await api(`applications/${id}/training/start`, 'POST', {
+          start_at: new Date(v.start_at).toISOString(),
+          end_at: new Date(v.end_at + 'T23:59:59Z').toISOString()
+        });
+        notice('Pre-onboarding training started with mandatory deadline recorded.', 'success');
+        await render();
+        return 'Training started successfully.';
+      }, { saveLabel: 'Start Training' });
+      return;
+    }
 
-          <label class="full">
-            <span class="label-heading">Trainer & Evaluation Notes</span>
-            <textarea name="notes" rows="3" placeholder="Summary of capstone project, attendance, team collaboration, and readiness for full onboarding...">${escape(defaultNotes)}</textarea>
-          </label>
+    if (a === 'extend-training-deadline') {
+      const app = (await api('applications')).find(x => x.id === id);
+      if (!app) throw new Error('Application not found.');
+      const currentDeadlineStr = app.training_end_at ? formatDateIST(app.training_end_at) : 'Not established';
+      const minDate = app.training_end_at
+        ? new Date(new Date(app.training_end_at).getTime() + 86400000).toISOString().slice(0, 10)
+        : new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+      const defaultExtended = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
 
-          <fieldset class="full" style="border:1px solid var(--line);border-radius:8px;padding:12px 14px;background:var(--surface);">
-            <legend style="font-size:0.85rem;font-weight:600;padding:0 6px;">Evaluation Decision & Action *</legend>
-            <div style="display:flex;flex-direction:column;gap:8px;margin-top:4px;">
-              <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
-                <input type="radio" name="decision" value="next" ${defaultDecision === 'next' ? 'checked' : ''}>
-                <span><strong style="color:var(--positive,#16a34a);">Pass & Advance to ${escape(nextStageName)}</strong> — Candidate cleared pre-onboarding training and moves forward.</span>
-              </label>
-              <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
-                <input type="radio" name="decision" value="rejected" ${defaultDecision === 'rejected' ? 'checked' : ''}>
-                <span><strong style="color:var(--negative,#dc2626);">Did Not Pass (Reject)</strong> — Performance did not meet requirements; candidate application is concluded.</span>
-              </label>
-              ${stages.includes('Revoked') ? `
-                <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
-                  <input type="radio" name="decision" value="revoked" ${defaultDecision === 'revoked' ? 'checked' : ''}>
-                  <span><strong style="color:var(--negative,#dc2626);">Revoke Offer & Disqualify</strong> — Offer is formally revoked and candidate is archived.</span>
-                </label>
-              ` : ''}
+      modal(`Extend Training Deadline — ${escape(app.name)}`, `
+        <div class="form-grid">
+          <div class="full" style="background:var(--surface-alt);padding:10px 14px;border-radius:6px;border:1px solid var(--line);margin-bottom:8px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+              <div><strong>Current Deadline:</strong> <span style="font-weight:600;color:var(--ink);">${escape(currentDeadlineStr)}</span> ${app.is_overdue ? '<span class="badge rejected" style="margin-left:6px;font-size:0.7rem;">Overdue</span>' : ''}</div>
+              <div><strong>Active Attempt:</strong> #${app.training_attempt || 1}</div>
             </div>
-          </fieldset>
+          </div>
+          <label class="full">
+            <span class="label-heading">Revised Training Deadline *</span>
+            <input type="date" name="new_deadline" value="${defaultExtended}" min="${minDate}" required>
+          </label>
+          <label class="full">
+            <span class="label-heading">Reason for Extension *</span>
+            <textarea name="reason" rows="3" placeholder="Explain why an extension was requested (e.g. additional technical mentoring, medical leave, or mentor availability)..." required></textarea>
+          </label>
+          <p class="full muted" style="font-size:0.8rem;margin:0;">
+            Extending the deadline preserves the original start date and deadline in the audit history while resetting overdue flags.
+          </p>
+        </div>
+      `, async v => {
+        if (!v.new_deadline) throw new Error('Please select a revised deadline date.');
+        if (!v.reason?.trim()) throw new Error('Reason for deadline extension is mandatory.');
+        const newDeadlineIso = new Date(v.new_deadline + 'T23:59:59Z').toISOString();
+        if (app.training_end_at && new Date(newDeadlineIso).getTime() <= new Date(app.training_end_at).getTime()) {
+          throw new Error('Revised deadline must be strictly after the current training deadline.');
+        }
+        await api(`applications/${id}/training/extend-deadline`, 'POST', {
+          new_deadline: newDeadlineIso,
+          reason: v.reason.trim()
+        });
+        notice('Training deadline extended successfully.', 'success');
+        await render();
+        return 'Deadline extended successfully.';
+      }, { saveLabel: 'Extend Deadline' });
+      return;
+    }
+
+    if (a === 'restart-training') {
+      const app = (await api('applications')).find(x => x.id === id);
+      if (!app) throw new Error('Application not found.');
+      const nextAttempt = (app.training_attempt || 1) + 1;
+      const nowIso = new Date().toISOString().slice(0, 10);
+      const defaultEndIso = new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10);
+
+      modal(`Restart Training (Attempt #${nextAttempt}) — ${escape(app.name)}`, `
+        <div class="form-grid">
+          <div class="full" style="background:#fffbeb;padding:10px 14px;border-radius:6px;border:1px solid #fde68a;margin-bottom:8px;color:#92400e;">
+            <p style="margin:0 0 4px 0;font-weight:600;font-size:0.85rem;">Retraining Confirmation</p>
+            <p style="margin:0;font-size:0.8rem;">
+              Restarting training will initiate <strong>Attempt #${nextAttempt}</strong> for ${escape(app.name)}. All previous evaluations and extension history will remain preserved in the candidate's permanent record.
+            </p>
+          </div>
+          <label>
+            <span class="label-heading">Retraining Start Date *</span>
+            <input type="date" name="start_at" value="${nowIso}" required>
+          </label>
+          <label>
+            <span class="label-heading">Mandatory Retraining Deadline *</span>
+            <input type="date" name="end_at" value="${defaultEndIso}" required>
+          </label>
+          <label class="full">
+            <span class="label-heading">Reason for Retraining *</span>
+            <textarea name="reason" rows="3" placeholder="Provide context regarding the additional training curriculum, revised benchmarks, or mentor alignment..." required></textarea>
+          </label>
+        </div>
+      `, async v => {
+        if (!v.start_at || !v.end_at) throw new Error('Both start date and deadline are required.');
+        if (!v.reason?.trim()) throw new Error('Reason for retraining is required.');
+        if (new Date(v.end_at).getTime() <= new Date(v.start_at).getTime()) {
+          throw new Error('Retraining deadline must be after start date.');
+        }
+        await api(`applications/${id}/training/restart`, 'POST', {
+          start_at: new Date(v.start_at).toISOString(),
+          end_at: new Date(v.end_at + 'T23:59:59Z').toISOString(),
+          reason: v.reason.trim()
+        });
+        notice(`Retraining initiated (Attempt #${nextAttempt}). Candidate remains in Pre-Onboarding Training.`, 'success');
+        await render();
+        return 'Retraining started.';
+      }, { saveLabel: `Initiate Attempt #${nextAttempt}` });
+      return;
+    }
+
+    if (a === 'training-revoke-offer') {
+      const app = (await api('applications')).find(x => x.id === id);
+      if (!app) throw new Error('Application not found.');
+
+      modal(`Revoke Candidate Offer — ${escape(app.name)}`, `
+        <div class="form-grid">
+          <div class="full" style="background:#fef2f2;padding:12px 14px;border-radius:8px;border:1px solid #fca5a5;margin-bottom:8px;color:#991b1b;">
+            <p style="margin:0 0 6px 0;font-weight:700;font-size:0.9rem;">Revoke Formal Employment Offer</p>
+            <p style="margin:0;font-size:0.82rem;line-height:1.4;">
+              Are you sure you want to <strong>revoke the offer</strong> for <strong>${escape(app.name)}</strong>? This will conclude the candidate's recruitment, transition the application to the terminal <strong>Revoked</strong> stage, and archive associated agreements.
+            </p>
+          </div>
+          <label class="full">
+            <span class="label-heading">Reason for Offer Revocation *</span>
+            <textarea name="reason" rows="3" placeholder="Detail the non-fulfillment of pre-onboarding conditions, failed evaluation, or deadline expiration..." required></textarea>
+          </label>
+          <p class="full muted" style="font-size:0.8rem;margin:0;">
+            All previous training attempts, evaluations, and extension records will remain preserved for audit compliance.
+          </p>
+        </div>
+      `, async v => {
+        if (!v.reason?.trim()) throw new Error('Please provide a mandatory revocation reason.');
+        await api(`applications/${id}/training/revoke-offer`, 'POST', {
+          reason: v.reason.trim()
+        });
+        notice('Candidate offer was revoked successfully.', 'success');
+        await render();
+        return 'Offer revoked.';
+      }, { saveLabel: 'Revoke Offer & Disqualify' });
+      return;
+    }
+
+    if (a === 'view-training-details') {
+      const [history, allApps] = await Promise.all([
+        api(`applications/${id}/training/history`).catch(() => null),
+        api('applications').catch(() => [])
+      ]);
+      const fallbackApp = allApps?.find?.(x => x.id === id) || {};
+      const app = { ...fallbackApp, ...(history?.application || {}) };
+      const evals = history?.evaluations || [];
+      const exts = history?.extensions || [];
+      const plan = history?.plan_draft;
+      const isOverdue = Boolean(history?.is_overdue || app.is_overdue);
+      const currentAttempt = history?.current_attempt || app.training_attempt || 1;
+
+      const modalHtml = `
+        <div class="training-history-container" style="display:flex;flex-direction:column;gap:14px;max-height:75vh;overflow-y:auto;padding-right:4px;">
+          <!-- Header info card -->
+          <div style="background:var(--surface-alt);border:1px solid var(--line);border-radius:8px;padding:12px 16px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+              <div>
+                <h3 style="margin:0;font-size:1.05rem;">${escape(app.name || 'Candidate')}</h3>
+                <div class="muted" style="font-size:0.82rem;">${escape(app.title || '')} &middot; Current Stage: <span class="badge ${app.stage === 'Revoked' ? 'rejected' : 'active'}" style="font-size:0.75rem;">${escape(app.stage || '')}</span></div>
+              </div>
+              <div>
+                <span class="training-status-badge ${app.offer_status === 'revoked' ? 'training-badge-revoked' : (app.training_status === 'completed' ? 'training-badge-completed' : (app.training_status === 'evaluation_failed' ? 'training-badge-failed' : (isOverdue ? 'training-badge-overdue' : (app.training_status === 'retraining' ? 'training-badge-retraining' : (app.training_status === 'extended' ? 'training-badge-extended' : (app.training_status === 'in_progress' ? 'training-badge-in-progress' : 'training-badge-not-started'))))))}">
+                  ${app.offer_status === 'revoked' ? 'Offer Revoked' : (app.training_status === 'completed' ? 'Training Completed' : (app.training_status === 'evaluation_failed' ? 'Evaluation Failed' : (isOverdue ? 'Overdue' : (app.training_status === 'retraining' ? 'Retraining' : (app.training_status === 'extended' ? 'Extended' : (app.training_status === 'in_progress' ? 'In Progress' : 'Not Started'))))))}
+                </span>
+              </div>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(130px, 1fr));gap:10px;margin-top:12px;padding-top:12px;border-top:1px solid var(--line);font-size:0.82rem;">
+              <div><span class="muted">Start Date:</span><br><strong>${formatDateIST(app.training_start_at)}</strong></div>
+              <div><span class="muted">Current Deadline:</span><br><strong style="${isOverdue ? 'color:var(--negative);' : ''}">${formatDateIST(app.training_end_at)} ${isOverdue ? '⚠' : ''}</strong></div>
+              <div><span class="muted">Original Deadline:</span><br><strong>${formatDateIST(app.training_original_end_at || app.training_end_at)}</strong></div>
+              <div><span class="muted">Current Attempt:</span><br><strong>Attempt #${currentAttempt}</strong></div>
+              <div><span class="muted">Offer Status:</span><br><strong style="color:${app.offer_status === 'revoked' ? 'var(--negative)' : 'var(--positive)'};">${app.offer_status === 'revoked' ? 'Revoked' : 'Active'}</strong></div>
+            </div>
+            ${app.offer_revocation_reason ? `<div style="margin-top:10px;padding:8px 10px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;font-size:0.8rem;color:#991b1b;"><strong>Revocation Reason:</strong> ${escape(app.offer_revocation_reason)}</div>` : ''}
+          </div>
+
+          <!-- Evaluation History -->
+          <div>
+            <h4 style="margin:0 0 8px 0;font-size:0.92rem;display:flex;align-items:center;justify-content:space-between;">
+              <span>Evaluation Records (${evals.length})</span>
+              ${evals.length > 0 ? `<span class="muted" style="font-size:0.75rem;font-weight:normal;">Full chronological history across all attempts</span>` : ''}
+            </h4>
+            ${evals.length === 0 ? '<p class="muted" style="font-size:0.82rem;margin:0;">No evaluations submitted yet.</p>' : `
+              <div style="display:flex;flex-direction:column;gap:8px;">
+                ${evals.map(e => `
+                  <div style="border:1px solid var(--line);border-radius:6px;padding:10px 12px;background:var(--surface);">
+                    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">
+                      <div>
+                        <strong>Attempt #${e.attempt || 1} Evaluation</strong> &middot;
+                        <span class="badge ${e.status === 'passed' ? 'completed' : 'rejected'}" style="font-size:0.72rem;margin-left:4px;">
+                          ${e.status === 'passed' ? 'Passed' : (e.decision === 'revoked' ? 'Offer Revoked' : 'Failed')}
+                        </span>
+                      </div>
+                      <span class="muted" style="font-size:0.75rem;">${formatDateTimeIST(e.created_at)}</span>
+                    </div>
+                    <div style="margin-top:6px;display:flex;gap:14px;font-size:0.82rem;flex-wrap:wrap;">
+                      <span>Rating: <strong>${e.rating}/5</strong></span>
+                      ${e.practical_score !== null && e.practical_score !== undefined ? `<span>Score: <strong>${e.practical_score}%</strong></span>` : ''}
+                      <span>Evaluator: <strong>${escape(e.evaluator_name || 'System')}</strong></span>
+                    </div>
+                    ${e.notes ? `<p style="margin:6px 0 0 0;font-size:0.8rem;background:var(--surface-alt);padding:6px 8px;border-radius:4px;">${escape(e.notes)}</p>` : ''}
+                  </div>
+                `).join('')}
+              </div>
+            `}
+          </div>
+
+          <!-- Deadline Extension History -->
+          <div>
+            <h4 style="margin:0 0 8px 0;font-size:0.92rem;">Deadline Extension History (${exts.length})</h4>
+            ${exts.length === 0 ? '<p class="muted" style="font-size:0.82rem;margin:0;">No deadline extensions granted.</p>' : `
+              <div class="table-wrap">
+                <table style="width:100%;font-size:0.8rem;">
+                  <thead>
+                    <tr>
+                      <th scope="col">Attempt</th>
+                      <th scope="col">Previous Deadline</th>
+                      <th scope="col">New Deadline</th>
+                      <th scope="col">Reason</th>
+                      <th scope="col">Approved By</th>
+                      <th scope="col">Date</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${exts.map(x => `
+                      <tr>
+                        <td>#${x.attempt}</td>
+                        <td>${formatDateIST(x.previous_deadline)}</td>
+                        <td><strong style="color:var(--accent);">${formatDateIST(x.new_deadline)}</strong></td>
+                        <td title="${escape(x.reason)}">${escape(x.reason)}</td>
+                        <td>${escape(x.extended_by_name || 'Admin')}</td>
+                        <td><small class="muted">${formatDateIST(x.created_at)}</small></td>
+                      </tr>
+                    `).join('')}
+                  </tbody>
+                </table>
+              </div>
+            `}
+          </div>
         </div>
       `;
 
-      modal(`Evaluate Pre-Onboarding Training — ${escape(app.name)}`, modalHtml, async v => {
-        const payload = {
-          rating: Number(v.rating) || 5,
-          practical_score: v.practical_score ? Number(v.practical_score) : null,
-          decision: v.decision || 'next',
-          notes: v.notes?.trim() || '',
-          status: v.decision === 'next' ? 'passed' : 'failed'
-        };
-        const res = await api(`applications/${id}/training-evaluation`, 'POST', payload);
-        const actionLabel = payload.decision === 'next' ? `advanced to ${nextStageName}` : (payload.decision === 'revoked' ? 'revoked' : 'rejected');
-        notice(`Training evaluation recorded (Rating: ${payload.rating}/5). Candidate ${actionLabel}!`, 'success');
-        return `Evaluation saved. Application moved to ${res.application?.stage || actionLabel}.`;
-      }, { saveLabel: 'Submit Training Evaluation & Advance' });
+      modal(`Pre-Onboarding Training Lifecycle — ${escape(app.name || 'Candidate')}`, modalHtml, null, { saveLabel: 'Close', cancelLabel: '' });
       return;
     }
     if(a==='revoke-app'){
@@ -4229,8 +5982,8 @@ document.addEventListener('click',async event=>{
     if(a==='apply-preset'){
       const presetName = b.dataset.preset;
       const presetLabels = {
-        smart_hybrid: 'Smart Hybrid (2 Interview Rounds + Pre-Onboarding Training + Onboarding + Hired/Revoked)',
-        smart_hybrid_3rounds: 'Smart Hybrid (3 Interview Rounds + Pre-Onboarding Training + Onboarding + Hired/Revoked)',
+        smart_hybrid: 'Smart Hybrid (2 Interview Rounds + HR Round + Offer + Pre-Onboarding Training + Onboarding + Hired/Revoked)',
+        smart_hybrid_3rounds: 'Smart Hybrid (3 Interview Rounds + HR Round + Offer + Pre-Onboarding Training + Onboarding + Hired/Revoked)',
         standard: 'Standard Pipeline (Applied -> Screening -> Interview -> Offer -> Hired -> Rejected)'
       };
       const label = presetLabels[presetName] || presetName;
@@ -4401,7 +6154,7 @@ document.addEventListener('click',async event=>{
           timezone:'Asia/Kolkata',
           interview_type:isPhysical?'in_person':'virtual',
           location:isPhysical?(v.location?.trim()||'Mechlin Technologies — Corporate HQ, Mohali'):'',
-          meeting_url:isPhysical?null:(v.meeting_url?.trim()||null),
+          meeting_url:isPhysical?null:(v.meeting_url?.trim()||i.meeting_url||undefined),
           notes:v.notes?.trim()||undefined,
           ...(v.interviewer_id?{interviewer_id:v.interviewer_id}:{}),
           ...(updatedComps?{competencies:updatedComps}:{})
@@ -4414,6 +6167,57 @@ document.addEventListener('click',async event=>{
         bindValidation('competencies',checkSkills);
       }
     }
+    if(a==='retry-meeting'){
+      try {
+        notice('Retrying Microsoft Teams meeting synchronization...', 'info');
+        const res = await api(`interviews/${id}/retry-meeting`, 'POST', {});
+        if (res && res.calendar_status === 'sync_failed') {
+          notice(`Microsoft Teams meeting sync failed: ${res.meeting_error || 'Access denied. Check credentials and permissions in Integrations.'}`, 'error');
+        } else {
+          notice('Microsoft Teams meeting synchronized successfully. Join link generated.', 'success');
+        }
+        await render();
+      } catch (err) {
+        notice(err.message || 'Failed to sync Microsoft Teams meeting.', 'error');
+        await render();
+      }
+      return;
+    }
+    if(a==='retry-invitation'){
+      try {
+        notice('Resending interview invitation...', 'info');
+        const res = await api(`interviews/${id}/retry-invitation`, 'POST', {});
+        if (res && res.invitation_status === 'failed') {
+          notice(`Interview invitation failed: ${res.invitation_error || 'Email delivery failed.'}`, 'error');
+        } else {
+          notice('Interview invitation sent successfully.', 'success');
+        }
+        await render();
+      } catch (err) {
+        notice(err.message || 'Failed to resend interview invitation.', 'error');
+        await render();
+      }
+      return;
+    }
+    if(a==='view-meeting-error'){
+      const interviews=await api('interviews');
+      const i=interviews.find(item=>item.id===id)||await api(`interviews/${id}`);
+      modal('Microsoft Teams Sync Error', `
+        <div style="padding:14px;background:var(--surface);border:1px solid var(--negative);border-radius:8px;margin-bottom:12px;">
+          <p style="margin:0 0 6px;font-weight:600;color:var(--negative);">Microsoft Graph synchronization error:</p>
+          <div style="font-family:monospace;font-size:0.85rem;background:var(--negative-bg,#fee2e2);color:var(--negative,#991b1b);padding:8px 10px;border-radius:6px;word-break:break-word;">
+            ${escape(i?.meeting_error || 'No error details logged.')}
+          </div>
+        </div>
+        <div class="notice-inline" style="font-size:0.83rem;line-height:1.5;">
+          <strong>Why this happens & how to resolve:</strong><br>
+          • <strong>Access Denied:</strong> In Azure Entra ID, ensure the App Registration has <code>Calendars.ReadWrite</code> application permission and that a Global Admin has clicked <em>Grant Admin Consent</em>.<br>
+          • <strong>Organizer Mailbox:</strong> The configured organizer email (<code>${escape(i?.organizer || 'hr@mechlintech.com')}</code>) must be a licensed Exchange Online mailbox in the tenant.<br>
+          • <strong>Settings:</strong> Update credentials or test connection anytime in <strong>Integrations → Microsoft Calendar</strong>.
+        </div>
+      `);
+      return;
+    }
     if(a==='cancel-interview'){
       const interviews=await api('interviews');
       const i=interviews.find(item=>item.id===id)||await api(`interviews/${id}`);
@@ -4424,170 +6228,12 @@ document.addEventListener('click',async event=>{
       });
     }
     if(a==='scorecard'||a==='scorecard-proxy'){
-      const isProxy=a==='scorecard-proxy';
-      const interviews=await api('interviews');
-      const i=interviews.find(item=>item.id===id)||await api(`interviews/${id}`);
-      if(!i)throw new Error('Interview not found.');
-      if(!feedbackReady(i))throw new Error(FEEDBACK_LOCKED_MESSAGE);
-      const comps=JSON.parse(i.competencies||'[]');
-      const title=isProxy?`Submit proxy scorecard on behalf of ${escape(i.interviewer)}`:'Submit independent feedback';
-      const headerNotice=isProxy
-        ? `<div class="notice-inline"><strong>Administrative Proxy Submission:</strong> You are submitting this scorecard on behalf of the assigned interviewer (${escape(i.interviewer)}). An audit log entry will record your action and reason.</div>`
-        : `<div class="notice-inline" style="margin-top:0;margin-bottom:16px;border-left-color:var(--accent);background:var(--tint,#f0fdf4);"><p style="margin:0;"><strong>Candidate:</strong> ${escape(i.name||'Candidate')} &middot; <strong>Round:</strong> ${escape(i.title||'Interview round')}</p></div>`;
-      
-      const compSection=`
-        <div class="scorecard-competencies-section" style="margin-bottom:18px;">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-            <label style="font-weight:600;font-size:0.92rem;margin:0;">Evaluation Competencies &amp; Ratings <span style="color:var(--negative,#b91c1c);font-weight:bold;">*</span></label>
-            <span class="muted" id="comp-count-badge" style="font-size:0.8rem;background:var(--surface-alt);padding:2px 8px;border-radius:12px;border:1px solid var(--line);">${comps.length} ${comps.length===1?'competency':'competencies'}</span>
-          </div>
-          <p class="muted" style="font-size:0.82rem;margin:0 0 10px 0;line-height:1.4;">Rate planned competencies below. You can also add custom competencies to evaluate additional aspects from your perspective, or remove competencies as needed.</p>
-          <div id="scorecard-competencies-list" style="display:flex;flex-direction:column;gap:8px;max-height:260px;overflow-y:auto;padding-right:2px;margin-bottom:10px;"></div>
-          <div class="add-comp-box" style="display:flex;gap:8px;align-items:center;background:var(--surface-alt);border:1px dashed var(--line);border-radius:8px;padding:8px 10px;">
-            <input type="text" id="new-competency-input" placeholder="Add custom competency (e.g. System Design, Problem Solving, Culture Fit)..." style="flex:1;min-height:36px;padding:6px 10px;font-size:0.85rem;" maxlength="100">
-            <button type="button" id="btn-add-competency" class="secondary" style="min-height:36px;padding:6px 14px;font-size:0.85rem;white-space:nowrap;font-weight:600;">+ Add Competency</button>
-          </div>
-          <p class="error" id="competency-error" style="font-size:0.8rem;margin:6px 0 0 0;display:none;"></p>
-        </div>
-      `;
-
-      modal(title,
-        headerNotice+
-        compSection+
-        select('Recommendation','recommendation',['Strong yes','Yes','No','Strong no'])+
-        area('Job-related evidence','notes','',true)+
-        (isProxy?area('Reason for proxy submission','proxy_reason','',true):'')+
-        '<p class="muted" style="font-size:0.82rem;margin-top:8px;">Submitted feedback is final in this phase. Other feedback stays hidden until you submit your assigned scorecards.</p>',
-        async v=>{
-          if(!feedbackReady(i))throw new Error(FEEDBACK_LOCKED_MESSAGE);
-          if(isProxy&&(!v.proxy_reason||!v.proxy_reason.trim())){
-            throw new Error('A reason for proxy submission is required.');
-          }
-          const listEl=$('#scorecard-competencies-list');
-          const rows=listEl?listEl.querySelectorAll('.scorecard-comp-row'):[];
-          const ratings={};
-          for(const row of rows){
-            const compName=row.dataset.compName;
-            const sel=row.querySelector('.scorecard-rating-select');
-            if(compName&&sel){
-              ratings[compName]=Number(sel.value);
-            }
-          }
-          if(!Object.keys(ratings).length){
-            const errEl=$('#competency-error');
-            if(errEl){errEl.textContent='At least one competency rating is required.';errEl.style.display='block';}
-            throw new Error('At least one competency rating is required.');
-          }
-          const payload={
-            ratings,
-            recommendation:v.recommendation,
-            notes:v.notes,
-            ...(isProxy?{proxy_reason:v.proxy_reason.trim()}:{})
-          };
-          await api(`interviews/${id}/scorecards`,'POST',payload);
-          return 'Scorecard submitted successfully.';
-        }
-      );
-
-      const listEl=$('#scorecard-competencies-list');
-      const newCompInput=$('#new-competency-input');
-      const addCompBtn=$('#btn-add-competency');
-      const errEl=$('#competency-error');
-      const countBadge=$('#comp-count-badge');
-
-      const updateBadge=()=>{
-        if(!countBadge||!listEl)return;
-        const count=listEl.querySelectorAll('.scorecard-comp-row').length;
-        countBadge.textContent=`${count} ${count===1?'competency':'competencies'}`;
-        countBadge.style.color=count===0?'var(--negative, #b91c1c)':'';
-      };
-
-      const renderCompRow=(name,isCustom=false)=>{
-        const row=document.createElement('div');
-        row.className='scorecard-comp-row';
-        row.dataset.compName=name;
-        row.style.cssText='display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 12px;background:var(--surface);border:1px solid var(--line);border-radius:8px;';
-        row.innerHTML=`
-          <div style="flex:1;min-width:0;display:flex;align-items:center;gap:8px;">
-            <span style="font-weight:600;font-size:0.88rem;overflow-wrap:anywhere;color:var(--ink);">${escape(name)}</span>
-            ${isCustom?`<span class="badge" style="font-size:0.7rem;padding:2px 6px;background:var(--tint,#e0f2fe);color:var(--accent,#0369a1);border-radius:4px;">Custom</span>`:''}
-          </div>
-          <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
-            <label style="display:flex;align-items:center;gap:6px;font-size:0.83rem;margin:0;font-weight:normal;color:var(--muted);">
-              <span>Score:</span>
-              <select class="scorecard-rating-select" data-comp="${escape(name)}" name="rating_${escape(name)}" style="min-height:34px;padding:3px 8px;font-size:0.85rem;border-radius:6px;width:auto;" aria-label="Rating for ${escape(name)}">
-                <option value="1">1 (Low)</option>
-                <option value="2">2</option>
-                <option value="3" selected>3</option>
-                <option value="4">4</option>
-                <option value="5">5 (High)</option>
-              </select>
-            </label>
-            <button type="button" class="secondary btn-remove-comp" data-comp="${escape(name)}" title="Remove ${escape(name)}" aria-label="Remove ${escape(name)}" style="min-height:34px;padding:3px 10px;font-size:0.8rem;color:var(--negative,#b91c1c);border-color:var(--line);">
-              Remove
-            </button>
-          </div>
-        `;
-        return row;
-      };
-
-      if(listEl){
-        for(const c of comps){
-          listEl.appendChild(renderCompRow(c,false));
-        }
-        updateBadge();
-      }
-
-      const handleAdd=()=>{
-        if(!newCompInput)return;
-        const val=newCompInput.value.trim();
-        if(!val){
-          if(errEl){errEl.textContent='Please enter a competency name.';errEl.style.display='block';}
-          newCompInput.focus();
-          return;
-        }
-        if(val.length>100){
-          if(errEl){errEl.textContent='Competency name must be at most 100 characters.';errEl.style.display='block';}
-          return;
-        }
-        const existingRows=listEl?listEl.querySelectorAll('.scorecard-comp-row'):[];
-        const exists=Array.from(existingRows).some(r=>(r.dataset.compName||'').toLowerCase()===val.toLowerCase());
-        if(exists){
-          if(errEl){errEl.textContent=`Competency "${val}" is already in the list.`;errEl.style.display='block';}
-          return;
-        }
-        if(errEl){errEl.textContent='';errEl.style.display='none';}
-        if(listEl){
-          listEl.appendChild(renderCompRow(val,true));
-          updateBadge();
-        }
-        newCompInput.value='';
-        newCompInput.focus();
-      };
-
-      if(addCompBtn)addCompBtn.onclick=handleAdd;
-      if(newCompInput){
-        newCompInput.onkeydown=e=>{
-          if(e.key==='Enter'){
-            e.preventDefault();
-            handleAdd();
-          }
-        };
-      }
-
-      if(listEl){
-        listEl.onclick=e=>{
-          const btn=e.target.closest('.btn-remove-comp');
-          if(!btn)return;
-          e.preventDefault();
-          const row=btn.closest('.scorecard-comp-row');
-          if(row){
-            row.remove();
-            updateBadge();
-            if(errEl){errEl.textContent='';errEl.style.display='none';}
-          }
-        };
-      }
+      await openScorecardModal(id, a==='scorecard-proxy');
+      return;
+    }
+    if(a==='feedback-pending'){
+      notice('Interview is scheduled. Feedback and scorecard rating unlock after the scheduled interview time.', 'info');
+      return;
     }
     if(a==='feedback'){
       const r=await api(`interviews/${id}/scorecards`);
@@ -4778,7 +6424,7 @@ document.addEventListener('click',async event=>{
           if (textarea) {
             const list = presets?.smart_hybrid || [
               'Applied', 'Screening Round', 'Interview Round 1', 'Interview Round 2',
-              'HR Round', 'Pre-Onboarding Training', 'Onboarding', 'Hired', 'Rejected', 'Revoked'
+              'HR Round', 'Offer', 'Pre-Onboarding Training', 'Onboarding', 'Hired', 'Rejected', 'Revoked'
             ];
             textarea.value = list.join('\n');
             updateCounter();
@@ -4791,7 +6437,7 @@ document.addEventListener('click',async event=>{
           if (textarea) {
             const list = presets?.smart_hybrid_3rounds || [
               'Applied', 'Screening Round', 'Interview Round 1', 'Interview Round 2',
-              'Interview Round 3', 'HR Round', 'Pre-Onboarding Training', 'Onboarding', 'Hired', 'Rejected', 'Revoked'
+              'Interview Round 3', 'HR Round', 'Offer', 'Pre-Onboarding Training', 'Onboarding', 'Hired', 'Rejected', 'Revoked'
             ];
             textarea.value = list.join('\n');
             updateCounter();
@@ -5355,6 +7001,13 @@ document.addEventListener('click',async event=>{
 });
 window.addEventListener('hashchange',()=>{
   if(!me)return;
+  const nav=getNavList();
+  if (nav.length === 1 && nav[0] === 'Agency portal') {
+    current = 'Agency portal';
+    deniedView = '';
+    render();
+    return;
+  }
   const requested=requestedRoute();
   if(!requested)return;
   if(!routeAllowed(requested)){
@@ -5921,13 +7574,18 @@ window.addEventListener('online',()=>notice('Connection restored.','success'));
     applyMeData(data);
     loadSavedPages();
     const nav=getNavList();
-    const requested=requestedRoute();
-    if(requested&&!nav.includes(requested)){
-      current=requested;
-      deniedView=requested;
-    }else{
-      current=getSavedNav(nav);
-      deniedView='';
+    if (nav.length === 1 && nav[0] === 'Agency portal') {
+      current = 'Agency portal';
+      deniedView = '';
+    } else {
+      const requested=requestedRoute();
+      if(requested&&!nav.includes(requested)){
+        current=requested;
+        deniedView=requested;
+      }else{
+        current=getSavedNav(nav);
+        deniedView='';
+      }
     }
     cleanAccessQuery();
     await render();

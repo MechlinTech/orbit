@@ -82,13 +82,27 @@ export function openDb(path = 'data/talentos.sqlite') {
       phone TEXT NOT NULL, skills TEXT NOT NULL, resume_text TEXT NOT NULL, source TEXT NOT NULL, team TEXT NOT NULL,
       created_by TEXT NOT NULL REFERENCES users(id), created_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS applications(id TEXT PRIMARY KEY, candidate_id TEXT NOT NULL REFERENCES candidates(id),
-      requisition_id TEXT NOT NULL REFERENCES requisitions(id), stage TEXT NOT NULL, created_at TEXT NOT NULL,
+      requisition_id TEXT NOT NULL REFERENCES requisitions(id), stage TEXT NOT NULL,
+      training_status TEXT NOT NULL DEFAULT 'not_started',
+      training_start_at TEXT,
+      training_end_at TEXT,
+      training_original_end_at TEXT,
+      training_attempt INTEGER NOT NULL DEFAULT 1,
+      training_completed_at TEXT,
+      offer_status TEXT NOT NULL DEFAULT 'active',
+      offer_revoked_at TEXT,
+      offer_revoked_by TEXT REFERENCES users(id),
+      offer_revocation_reason TEXT,
+      created_at TEXT NOT NULL,
       UNIQUE(candidate_id,requisition_id));
+    CREATE INDEX IF NOT EXISTS idx_applications_req ON applications(requisition_id);
     CREATE TABLE IF NOT EXISTS stage_events(id TEXT PRIMARY KEY, application_id TEXT NOT NULL REFERENCES applications(id),
       from_stage TEXT NOT NULL, to_stage TEXT NOT NULL, actor TEXT NOT NULL REFERENCES users(id), at TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS idx_stage_events_app ON stage_events(application_id);
     CREATE TABLE IF NOT EXISTS interviews(id TEXT PRIMARY KEY, application_id TEXT NOT NULL REFERENCES applications(id),
       interviewer_id TEXT NOT NULL REFERENCES users(id), scheduled_at TEXT NOT NULL, competencies TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'planned', created_at TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS idx_interviews_app ON interviews(application_id);
     CREATE TABLE IF NOT EXISTS scorecards(id TEXT PRIMARY KEY, interview_id TEXT NOT NULL UNIQUE REFERENCES interviews(id),
       author TEXT NOT NULL REFERENCES users(id), ratings TEXT NOT NULL, recommendation TEXT NOT NULL, notes TEXT NOT NULL, submitted_at TEXT NOT NULL,
       proxy_for TEXT REFERENCES users(id), proxy_reason TEXT);
@@ -157,9 +171,10 @@ export function openDb(path = 'data/talentos.sqlite') {
       created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
     CREATE INDEX IF NOT EXISTS idx_offer_templates_status ON offer_letter_templates(status);
     CREATE TABLE IF NOT EXISTS offer_letter_assets(
-      id TEXT PRIMARY KEY, filename TEXT NOT NULL, file_format TEXT NOT NULL,
+      id TEXT PRIMARY KEY, name TEXT, filename TEXT NOT NULL, file_format TEXT NOT NULL,
       file_size INTEGER NOT NULL, mime_type TEXT NOT NULL, storage_path TEXT NOT NULL,
       sha256_hash TEXT NOT NULL, width INTEGER, height INTEGER,
+      scaling_mode TEXT DEFAULT 'fit', page_target TEXT DEFAULT 'all',
       created_by TEXT NOT NULL REFERENCES users(id), created_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS agencies (
       id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE COLLATE NOCASE, code TEXT NOT NULL UNIQUE COLLATE NOCASE,
@@ -227,13 +242,96 @@ export function openDb(path = 'data/talentos.sqlite') {
       status TEXT NOT NULL CHECK(status IN ('in_progress','passed','failed')) DEFAULT 'passed',
       decision TEXT NOT NULL CHECK(decision IN ('next','rejected','revoked')) DEFAULT 'next',
       notes TEXT NOT NULL DEFAULT '',
+      attempt INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_training_eval_app ON training_evaluations(application_id);
     CREATE INDEX IF NOT EXISTS idx_training_eval_cand ON training_evaluations(candidate_id);
+    CREATE TABLE IF NOT EXISTS training_deadline_extensions (
+      id TEXT PRIMARY KEY,
+      application_id TEXT NOT NULL REFERENCES applications(id),
+      attempt INTEGER NOT NULL,
+      previous_deadline TEXT NOT NULL,
+      new_deadline TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      extended_by TEXT NOT NULL REFERENCES users(id),
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_training_ext_app ON training_deadline_extensions(application_id);
+    CREATE TABLE IF NOT EXISTS training_plan_templates(
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('draft','active','archived')),
+      version INTEGER NOT NULL DEFAULT 1,
+      is_default INTEGER NOT NULL DEFAULT 0,
+      subject TEXT NOT NULL,
+      introduction TEXT NOT NULL DEFAULT '',
+      objectives TEXT NOT NULL DEFAULT '',
+      sections TEXT NOT NULL DEFAULT '[]',
+      learning_links TEXT NOT NULL DEFAULT '[]',
+      resources TEXT NOT NULL DEFAULT '[]',
+      duration_text TEXT NOT NULL DEFAULT '',
+      support_contact TEXT NOT NULL DEFAULT '{}',
+      positions TEXT NOT NULL DEFAULT '[]',
+      departments TEXT NOT NULL DEFAULT '[]',
+      roles TEXT NOT NULL DEFAULT '[]',
+      created_by TEXT REFERENCES users(id),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_training_templates_status ON training_plan_templates(status);
+    CREATE INDEX IF NOT EXISTS idx_training_templates_default ON training_plan_templates(is_default);
+    CREATE TABLE IF NOT EXISTS training_plan_drafts(
+      id TEXT PRIMARY KEY,
+      application_id TEXT NOT NULL REFERENCES applications(id),
+      candidate_id TEXT NOT NULL REFERENCES candidates(id),
+      template_id TEXT REFERENCES training_plan_templates(id),
+      template_version INTEGER NOT NULL DEFAULT 1,
+      suggested_template_id TEXT REFERENCES training_plan_templates(id),
+      match_priority INTEGER,
+      is_override INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL CHECK(status IN ('pending_review','draft_saved','ready_to_send','sending','sent','failed','cancelled')) DEFAULT 'pending_review',
+      subject TEXT NOT NULL,
+      introduction TEXT NOT NULL DEFAULT '',
+      objectives TEXT NOT NULL DEFAULT '',
+      sections TEXT NOT NULL DEFAULT '[]',
+      learning_links TEXT NOT NULL DEFAULT '[]',
+      resources TEXT NOT NULL DEFAULT '[]',
+      duration_text TEXT NOT NULL DEFAULT '',
+      support_contact TEXT NOT NULL DEFAULT '{}',
+      rendered_html TEXT,
+      rendered_text TEXT,
+      sent_at TEXT,
+      sent_by TEXT REFERENCES users(id),
+      error_message TEXT,
+      idempotency_key TEXT UNIQUE,
+      resend_count INTEGER NOT NULL DEFAULT 0,
+      created_by TEXT REFERENCES users(id),
+      updated_by TEXT REFERENCES users(id),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_training_drafts_app ON training_plan_drafts(application_id);
+    CREATE INDEX IF NOT EXISTS idx_training_drafts_candidate ON training_plan_drafts(candidate_id);
+    CREATE INDEX IF NOT EXISTS idx_training_drafts_status ON training_plan_drafts(status);
+    CREATE TABLE IF NOT EXISTS training_plan_assets(
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      filename TEXT NOT NULL,
+      file_format TEXT NOT NULL,
+      file_size INTEGER NOT NULL,
+      mime_type TEXT NOT NULL,
+      storage_path TEXT NOT NULL,
+      sha256_hash TEXT NOT NULL,
+      resource_type TEXT NOT NULL DEFAULT 'document' CHECK(resource_type IN ('image','document')),
+      created_by TEXT REFERENCES users(id),
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_training_assets_type ON training_plan_assets(resource_type);
     CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
-    INSERT OR IGNORE INTO settings VALUES('pipeline','["Applied","Screening Round","Interview Round 1","Interview Round 2","HR Round","Pre-Onboarding Training","Onboarding","Hired","Rejected","Revoked"]');
+    INSERT OR IGNORE INTO settings VALUES('pipeline','["Applied","Screening Round","Interview Round 1","Interview Round 2","HR Round","Offer","Pre-Onboarding Training","Onboarding","Hired","Rejected","Revoked"]');
     CREATE TABLE IF NOT EXISTS rbac_roles(
       id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE COLLATE NOCASE,
       description TEXT NOT NULL DEFAULT '', scope TEXT NOT NULL DEFAULT 'team'
@@ -246,6 +344,21 @@ export function openDb(path = 'data/talentos.sqlite') {
       permission TEXT NOT NULL, PRIMARY KEY(role_id, permission));
     CREATE INDEX IF NOT EXISTS idx_rbac_role_permissions_permission ON rbac_role_permissions(permission);
     INSERT OR IGNORE INTO schema_migrations VALUES(1,datetime('now'));`);
+  try {
+    const currentPipe = db.prepare("SELECT value FROM settings WHERE key='pipeline'").get();
+    if (currentPipe) {
+      const list = JSON.parse(currentPipe.value);
+      if (!list.includes('Offer')) {
+        const hrIdx = list.indexOf('HR Round');
+        if (hrIdx !== -1) {
+          list.splice(hrIdx + 1, 0, 'Offer');
+        } else {
+          list.push('Offer');
+        }
+        db.prepare("UPDATE settings SET value=? WHERE key='pipeline'").run(JSON.stringify(list));
+      }
+    }
+  } catch {}
   try { db.exec('ALTER TABLE scorecards ADD COLUMN proxy_for TEXT REFERENCES users(id);'); } catch {}
   try { db.exec('ALTER TABLE scorecards ADD COLUMN proxy_reason TEXT;'); } catch {}
   try { db.exec("ALTER TABLE interviews ADD COLUMN round TEXT DEFAULT 'Round 1';"); } catch {}
@@ -297,6 +410,11 @@ export function openDb(path = 'data/talentos.sqlite') {
   }
   addColumn('users', 'role_id TEXT REFERENCES rbac_roles(id)');
   addColumn('rbac_roles', 'permissions_customized INTEGER NOT NULL DEFAULT 0');
+  for (const definition of [
+    'name TEXT',
+    "scaling_mode TEXT DEFAULT 'fit'",
+    "page_target TEXT DEFAULT 'all'"
+  ]) addColumn('offer_letter_assets', definition);
   seedSystemRoles(db);
   db.exec('CREATE INDEX IF NOT EXISTS idx_users_role_id ON users(role_id);');
 
@@ -311,12 +429,35 @@ export function openDb(path = 'data/talentos.sqlite') {
   try { db.exec('ALTER TABLE interviews ADD COLUMN calendar_status TEXT DEFAULT "not_synced";'); } catch {}
   try { db.exec('ALTER TABLE interviews ADD COLUMN interview_type TEXT DEFAULT "virtual";'); } catch {}
   try { db.exec('ALTER TABLE interviews ADD COLUMN location TEXT DEFAULT "";'); } catch {}
+  try { db.exec('ALTER TABLE interviews ADD COLUMN invitation_status TEXT DEFAULT "pending";'); } catch {}
+  try { db.exec('ALTER TABLE interviews ADD COLUMN invitation_error TEXT DEFAULT "";'); } catch {}
+  try { db.exec('ALTER TABLE interviews ADD COLUMN meeting_error TEXT DEFAULT "";'); } catch {}
   addColumn('signature_signers', 'raw_token TEXT');
   addColumn('signature_requests', 'salary TEXT');
   addColumn('signature_requests', 'currency TEXT');
   addColumn('signature_requests', 'start_date TEXT');
   addColumn('signature_requests', 'template_id TEXT REFERENCES offer_letter_templates(id)');
   addColumn('signature_requests', 'template_snapshot TEXT');
+  for (const def of [
+    "training_status TEXT NOT NULL DEFAULT 'not_started'",
+    'training_start_at TEXT',
+    'training_end_at TEXT',
+    'training_original_end_at TEXT',
+    'training_attempt INTEGER NOT NULL DEFAULT 1',
+    'training_completed_at TEXT',
+    "offer_status TEXT NOT NULL DEFAULT 'active'",
+    'offer_revoked_at TEXT',
+    'offer_revoked_by TEXT REFERENCES users(id)',
+    'offer_revocation_reason TEXT'
+  ]) addColumn('applications', def);
+  addColumn('training_evaluations', 'attempt INTEGER NOT NULL DEFAULT 1');
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_training_eval_attempt ON training_evaluations(application_id, attempt);'); } catch {}
+  for (const def of [
+    "offer_status TEXT NOT NULL DEFAULT 'active'",
+    'revoked_at TEXT',
+    'revoked_by TEXT REFERENCES users(id)',
+    'revocation_reason TEXT'
+  ]) addColumn('signature_requests', def);
   return db;
 }
 export function audit(db, actor, event, target = '', detail = {}) {

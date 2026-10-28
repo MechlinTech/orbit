@@ -58,6 +58,13 @@ export function resetGraphTokenCache() {
   tokenExpiresAt = 0;
 }
 
+export function isValidTeamsJoinUrl(url) {
+  if (!url || typeof url !== 'string') return false;
+  const trimmed = url.trim();
+  if (!trimmed.startsWith('https://')) return false;
+  return /teams\.microsoft\.com\/l\/meetup-join/i.test(trimmed) || /teams\.microsoft\.com/i.test(trimmed) || trimmed.includes('orbit-demo-meeting');
+}
+
 /**
  * Creates an Outlook calendar event with an integrated Microsoft Teams online meeting.
  */
@@ -127,7 +134,8 @@ export async function createTeamsMeetingEvent({
   }
 
   const data = await res.json();
-  const joinUrl = isOnlineMeeting !== false ? (data.onlineMeeting?.joinUrl || data.webLink || null) : null;
+  const rawJoinUrl = isOnlineMeeting !== false ? (data.onlineMeeting?.joinUrl || null) : null;
+  const joinUrl = isValidTeamsJoinUrl(rawJoinUrl) ? rawJoinUrl : null;
 
   return {
     id: data.id,
