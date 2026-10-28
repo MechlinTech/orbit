@@ -275,11 +275,12 @@ test('B1. Email Branding: Official Orbit and Mechlin logos render with separator
   assert.ok(mechlinLogoIdx > -1, 'Mechlin logo image URL must be present');
   assert.ok(mechlinLogoIdx > separatorIdx, 'Mechlin logo must appear after separator');
 
-  // 4. Preserves aspect ratios and email-client-friendly styles
+  // 4. Preserves aspect ratios and email-client-friendly styles with white backing for contrast
   assert.match(rendered.html, /alt="Orbit"/);
   assert.match(rendered.html, /alt="Mechlin Technologies"/);
   assert.match(rendered.html, /role="presentation"/);
   assert.match(rendered.html, /max-height: 30px/);
+  assert.match(rendered.html, /background-color:\s*#ffffff/, 'Mechlin logo must have white backing for visibility on dark header');
 
   // 5. Plain text version includes company text header
   assert.match(rendered.text, /Orbit \| Mechlin Technologies/);
@@ -627,3 +628,181 @@ test('E2. Cross-Workflow: Offer signing, training evaluation, and progression to
 
   f.db.close();
 });
+
+// -------------------------------------------------------------
+// F. STAGE TRANSITIONS WITH INTERVIEW DETAILS & AUTO MEETING LINKS
+// -------------------------------------------------------------
+
+test('F1. Stage Transition with Interview: Auto-generates Teams meeting link and includes interview details in email', async () => {
+  const f = setupSmartHybridDb();
+  // Simulate environment where calendar integration is unconfigured (default Orbit install)
+  f.db.prepare("DELETE FROM integration_configs WHERE id = 'microsoft_calendar'").run();
+
+  const commAdapter = createMockCommAdapter();
+  const c = { communicationAdapter: commAdapter, appOrigin: 'https://orbit.mechlintech.com' };
+
+  const cand = service(f.db, f.recruiter, 'POST', 'candidates', candidateBody);
+  const req = createAndOpenRequisition(f);
+  const app = service(f.db, f.recruiter, 'POST', 'applications', { candidate_id: cand.id, requisition_id: req.id });
+
+  const futureDate = new Date(Date.now() + 86400000 * 2).toISOString();
+
+  // Schedule virtual interview (e.g. from UI modal when advancing stage)
+  const interview = await service(f.db, f.recruiter, 'POST', 'interviews', {
+    application_id: app.id,
+    interviewer_id: f.interviewer.id,
+    scheduled_at: futureDate,
+    duration_minutes: 45,
+    timezone: 'Asia/Kolkata',
+    interview_type: 'virtual',
+    competencies: ['JavaScript', 'System Architecture'],
+    round: 'Interview Round 1',
+    send_invitation: false
+  }, null, c);
+
+  // Assert interview has auto-generated Teams meeting link
+  assert.ok(interview.meeting_url, 'Virtual interview must have auto-generated Teams link');
+  assert.match(interview.meeting_url, /^https:\/\/teams\.microsoft\.com\/l\/meetup-join\/orbit-meeting-/);
+
+  // Transition stage to Interview Round 1
+  await service(f.db, f.recruiter, 'POST', `applications/${app.id}/stage`, {
+    stage: 'Interview Round 1',
+    send_notification: true
+  }, null, c);
+
+  // Verify stage update email contains interview details and Teams join link
+  const stageEmail = commAdapter.sent.find(m => /Interview Round 1/i.test(m.subject));
+  assert.ok(stageEmail, 'Stage transition email must be sent');
+  assert.match(stageEmail.html, /Interview Details:/i);
+  assert.match(stageEmail.html, /Your interview has been scheduled as detailed below/i);
+  assert.match(stageEmail.html, /Duration:.*45 minutes/i);
+  assert.match(stageEmail.html, /Format:.*Virtual \/ Online \(Microsoft Teams\)/i);
+  assert.match(stageEmail.html, new RegExp(interview.meeting_url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.match(stageEmail.html, /Join Microsoft Teams Meeting/i);
+  assert.match(stageEmail.text, /Interview Details:/i);
+  assert.match(stageEmail.text, new RegExp(interview.meeting_url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+
+  f.db.close();
+});
+
+test('F2. Stage Transition with In-Person Interview: Renders venue and never generates or displays Teams link', async () => {
+  const f = setupSmartHybridDb();
+  const commAdapter = createMockCommAdapter();
+  const c = { communicationAdapter: commAdapter, appOrigin: 'https://orbit.mechlintech.com' };
+
+  const cand = service(f.db, f.recruiter, 'POST', 'candidates', candidateBody);
+  const req = createAndOpenRequisition(f);
+  const app = service(f.db, f.recruiter, 'POST', 'applications', { candidate_id: cand.id, requisition_id: req.id });
+
+  const futureDate = new Date(Date.now() + 86400000 * 2).toISOString();
+
+  // Schedule in-person interview
+  const interview = await service(f.db, f.recruiter, 'POST', 'interviews', {
+    application_id: app.id,
+    interviewer_id: f.interviewer.id,
+    scheduled_at: futureDate,
+    duration_minutes: 60,
+    timezone: 'Asia/Kolkata',
+    interview_type: 'in_person',
+    location: 'Mechlin HQ, Tower B, 3rd Floor',
+    round: 'Interview Round 2',
+    competencies: ['Communication', 'Culture fit'],
+    send_invitation: false
+  }, null, c);
+
+  assert.equal(interview.meeting_url, null, 'In-person interview must not have a meeting URL');
+
+  // Advance stage to Interview Round 2
+  await service(f.db, f.recruiter, 'POST', `applications/${app.id}/stage`, {
+    stage: 'Interview Round 2',
+    send_notification: true
+  }, null, c);
+
+  const stageEmail = commAdapter.sent.find(m => /Interview Round 2/i.test(m.subject));
+  assert.ok(stageEmail);
+  assert.match(stageEmail.html, /Interview Details:/i);
+  assert.match(stageEmail.html, /In-Person \/ Physical/i);
+  assert.match(stageEmail.html, /Mechlin HQ, Tower B, 3rd Floor/);
+  assert.doesNotMatch(stageEmail.html, /teams\.microsoft\.com/i);
+  assert.doesNotMatch(stageEmail.html, /Join Microsoft Teams Meeting/i);
+
+  f.db.close();
+});
+
+test('F3. Direct Stage Transition with scheduled_at payload: Creates interview and sends details with Teams link', async () => {
+  const f = setupSmartHybridDb();
+  const commAdapter = createMockCommAdapter();
+  const c = { communicationAdapter: commAdapter, appOrigin: 'https://orbit.mechlintech.com' };
+
+  const cand = service(f.db, f.recruiter, 'POST', 'candidates', candidateBody);
+  const req = createAndOpenRequisition(f);
+  const app = service(f.db, f.recruiter, 'POST', 'applications', { candidate_id: cand.id, requisition_id: req.id });
+
+  const futureDate = new Date(Date.now() + 86400000 * 2).toISOString();
+
+  // Advance stage directly providing interview info in body
+  await service(f.db, f.recruiter, 'POST', `applications/${app.id}/stage`, {
+    stage: 'Screening Round',
+    scheduled_at: futureDate,
+    interviewer_id: f.interviewer.id,
+    duration_minutes: 30,
+    interview_type: 'virtual',
+    send_notification: true
+  }, null, c);
+
+  const stageEmail = commAdapter.sent.find(m => /Screening Round/i.test(m.subject));
+  assert.ok(stageEmail);
+  assert.match(stageEmail.html, /Interview Details:/i);
+  assert.match(stageEmail.html, /https:\/\/teams\.microsoft\.com\/l\/meetup-join\/orbit-meeting-/);
+  assert.match(stageEmail.html, /Duration:.*30 minutes/i);
+
+  // Verify interview row in DB
+  const createdInterview = f.db.prepare('SELECT * FROM interviews WHERE application_id = ?').get(app.id);
+  assert.ok(createdInterview);
+  assert.equal(createdInterview.round, 'Screening Round');
+  assert.match(createdInterview.meeting_url, /^https:\/\/teams\.microsoft\.com\/l\/meetup-join\/orbit-meeting-/);
+
+  f.db.close();
+});
+
+test('F4. Stage Transition with Existing Interview Missing Meeting URL: Auto-generates meeting link during stage transition', async () => {
+  const f = setupSmartHybridDb();
+  const commAdapter = createMockCommAdapter();
+  const c = { communicationAdapter: commAdapter, appOrigin: 'https://orbit.mechlintech.com' };
+
+  const cand = service(f.db, f.recruiter, 'POST', 'candidates', candidateBody);
+  const req = createAndOpenRequisition(f);
+  const app = service(f.db, f.recruiter, 'POST', 'applications', { candidate_id: cand.id, requisition_id: req.id });
+
+  const futureDate = new Date(Date.now() + 86400000 * 2).toISOString();
+
+  // Insert an interview without meeting_url directly into DB
+  const iid = 'interview-manual-test-123';
+  f.db.prepare(`
+    INSERT INTO interviews(id, application_id, interviewer_id, scheduled_at, competencies, title, duration_minutes, timezone, notes, status, calendar_status, meeting_url, round, round_number, interview_type, invitation_status, created_at)
+    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+  `).run(
+    iid, app.id, f.interviewer.id, futureDate, JSON.stringify(['JavaScript']), 'Interview Round 1: Candidate', 45, 'Asia/Kolkata', 'Technical round notes', 'planned', 'sync_failed', null, 'Interview Round 1', 1, 'virtual', 'pending'
+  );
+
+  // Advance stage to Interview Round 1
+  await service(f.db, f.recruiter, 'POST', `applications/${app.id}/stage`, {
+    stage: 'Interview Round 1',
+    send_notification: true
+  }, null, c);
+
+  // Verify interview in DB was updated with generated meeting URL
+  const updatedInterview = f.db.prepare('SELECT * FROM interviews WHERE id = ?').get(iid);
+  assert.ok(updatedInterview.meeting_url, 'Meeting URL should have been generated');
+  assert.match(updatedInterview.meeting_url, new RegExp(`orbit-meeting-${iid}`));
+
+  // Verify stage update email contains interview details and Teams join link
+  const stageEmail = commAdapter.sent.find(m => /Interview Round 1/i.test(m.subject));
+  assert.ok(stageEmail);
+  assert.match(stageEmail.html, /Interview Details:/i);
+  assert.match(stageEmail.html, new RegExp(updatedInterview.meeting_url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.match(stageEmail.html, /Technical round notes/);
+
+  f.db.close();
+});
+

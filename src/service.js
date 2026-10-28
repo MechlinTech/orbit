@@ -1668,6 +1668,31 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
         return get(db,'applications',key);
       });
 
+      if (body.scheduled_at && !['Hired', 'Rejected', 'Revoked'].includes(body.stage)) {
+        try {
+          const existingPlanned = db.prepare('SELECT id FROM interviews WHERE application_id = ? AND (round = ? OR status = ?)').get(key, body.stage, 'planned');
+          if (!existingPlanned) {
+            const interviewerId = body.interviewer_id || user.id;
+            const scheduled = new Date(body.scheduled_at);
+            if (Number.isFinite(scheduled.getTime())) {
+              const iid = id();
+              const duration = Number(body.duration_minutes) || 45;
+              const timezone = body.timezone || 'Asia/Kolkata';
+              const interviewType = body.interview_type === 'in_person' ? 'in_person' : 'virtual';
+              const location = interviewType === 'in_person' ? (body.location || 'Mechlin Technologies Office') : '';
+              const meetingUrl = interviewType === 'in_person' ? null : (body.meeting_url || `https://teams.microsoft.com/l/meetup-join/orbit-meeting-${iid}`);
+              const competencies = Array.isArray(body.competencies) ? JSON.stringify(body.competencies) : JSON.stringify(['Role knowledge', 'Problem solving']);
+              const roundNumber = db.prepare('SELECT count(*) n FROM interviews WHERE application_id=?').get(key).n + 1;
+              const cand = db.prepare('SELECT name FROM candidates WHERE id = ?').get(app.candidate_id);
+              const title = `${body.stage}: ${cand?.name || 'Candidate'} — ${req?.title || 'Position'}`;
+              db.prepare('INSERT INTO interviews(id,application_id,interviewer_id,scheduled_at,competencies,title,duration_minutes,timezone,notes,status,calendar_status,meeting_url,round,round_number,interview_type,location,invitation_status,invitation_error,meeting_error,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(
+                iid, key, interviewerId, scheduled.toISOString(), competencies, title, duration, timezone, body.notes || '', 'planned', 'manual_link', meetingUrl, body.stage, roundNumber, interviewType, location, 'accepted', '', '', now()
+              );
+            }
+          }
+        } catch {}
+      }
+
       const emailConfigured = (isEmailConfigured(db, c) || Boolean(c?.communicationAdapter)) && body.send_notification !== false;
       const hrmsEffective = getEffectiveIntegrationConfig(db, 'hrms');
       const hrmsSyncEnabled = Boolean(
@@ -1691,7 +1716,16 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
               sendNotification: body.send_notification !== false,
               config: c,
               adapter: c?.communicationAdapter,
-              templateId: body.template_id || (body.stage === 'Rejected' ? 'application_rejection' : 'stage_update')
+              templateId: body.template_id || (body.stage === 'Rejected' ? 'application_rejection' : 'stage_update'),
+              interviewDetails: (body.scheduled_at || body.interviewer_id) ? {
+                scheduled_at: body.scheduled_at,
+                interviewer_id: body.interviewer_id,
+                duration_minutes: body.duration_minutes,
+                timezone: body.timezone,
+                interview_type: body.interview_type,
+                location: body.location,
+                meeting_url: body.meeting_url
+              } : null
             });
           }
 
@@ -1836,17 +1870,23 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       const round = body.round ? text(body.round, 'Round', 100, false) : `Round ${roundNumber}`;
       const title = body.title ? text(body.title, 'Title', 200, false) : `${round}: ${cand.name} — ${req.title}`;
       const iid = id();
+      const calConfigured = isCalendarConfigured(c, db) || Boolean(c?.calendarAdapter);
+      let initialMeetingUrl = customMeetingUrl;
+      let initialCalendarStatus = customMeetingUrl ? 'manual_link' : 'not_synced';
+      if (interviewType === 'virtual' && !initialMeetingUrl && !calConfigured) {
+        initialMeetingUrl = `https://teams.microsoft.com/l/meetup-join/orbit-meeting-${iid}`;
+        initialCalendarStatus = 'manual_link';
+      }
       transaction(db, () => {
         db.prepare('INSERT INTO interviews(id,application_id,interviewer_id,scheduled_at,competencies,title,duration_minutes,timezone,notes,status,calendar_status,meeting_url,round,round_number,interview_type,location,invitation_status,invitation_error,meeting_error,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(
-          iid, app.id, interviewer.id, scheduled.toISOString(), JSON.stringify(competencies), title, duration, timezone, notes, 'planned', customMeetingUrl ? 'manual_link' : 'not_synced', customMeetingUrl, round, roundNumber, interviewType, location, 'pending', '', '', now()
+          iid, app.id, interviewer.id, scheduled.toISOString(), JSON.stringify(competencies), title, duration, timezone, notes, 'planned', initialCalendarStatus, initialMeetingUrl, round, roundNumber, interviewType, location, 'pending', '', '', now()
         );
-        audit(db, user.id, 'interview.planned', iid, { scheduled_at: scheduled.toISOString(), interviewer_id: interviewer.id, duration_minutes: duration, timezone, meeting_url: customMeetingUrl, round, round_number: roundNumber, interview_type: interviewType, location });
+        audit(db, user.id, 'interview.planned', iid, { scheduled_at: scheduled.toISOString(), interviewer_id: interviewer.id, duration_minutes: duration, timezone, meeting_url: initialMeetingUrl, round, round_number: roundNumber, interview_type: interviewType, location });
       });
-      const calConfigured = isCalendarConfigured(c, db) || Boolean(c?.calendarAdapter);
       const emailConfigured = (isEmailConfigured(db) || Boolean(c?.communicationAdapter)) && body.send_invitation !== false;
       if (calConfigured || emailConfigured) {
         return (async () => {
-          let meetingUrl = customMeetingUrl;
+          let meetingUrl = initialMeetingUrl;
           if (calConfigured) {
             const calResult = await syncScheduleMeeting({
               db, user, interviewId: iid, scheduledAt: scheduled.toISOString(), durationMinutes: duration, timezone, title, notes, candidate: cand, req, interviewer, transport: c?.calendarAdapter?.transport || c?.transport || fetch, config: c,
@@ -1854,7 +1894,10 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
             });
             meetingUrl = interviewType === 'in_person' ? null : (calResult.meeting_url || customMeetingUrl);
           }
-          if (meetingUrl && meetingUrl !== customMeetingUrl) {
+          if (interviewType === 'virtual' && !meetingUrl && !calConfigured) {
+            meetingUrl = `https://teams.microsoft.com/l/meetup-join/orbit-meeting-${iid}`;
+          }
+          if (meetingUrl && meetingUrl !== initialMeetingUrl) {
             db.prepare('UPDATE interviews SET meeting_url = ? WHERE id = ?').run(meetingUrl, iid);
           }
           if (emailConfigured) {
@@ -1953,18 +1996,23 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
             ? (body.meeting_url && String(body.meeting_url).trim() !== '' ? text(String(body.meeting_url).trim(), 'Meeting URL', 1000, false) : null)
             : interview.meeting_url);
 
+      const calConfigured = isCalendarConfigured(c, db) || Boolean(c?.calendarAdapter);
+      let initialMeetingUrl = customMeetingUrl;
+      if (interviewType === 'virtual' && !initialMeetingUrl && !calConfigured) {
+        initialMeetingUrl = `https://teams.microsoft.com/l/meetup-join/orbit-meeting-${key}`;
+      }
+
       transaction(db, () => {
         db.prepare('UPDATE interviews SET scheduled_at=?, interviewer_id=?, competencies=?, duration_minutes=?, timezone=?, notes=?, title=?, meeting_url=?, interview_type=?, location=? WHERE id=?').run(
-          scheduled.toISOString(), interviewerId, JSON.stringify(competencies), duration, timezone, notes, title, customMeetingUrl, interviewType, location, key
+          scheduled.toISOString(), interviewerId, JSON.stringify(competencies), duration, timezone, notes, title, initialMeetingUrl, interviewType, location, key
         );
-        audit(db, user.id, 'interview.updated', key, { scheduled_at: scheduled.toISOString(), interviewer_id: interviewerId, duration_minutes: duration, meeting_url: customMeetingUrl, interview_type: interviewType, location });
+        audit(db, user.id, 'interview.updated', key, { scheduled_at: scheduled.toISOString(), interviewer_id: interviewerId, duration_minutes: duration, meeting_url: initialMeetingUrl, interview_type: interviewType, location });
       });
 
-      const calConfigured = isCalendarConfigured(c, db) || Boolean(c?.calendarAdapter);
       const emailConfigured = (isEmailConfigured(db) || Boolean(c?.communicationAdapter)) && body.send_notification !== false;
       if (calConfigured || emailConfigured) {
         return (async () => {
-          let meetingUrl = customMeetingUrl;
+          let meetingUrl = initialMeetingUrl;
           if (calConfigured) {
             const calResult = await syncRescheduleMeeting({
               db, user, interviewId: key, scheduledAt: scheduled.toISOString(), durationMinutes: duration, timezone, title, notes, candidate: cand, req, interviewer: assignedInterviewer, transport: c?.calendarAdapter?.transport || c?.transport || fetch, config: c,
@@ -1972,7 +2020,10 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
             });
             meetingUrl = interviewType === 'in_person' ? null : (calResult.meeting_url || customMeetingUrl);
           }
-          if (meetingUrl && meetingUrl !== customMeetingUrl) {
+          if (interviewType === 'virtual' && !meetingUrl && !calConfigured) {
+            meetingUrl = `https://teams.microsoft.com/l/meetup-join/orbit-meeting-${key}`;
+          }
+          if (meetingUrl && meetingUrl !== initialMeetingUrl) {
             db.prepare('UPDATE interviews SET meeting_url = ? WHERE id = ?').run(meetingUrl, key);
           }
           if (emailConfigured) {
