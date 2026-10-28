@@ -1,7 +1,7 @@
 import { audit, id, now, transaction } from './db.js';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { HttpError, roles, teams, permissions as permissionCatalog, permissionDefinitions, permissionGroups, permissionIds, permissionById, requirePermission as permit, requireTeam, inTeam, can, text, email, phone as validatePhone, currency as validateCurrency, list, validateSkills, integer, isAgencyRole } from './policy.js';
+import { HttpError, roles, teams, permissions as permissionCatalog, permissionDefinitions, permissionGroups, permissionIds, permissionById, requirePermission as permit, requireTeam, inTeam, userTeams, can, text, email, phone as validatePhone, currency as validateCurrency, list, validateSkills, integer, isAgencyRole, normalizeTeamName } from './policy.js';
 import { accessSummary, archiveRole, assignmentImpact, createRole, duplicateRole, hydrateUser, listRoles, permissionsForRole, resolveRoleForAssignment, roleView, updateRole } from './rbac.js';
 import { getAppearance, setAppearance } from './appearance.js';
 import { isDemoUser } from './demo.js';
@@ -653,7 +653,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       });
     }
     if (method === 'POST' && !key) {
-      permit(user,'requisitions.create'); const team = text(body.team,'Team',100); requireTeam(user,team);
+      permit(user,'requisitions.create'); const team = normalizeTeamName(text(body.team,'Team',100)); requireTeam(user,team);
       if (!can(user, 'requisitions.compensation.read') && ['salary_min','salary_max','currency'].some(field => body[field] !== undefined && body[field] !== null && body[field] !== '')) {
         throw new HttpError(403, 'You do not have permission to set compensation fields.');
       }
@@ -682,10 +682,10 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
         }
         throw new HttpError(409,`Cannot edit a requisition with status ${req.status}.`);
       }
-      const team = text(body.team ?? req.team,'Team',100);
+      const team = normalizeTeamName(text(body.team ?? req.team,'Team',100));
       requireTeam(user,team);
       const hasApps = Boolean(db.prepare('SELECT id FROM applications WHERE requisition_id=?').get(key));
-      if (team !== req.team && hasApps) {
+      if (team !== normalizeTeamName(req.team) && hasApps) {
         if (!canCrossTeam || (!body.admin_override && !body.override)) {
           throw new HttpError(409,'Cannot change team of a requisition with existing applications.');
         }
@@ -712,7 +712,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
           auditDetail.admin_pending_edit = true;
           auditDetail.previous_status = req.status;
         }
-        if (canCrossTeam && team !== req.team && hasApps) {
+        if (canCrossTeam && team !== normalizeTeamName(req.team) && hasApps) {
           auditDetail.admin_team_reassignment = true;
           auditDetail.previous_team = req.team;
         }
@@ -969,7 +969,11 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
         });
     }
     if (method === 'POST' && !key) {
-      permit(user,'candidates.create'); const team = text(body.team,'Team',100); requireTeam(user,team);
+      permit(user,'candidates.create');
+      const defaultTeam = user.team ? userTeams(user)[0] : '';
+      const rawTeam = (body.team !== undefined && body.team !== null && String(body.team).trim() !== '') ? body.team : defaultTeam;
+      const team = normalizeTeamName(text(rawTeam,'Team',100));
+      requireTeam(user,team);
       const address = email(body.email), name = text(body.name,'Name',200), phone = validatePhone(body.phone ?? '', true);
       const resumeVal = body.resume_text !== undefined ? body.resume_text : body.experience !== undefined ? body.experience : '';
       const resume = text(resumeVal, 'Resume text', 50000, true);
@@ -992,7 +996,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
           const req = get(db, 'requisitions', body.requisition_id);
           requireTeam(user, req.team);
           const isAdmin = can(user, 'system.override');
-          if (!isAdmin && team !== req.team) throw new HttpError(409, 'Candidate and requisition must belong to the same team.');
+          if (!isAdmin && normalizeTeamName(team) !== normalizeTeamName(req.team)) throw new HttpError(409, 'Candidate and requisition must belong to the same team.');
           if (req.status !== 'open') throw new HttpError(409, 'Requisition must be approved and open.');
           const aid = id();
           const firstStage = 'Applied';
@@ -1022,7 +1026,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       const candidate = get(db,'candidates',key);
       if (candidate.deleted_at) throw new HttpError(404, 'Candidate not found.');
       requireTeam(user,candidate.team);
-      const team = text(body.team || candidate.team,'Team',100); requireTeam(user,team);
+      const team = normalizeTeamName(text(body.team || candidate.team,'Team',100)); requireTeam(user,team);
       const address = email(body.email ?? candidate.email), name = text(body.name ?? candidate.name,'Name',200);
       const phone = validatePhone(body.phone ?? candidate.phone ?? '', true);
       const resumeVal = body.resume_text !== undefined ? body.resume_text : body.experience !== undefined ? body.experience : candidate.resume_text;
@@ -1239,7 +1243,12 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
           const overdue = isTrainingOverdue(a);
           const effectiveStatus = resolveEffectiveTrainingStatus(a);
           const appInvs = interviewMap.get(a.id) || [];
-          const pendingInv = appInvs.find(i => i.status === 'planned');
+          const nonInterviewStages = ['Applied', 'Offer', 'Pre-Onboarding Training', 'Onboarding', 'Hired', 'Rejected', 'Revoked'];
+          const isInterviewStage = !nonInterviewStages.includes(a.stage);
+          const pendingInv = isInterviewStage
+            ? (appInvs.find(i => i.status === 'planned' && (i.round?.toLowerCase() === a.stage?.toLowerCase() || !i.round || i.round === 'Round 1'))
+               || appInvs.find(i => i.status === 'planned'))
+            : null;
           const latestRatedInv = appInvs.find(i => i.scorecard_id);
           const out = {
             ...a,
@@ -1273,7 +1282,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       const candidate = get(db,'candidates',body.candidate_id), req = get(db,'requisitions',body.requisition_id);
       requireTeam(user,candidate.team); requireTeam(user,req.team);
       const isAdmin = can(user, 'system.override');
-      if (!isAdmin && candidate.team !== req.team) throw new HttpError(409,'Candidate and requisition must belong to the same team.');
+      if (!isAdmin && normalizeTeamName(candidate.team) !== normalizeTeamName(req.team)) throw new HttpError(409,'Candidate and requisition must belong to the same team.');
       if (req.status !== 'open') throw new HttpError(409,'Requisition must be approved and open.');
       const aid = id();
       return transaction(db, () => {
@@ -1570,16 +1579,22 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
 
       // 4. Interview round evaluation & rating validations:
       if (isAdvancing) {
-        // Any scheduled interview for this application that is planned / unrated
-        const plannedInterview = db.prepare(`
-          SELECT i.*, u.name as interviewer_name 
-          FROM interviews i
-          JOIN users u ON u.id = i.interviewer_id
-          WHERE i.application_id = ? AND i.status = 'planned' AND (i.round IS NULL OR i.round != ?)
-          ORDER BY i.scheduled_at ASC LIMIT 1
-        `).get(key, body.stage);
-        if (plannedInterview && !isAdmin) {
-          throw new HttpError(409, `Cannot advance candidate: An interview with ${plannedInterview.interviewer_name} is scheduled for ${plannedInterview.round || app.stage} and has not been rated. A completed scorecard rating is required before moving to the next stage.`);
+        const nonInterviewStages = ['Applied', 'Offer', 'Pre-Onboarding Training', 'Onboarding', 'Hired', 'Rejected', 'Revoked'];
+        const isInterviewStage = !nonInterviewStages.includes(app.stage);
+
+        if (isInterviewStage) {
+          // Any scheduled interview for this application's current round that is planned / unrated
+          const plannedInterview = db.prepare(`
+            SELECT i.*, u.name as interviewer_name 
+            FROM interviews i
+            JOIN users u ON u.id = i.interviewer_id
+            WHERE i.application_id = ? AND i.status = 'planned' 
+              AND (i.round = ? OR (i.round IS NULL AND ? != 'Applied'))
+            ORDER BY i.scheduled_at ASC LIMIT 1
+          `).get(key, app.stage, app.stage);
+          if (plannedInterview && !isAdmin) {
+            throw new HttpError(409, `Cannot advance candidate: An interview with ${plannedInterview.interviewer_name} is scheduled for ${plannedInterview.round || app.stage} and has not been rated. A completed scorecard rating is required before moving to the next stage.`);
+          }
         }
 
         // Any completed interview missing a scorecard
@@ -2318,7 +2333,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
         const referral = referralRow(db,key);
         let candidate = db.prepare('SELECT * FROM candidates WHERE email=?').get(referral.email);
         if (candidate?.deleted_at) throw new HttpError(409,'A deleted candidate already uses this email. Ask TA operations to restore or resolve the record.');
-        if (candidate && !can(user,'system.override') && candidate.team !== req.team) throw new HttpError(409,'The matching candidate belongs to another team. Ask a System Admin to process this cross-team referral.');
+        if (candidate && !can(user,'system.override') && normalizeTeamName(candidate.team) !== normalizeTeamName(req.team)) throw new HttpError(409,'The matching candidate belongs to another team. Ask a System Admin to process this cross-team referral.');
         let candidateCreated = false;
         if (!candidate) {
           const cid = id();
