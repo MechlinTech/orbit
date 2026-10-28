@@ -12,36 +12,35 @@ const getNavList = () => {
   }
   const canManageAccess = allows('users.read') || allows('roles.read') || allows('roles.create') || allows('roles.update') || allows('roles.assign') || allows('permissions.read');
   const manage = [
-    ...(canManageAccess ? ['Administration'] : []),
-    ...(allows('settings.read') || allows('settings.update') ? ['Settings'] : []),
-    ...(allows('audit.read') ? ['Audit log'] : []),
-    ...(allows('pipeline.configure') ? ['Pipeline settings'] : []),
-    ...(allows('integrations.read') || allows('integrations.configure') || allows('integrations.secrets.manage') ? ['Integrations'] : [])
+    ...(canManageAccess || allows('admin') ? ['Administration'] : []),
+    ...(allows('settings.read') || allows('settings.update') || allows('admin') ? ['Settings'] : []),
+    ...(allows('audit.read') || allows('admin') ? ['Audit log'] : []),
+    ...(allows('pipeline.configure') || allows('admin') ? ['Pipeline settings'] : []),
+    ...(allows('integrations.read') || allows('integrations.configure') || allows('integrations.secrets.manage') || (allows('admin') && me?.role === 'System Admin') ? ['Integrations'] : [])
   ];
   if (!grants.length) {
     return [
       ...(allows('analytics') || allows('analytics.read') ? ['Overview'] : []),
       ...(allows('jobs') || allows('jobs.read') ? ['Requisitions'] : []),
-      ...(allows('review') || allows('recruit') || allows('candidates.read') ? ['Candidates'] : []),
-      ...(allows('review') || allows('recruit') || allows('applications.read') ? ['Pipeline'] : []),
+      ...(allows('review') || allows('recruit') || allows('candidates.read') || allows('applications.read') ? ['Candidates', 'Pipeline'] : []),
       ...(allows('review') || allows('recruit') || allows('interview') || allows('interviews.read') ? ['Interviews'] : []),
       ...(allows('refer') || allows('referrals.read') ? ['Referrals'] : []),
-      ...(allows('offers.templates.read') || allows('offers.read') ? ['Offer Templates'] : []),
+      ...(allows('offers.templates.read') || allows('offers.read') || allows('recruit') || allows('admin') ? ['Offer Templates'] : []),
       ...(allows('recruit') || allows('admin') || allows('applications.evaluate') ? ['Training Plans'] : []),
-      ...(allows('agencies.read') ? ['Agencies'] : []),
+      ...(allows('agencies.read') || allows('admin') || allows('recruit') ? ['Agencies'] : []),
       ...manage
     ];
   }
   return [
     ...(allows('analytics.read') ? ['Overview'] : []),
     ...(allows('jobs.read') || allows('requisitions.read') ? ['Requisitions'] : []),
-    ...(allows('candidates.read') ? ['Candidates'] : []),
-    ...(allows('applications.read') ? ['Pipeline'] : []),
-    ...(allows('interviews.read') || allows('interviews.evaluate') ? ['Interviews'] : []),
-    ...(allows('referrals.read') ? ['Referrals'] : []),
-    ...(allows('offers.templates.read') || allows('offers.read') ? ['Offer Templates'] : []),
-    ...(allows('applications.evaluate') ? ['Training Plans'] : []),
-    ...(allows('agencies.read') ? ['Agencies'] : []),
+    ...(allows('candidates.read') || allows('review') || allows('recruit') ? ['Candidates'] : []),
+    ...(allows('applications.read') || allows('review') || allows('recruit') ? ['Pipeline'] : []),
+    ...(allows('interviews.read') || allows('interviews.evaluate') || allows('interview') || allows('review') || allows('recruit') ? ['Interviews'] : []),
+    ...(allows('referrals.read') || allows('refer') ? ['Referrals'] : []),
+    ...(allows('offers.templates.read') || allows('offers.read') || allows('recruit') || allows('admin') ? ['Offer Templates'] : []),
+    ...(allows('applications.evaluate') || allows('recruit') || allows('admin') ? ['Training Plans'] : []),
+    ...(allows('agencies.read') || allows('admin') || allows('recruit') ? ['Agencies'] : []),
     ...manage
   ];
 };
@@ -1309,7 +1308,7 @@ async function render() {
                 if (prevStage) {
                   actionsHtml += button(`Back to ${prevStage}`,'move',a.id,`data-stage="${escape(prevStage)}" class="secondary"`);
                 }
-                if (isTraining && allowAction('applications.evaluate','recruit')) {
+                if (isTraining && (allowAction('applications.evaluate','recruit') || allows('recruit') || allows('admin'))) {
                   actionsHtml += button('Training Details', 'view-training-details', a.id, 'class="secondary" title="View training history, evaluations, and deadline extensions" style="font-size:0.75rem;padding:4px 8px;"');
 
                   const isRevoked = a.offer_status === 'revoked';
@@ -1329,6 +1328,7 @@ async function render() {
                         actionsHtml += button(`Move to ${nextStage}`, 'move', a.id, `data-stage="${escape(nextStage)}" class="primary"`);
                       }
                     } else {
+                      // in_progress, extended, retraining, or overdue
                       actionsHtml += button('Evaluate', 'rate-training', a.id, 'class="primary training-rate-btn"');
                       actionsHtml += button('Extend Deadline', 'extend-training-deadline', a.id, 'class="secondary"');
                       actionsHtml += button('Revoke Offer', 'training-revoke-offer', a.id, 'class="secondary text-button" style="color:var(--negative);"');
@@ -1340,7 +1340,7 @@ async function render() {
                   if (hasPendingInv) {
                     const ready = feedbackReady(a.pending_interview);
                     const canSubmit = a.pending_interview.interviewer_id === me.id;
-                    const canProxy = allowAction('interviews.proxy_evaluate','admin') && !canSubmit;
+                    const canProxy = (allowAction('interviews.proxy_evaluate','admin') || allows('admin')) && !canSubmit;
                     if (canSubmit && ready) {
                       actionsHtml += button('Submit Scorecard', 'scorecard', a.pending_interview.id, 'class="primary" style="font-size:0.75rem;padding:4px 8px;"');
                     } else if (canProxy && ready) {
@@ -1360,7 +1360,7 @@ async function render() {
                     actionsHtml += button('Revoke', 'revoke-app', a.id, 'class="secondary text-button" style="color:var(--negative);font-size:0.74rem;"');
                   }
                 }
-              } else if (isTraining && !isTerm && allowAction('applications.evaluate','recruit')) {
+              } else if (isTraining && !isTerm && (allowAction('applications.evaluate','recruit') || allows('recruit') || allows('admin'))) {
                 actionsHtml += button('Rate & Next', 'rate-training', a.id, 'class="primary training-rate-btn"');
               }
 
@@ -1414,16 +1414,16 @@ async function render() {
           const invHint = i.invitation_error ? ` title="${escape(i.invitation_error)}"` : '';
           meetBadge += `<span class="badge" style="display:inline-flex;align-items:center;gap:4px;font-size:0.73rem;margin-top:4px;margin-left:4px;background:#fffbeb;color:#92400e;border:1px solid #fde68a;padding:2px 6px;border-radius:4px;"${invHint}>Invite failed</span>`;
         }
-        const canManageInterview = allowAction('interviews.update','recruit');
+        const canManageInterview = allowAction('interviews.update','recruit') || allows('recruit') || allows('admin');
         const retryTeamsBtn = (i.status === 'planned' && !isPhysical && i.calendar_status === 'sync_failed' && canManageInterview)
           ? button('Retry Teams', 'retry-meeting', i.id, 'class="secondary text-button" style="color:var(--accent);font-size:0.74rem;"')
           : '';
         const retryInviteBtn = (i.status === 'planned' && i.invitation_status === 'failed' && canManageInterview)
           ? button('Retry Invite', 'retry-invitation', i.id, 'class="secondary text-button" style="color:var(--accent);font-size:0.74rem;"')
           : '';
-        const canEdit = i.status !== 'completed' && (allowAction('interviews.update','recruit') || i.interviewer_id === me.id);
-        const canCancel = i.status === 'planned' && (allowAction('interviews.cancel','recruit') || i.interviewer_id === me.id);
-        const canViewFeedback = allowAction('interviews.feedback.read','interview','review','recruit') || allowAction('interviews.evaluate','interview');
+        const canEdit = i.status !== 'completed' && (allowAction('interviews.update','recruit') || allows('recruit') || allows('admin') || i.interviewer_id === me.id);
+        const canCancel = i.status === 'planned' && (allowAction('interviews.cancel','recruit') || allows('recruit') || allows('admin') || i.interviewer_id === me.id);
+        const canViewFeedback = allowAction('interviews.feedback.read','interview','review','recruit') || allowAction('interviews.evaluate','interview') || allows('recruit') || allows('admin') || allows('review') || allows('interview');
         return `<tr><td><strong>${escape(i.name)}</strong>${escape(i.title)}</td><td>${escape(i.interviewer)}</td><td>${escape(formatDateTimeIST(i.scheduled_at))}${meetBadge}</td><td>${badge(i.status)}</td><td><div class="actions">${i.candidate_id ? button('Candidate', 'candidate-details', i.candidate_id, 'class="secondary"') : ''}${retryTeamsBtn}${retryInviteBtn}${canSubmit && ready ? button('Submit scorecard', 'scorecard', i.id) : ''}${canProxy && ready ? button('Proxy scorecard', 'scorecard-proxy', i.id, 'class="secondary"') : ''}${canEdit ? button('Edit', 'edit-interview', i.id, 'class="secondary"') : ''}${canCancel ? button('Cancel', 'cancel-interview', i.id, 'class="secondary"') : ''}${canViewFeedback ? button('View feedback', 'feedback', i.id, 'class="secondary"') : ''}${showLock ? `<span class="muted feedback-locked">${FEEDBACK_LOCKED_MESSAGE}</span>` : ''}</div></td></tr>`;
       });
       html=heading('Structured interviews, independent feedback.',allowAction('interviews.schedule','recruit')?button('+ Plan interview','new-interview'):'')+calNotice+`<section class="panel">${table(['Candidate / role','Interviewer','Scheduled (IST)','Status','Feedback'],rows)}${pag}</section>`;
@@ -1456,8 +1456,8 @@ async function render() {
       const draftCount = templates.filter(t => t.status === 'draft').length;
       const defaultTpl = templates.find(t => t.is_default);
 
-      const canManageTemplates=allowAction('offers.templates.manage','recruit');
-      const canManageAssets=allowAction('offers.assets.manage','recruit');
+      const canManageTemplates=allowAction('offers.templates.manage','recruit') || allows('recruit') || allows('admin');
+      const canManageAssets=allowAction('offers.assets.manage','recruit') || allows('recruit') || allows('admin');
       html=heading('Design company-branded templates, manage letterheads, and configure dynamic A4 offer documents.',`<div style="display:flex;gap:8px;">${canManageTemplates?button('+ New Template','new-offer-template'):''}${canManageAssets?button('Upload Letterhead','upload-letterhead','','class="secondary"'):''}</div>`)+
       `<div class="metrics">${[['Total templates',templates.length,'Offer Templates','Configured offer templates'],['Active templates',activeCount,'Requisitions','Available for candidate offers'],['Draft templates',draftCount,'Settings','In design and revision'],['Default template',defaultTpl?defaultTpl.name:'None','Candidates',defaultTpl?`v${defaultTpl.version} (Active)`:'Auto-selected for new offers']].map(([label,count,i,note],n)=>`<div class="metric metric-${n}"><div class="metric-top"><span>${label}</span><span class="metric-icon">${icon(i)}</span></div><strong style="font-size:1.15rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${count}</strong><small>${note}</small></div>`).join('')}</div>`+
       `<section class="panel"><div class="panel-head"><div><h2>Offer Letter Templates</h2><p class="muted">Reusable templates with multi-page A4 flow, dynamic variables, and salary annexures</p></div></div>${templates.length?table(['Template name','Version','Status','Letterhead','Updated','Actions'],templates.map(t=>{
@@ -1489,7 +1489,7 @@ async function render() {
         );
       }
 
-      const canManageTraining=allowAction('applications.evaluate','recruit');
+      const canManageTraining=allowAction('applications.evaluate','recruit') || allows('recruit') || allows('admin');
       html = heading('Configure position- and role-specific training plans, learning resources, and candidate preparation workflows.', canManageTraining?button('+ New Training Plan','new-training-template'):'')+
       `<div class="metrics">${[['Total plans',templates.length,'Training Plans','Configured training plans'],['Active plans',activeCount,'Requisitions','Available for candidate training'],['Draft plans',draftCount,'Settings','In design and revision'],['Default plan',defaultTpl?defaultTpl.name:'None','Candidates',defaultTpl?`v${defaultTpl.version} (Active)`:'Auto-selected fallback']].map(([label,count,i,note],n)=>`<div class="metric metric-${n}"><div class="metric-top"><span>${label}</span><span class="metric-icon">${icon(i)}</span></div><strong style="font-size:1.15rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${count}</strong><small>${note}</small></div>`).join('')}</div>`+
       `<section class="panel">`+
