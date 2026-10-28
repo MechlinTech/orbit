@@ -281,6 +281,27 @@ try {
   await startView('Requisitions');
   await click(`document.querySelector('[data-action="new-req"]')`);
   await waitFor("document.querySelector('dialog').open && document.querySelector('#modal-body h2')?.textContent === 'New requisition'");
+
+  // Verify dragging from inside modal to outside backdrop does not close modal
+  const modalRect = await evaluate(`(() => {
+    const r = document.querySelector('dialog').getBoundingClientRect();
+    return { left: r.left, top: r.top, width: r.width, height: r.height };
+  })()`);
+  await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: Math.round(modalRect.left + 50), y: Math.round(modalRect.top + 50), button: 'left', clickCount: 1 });
+  await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 10, y: 10 });
+  await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 10, y: 10, button: 'left', clickCount: 1 });
+  await new Promise(r => setTimeout(r, 100));
+  check('Dragging from inside modal to outside backdrop does not close modal', await evaluate("document.querySelector('dialog').open"));
+
+  // Clicking directly on the backdrop outside the modal closes it
+  await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: 10, y: 10, button: 'left', clickCount: 1 });
+  await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 10, y: 10, button: 'left', clickCount: 1 });
+  await waitFor("!document.querySelector('dialog').open");
+  check('Clicking directly outside modal on backdrop closes modal', await evaluate("!document.querySelector('dialog').open"));
+
+  // Re-open for drafting checks
+  await click(`document.querySelector('[data-action="new-req"]')`);
+  await waitFor("document.querySelector('dialog').open && document.querySelector('#modal-body h2')?.textContent === 'New requisition'");
   await evaluate(`(() => {
     const form = document.querySelector('#edit-form');
     form.elements.title.value = 'Orbit Draft Role';
@@ -479,6 +500,91 @@ try {
     await evaluate("Boolean(document.querySelector('[data-action=\"delete-candidate\"]'))"));
   await click("document.querySelector('#close-modal')");
   await waitFor("!document.querySelector('dialog').open");
+
+  // Offer Letter Studio UI regression checks:
+  await evaluate(`(async () => { await openOfferTemplateEditor(); })()`);
+  await waitFor("document.querySelector('dialog').open && Boolean(document.querySelector('.offer-studio'))");
+  
+  // 1. PDF view is default and only view; no visual canvas / toggle buttons
+  check('Offer studio shows PDF iframe view', await evaluate("Boolean(document.querySelector('#studio-pdf-canvas iframe')) && !document.querySelector('#studio-visual-canvas')"));
+  check('Visual Canvas and PDF View toggle buttons are removed', await evaluate("!document.querySelector('#btn-studio-view-visual') && !document.querySelector('#btn-studio-view-pdf')"));
+
+  // 2. No "Missing Placeholders (0):"
+  await waitFor("document.querySelector('#studio-preview-validation .validation-box')");
+  check('Missing Placeholders (0) is never displayed', await evaluate("!document.querySelector('#studio-preview-validation').innerText.includes('Missing Placeholders (0)')"));
+
+  // 3. Add Block toolbar is sticky
+  check('Add Block toolbar has sticky position to move with scroll', await evaluate("window.getComputedStyle(document.querySelector('.studio-toolbar')).position.includes('sticky')"));
+
+  // 4. Adding block inserts after active section instead of bottom
+  const initialSectionsCount = await evaluate("document.querySelectorAll('.studio-section-card').length");
+  await evaluate("document.querySelector('.studio-section-card[data-idx=\"0\"]').click()");
+  await evaluate("document.querySelector('[data-add-sec=\"heading\"]').click()");
+  const newIdx = await evaluate("document.querySelector('.studio-section-card.is-active')?.dataset.idx");
+  const newCount = await evaluate("document.querySelectorAll('.studio-section-card').length");
+  check('New block is inserted right after active section', newIdx === '1' && newCount === initialSectionsCount + 1);
+
+  // Close modal
+  await click("document.querySelector('#close-modal')");
+  await waitFor("!document.querySelector('dialog').open");
+
+  // Training Plans Toolbar layout alignment check
+  await evaluate(`(async () => {
+    location.hash = '#Training Plans';
+    await render();
+  })()`);
+  await waitFor("Boolean(document.querySelector('.training-toolbar'))");
+  const toolbarAlignment = await evaluate(`(() => {
+    const actions = document.querySelector('.training-toolbar-actions');
+    const searchInput = document.querySelector('#training-search-input');
+    const filterSelect = document.querySelector('#training-status-filter');
+    const newBtn = document.querySelector('.training-btn-new');
+    if (!actions || !searchInput || !filterSelect || !newBtn) return null;
+    const actionsStyle = window.getComputedStyle(actions);
+    const searchRect = searchInput.getBoundingClientRect();
+    const selectRect = filterSelect.getBoundingClientRect();
+    const btnRect = newBtn.getBoundingClientRect();
+    const sameHorizontalRow = Math.abs(searchRect.top - selectRect.top) < 6 && Math.abs(selectRect.top - btnRect.top) < 6;
+    const heightsMatch = Math.abs(searchInput.offsetHeight - filterSelect.offsetHeight) <= 2 && Math.abs(filterSelect.offsetHeight - newBtn.offsetHeight) <= 2;
+    return {
+      flexWrap: actionsStyle.flexWrap,
+      sameHorizontalRow,
+      heightsMatch
+    };
+  })()`);
+  check('Training plans toolbar actions align horizontally on the same row with matching heights',
+    Boolean(toolbarAlignment && toolbarAlignment.sameHorizontalRow && toolbarAlignment.heightsMatch));
+
+  const tableCheck = await evaluate(`(() => {
+    const table = document.querySelector('.training-plans-table');
+    if (!table) return null;
+    const rows = Array.from(table.querySelectorAll('tbody tr.training-plan-row'));
+    if (!rows.length) return null;
+    const row = rows[0];
+    const updatedCell = row.children[6];
+    const actionsCell = row.children[7];
+    const actionsGroup = row.querySelector('.plan-actions-group');
+    if (!updatedCell || !actionsCell || !actionsGroup) return null;
+    const dateCell = updatedCell.querySelector('.plan-date-cell') || updatedCell;
+    const dateRect = dateCell.getBoundingClientRect();
+    const actionsRect = actionsGroup.getBoundingClientRect();
+    // Verify no overlap: actions group left edge is at or beyond the updated date's right edge
+    const noOverlap = actionsRect.left >= dateRect.right;
+    return {
+      rowsCount: rows.length,
+      updatedRight: dateRect.right,
+      actionsLeft: actionsRect.left,
+      noOverlap
+    };
+  })()`);
+  check('Training plans table action buttons do not overlap updated date column',
+    Boolean(tableCheck && tableCheck.noOverlap));
+
+  await evaluate(`(async () => {
+    location.hash = '#Candidates';
+    await render();
+  })()`);
+  await waitFor("document.querySelector('#candidate-table')");
 
   f.db.exec('DELETE FROM candidate_communications; DELETE FROM signature_signers; DELETE FROM signature_requests; DELETE FROM signature_documents; DELETE FROM candidate_resumes; DELETE FROM stage_events; DELETE FROM scorecards; DELETE FROM interviews; DELETE FROM referrals; DELETE FROM applications; DELETE FROM candidates;');
   await evaluate('render()');

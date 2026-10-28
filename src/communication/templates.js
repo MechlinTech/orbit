@@ -53,7 +53,13 @@ function baseLayout({ title, bodyHtml, candidateName, isOperational = false, app
                 &nbsp;
               </td>
               <td style="vertical-align: middle; padding: 0 0 0 2px;">
-                <img src="${mechlinLogoUrl}" alt="Mechlin Technologies" width="130" height="30" style="display: block; max-height: 30px; width: auto; border: 0;" />
+                <table role="presentation" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="border-collapse: collapse; background-color: #ffffff; border-radius: 6px;">
+                  <tr>
+                    <td bgcolor="#ffffff" style="background-color: #ffffff; padding: 4px 10px; border-radius: 6px; vertical-align: middle;">
+                      <img src="${mechlinLogoUrl}" alt="Mechlin Technologies" width="118" height="22" style="display: block; max-height: 30px; width: auto; border: 0;" />
+                    </td>
+                  </tr>
+                </table>
               </td>
             </tr>
           </table>
@@ -526,10 +532,18 @@ export const EXTRA_TEMPLATES = {
       const team = vars.team ? ` with the ${vars.team} team` : '';
       const notes = vars.notes ? `<div style="background-color: #f1f5f9; border-radius: 8px; padding: 14px 16px; margin: 16px 0;"><p style="margin: 0; font-size: 14px; color: #334155;"><strong>Note from Hiring Team:</strong><br>${escapeHtml(vars.notes)}</p></div>` : '';
 
+      const hasInterview = Boolean(vars.scheduled_at || vars.has_interview);
+      const schedule = hasInterview ? interviewSchedule(vars) : null;
+      const interviewer = vars.interviewer_name || 'Our hiring team';
+      const isPhysical = vars.interview_type === 'in_person' || vars.format === 'in_person' || vars.format === 'physical';
+      const meetingButton = hasInterview ? interviewMeetingHtml(vars) : '';
+
       let stageMessage = `Your application has moved to the ${stage} stage in our recruitment process. Our talent acquisition team will keep you informed of subsequent steps.`;
       const normStage = String(stage).trim().toLowerCase();
 
-      if (normStage === 'applied') {
+      if (hasInterview) {
+        stageMessage = `Congratulations on advancing to ${stage}! Your interview has been scheduled as detailed below.`;
+      } else if (normStage === 'applied') {
         stageMessage = 'Your application has been received and logged into our candidate pipeline. Our recruiting team will review your qualifications and credentials.';
       } else if (normStage === 'screening' || normStage === 'screening round') {
         stageMessage = 'Our recruiting team is currently reviewing your profile and credentials. We will reach out if there is strong alignment for an initial discussion.';
@@ -562,6 +576,20 @@ export const EXTRA_TEMPLATES = {
       const subject = isRejection ? `Update regarding your application for ${reqTitle}: ${stage}` : `Update on your application for ${reqTitle}: ${stage}`;
       const appOrigin = resolveAppOrigin(vars);
 
+      const interviewHtml = hasInterview ? `
+        <div style="background-color: #f1f5f9; border-radius: 8px; padding: 16px; margin: 20px 0;">
+          <p style="margin: 0 0 8px 0; font-size: 14px; font-weight: 600; color: #0f172a;">Interview Details:</p>
+          <p style="margin: 0 0 6px 0; font-size: 14px;"><strong>Date & Time:</strong> ${escapeHtml(schedule.scheduledAt)}</p>
+          <p style="margin: 0 0 6px 0; font-size: 14px;"><strong>Duration:</strong> ${schedule.duration} minutes</p>
+          <p style="margin: 0 0 6px 0; font-size: 14px;"><strong>Timezone:</strong> ${escapeHtml(schedule.timezone)}</p>
+          <p style="margin: 0 0 6px 0; font-size: 14px;"><strong>Interviewer:</strong> ${escapeHtml(interviewer)}</p>
+          <p style="margin: 0; font-size: 14px;"><strong>Format:</strong> ${isPhysical ? 'In-Person / Physical' : 'Virtual / Online (Microsoft Teams)'}</p>
+        </div>
+        ${meetingButton}
+      ` : '';
+
+      const interviewText = hasInterview ? `\nInterview Details:\n- Date & Time: ${schedule.scheduledAt}\n- Duration: ${schedule.duration} minutes\n- Timezone: ${schedule.timezone}\n- Interviewer: ${interviewer}\n- Format: ${isPhysical ? 'In-Person / Physical' : 'Virtual / Online (Microsoft Teams)'}\n${interviewMeetingText(vars)}\n` : '';
+
       const html = baseLayout({
         title,
         candidateName,
@@ -576,12 +604,13 @@ export const EXTRA_TEMPLATES = {
             ${previousStage ? `<p style="margin: 0; font-size: 13px; color: #64748b;">Previous Stage: ${escapeHtml(previousStage)}</p>` : ''}
           </div>
           <p style="font-size: 15px; margin-bottom: 16px;">${stageMessage}</p>
+          ${interviewHtml}
           ${notes}
           <p style="font-size: 15px; margin-bottom: 0;">Our talent acquisition team will keep you informed as we proceed through the process.</p>
         `
       });
 
-      const text = `Orbit | Mechlin Technologies\n=================================\n\nDear ${candidateName},\n\nWe would like to share an update regarding your application for the ${reqTitle} position${team}.\n\nUpdated Pipeline Stage: ${stage}${previousStage ? ` (Previous: ${previousStage})` : ''}\n\n${stageMessage}\n${vars.notes ? `\nNote from Hiring Team:\n${vars.notes}\n` : ''}\nOur talent acquisition team will keep you informed as we proceed through the process.\n\nWarm regards,\nThe Mechlin Talent Team`;
+      const text = `Orbit | Mechlin Technologies\n=================================\n\nDear ${candidateName},\n\nWe would like to share an update regarding your application for the ${reqTitle} position${team}.\n\nUpdated Pipeline Stage: ${stage}${previousStage ? ` (Previous: ${previousStage})` : ''}\n\n${stageMessage}\n${interviewText}${vars.notes ? `\nNote from Hiring Team:\n${vars.notes}\n` : ''}Our talent acquisition team will keep you informed as we proceed through the process.\n\nWarm regards,\nThe Mechlin Talent Team`;
 
       return { subject, html, text };
     }
