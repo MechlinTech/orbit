@@ -433,15 +433,50 @@ const feedbackReady = interview => {
   return Number.isFinite(scheduled) && scheduled <= Date.now();
 };
 const standardTeams = ['Dev','QA','BD','DevOps','HR','Product','Design','Operations','Sales','Other','PM','TL'];
+const normalizeTeam = val => {
+  if (!val || typeof val !== 'string') return '';
+  const clean = val.trim();
+  if (!clean) return '';
+  const lower = clean.toLowerCase();
+  if (
+    lower === 'qa' ||
+    lower === 'quality assurance' ||
+    lower === 'quality assurance team' ||
+    lower === 'qa team' ||
+    lower === 'qa candidate pool' ||
+    lower === 'qa pool' ||
+    lower === 'qa talent pool' ||
+    lower === 'quality assurance candidate pool' ||
+    lower === 'quality assurance pool' ||
+    /^(qa|quality\s+assurance)(\s+(team|candidate\s+pool|talent\s+pool|pool))?$/i.test(clean)
+  ) return 'QA';
+  if (lower === 'dev' || lower === 'engineering' || lower === 'software engineering' || lower === 'development') return 'Dev';
+  if (lower === 'bd' || lower === 'business development') return 'BD';
+  if (lower === 'devops' || lower === 'dev ops' || lower === 'sre' || lower === 'infrastructure') return 'DevOps';
+  if (lower === 'hr' || lower === 'human resources' || lower === 'people' || lower === 'people operations') return 'HR';
+  if (lower === 'product' || lower === 'product management') return 'Product';
+  if (lower === 'design' || lower === 'ui/ux' || lower === 'product design') return 'Design';
+  if (lower === 'operations' || lower === 'ops') return 'Operations';
+  if (lower === 'sales') return 'Sales';
+  if (lower === 'pm' || lower === 'project manager' || lower === 'project management') return 'PM';
+  if (lower === 'tl' || lower === 'tech lead' || lower === 'team lead') return 'TL';
+  if (lower === 'other') return 'Other';
+  const match = standardTeams.find(t => t.toLowerCase() === lower);
+  return match || clean;
+};
 const teamSelect = (label,name,selected='',allowOrg=false) => {
+  const normSelected = normalizeTeam(selected ? String(selected).split(/[,;/|]+/)[0] : '');
   const options = [];
   if (allowOrg) options.push(['', 'Organization (No specific team)']);
   for (const t of standardTeams) options.push([t, t]);
-  if (selected && selected !== '' && !standardTeams.includes(selected) && selected !== 'Engineering') {
-    options.push([selected, selected]);
+  if (normSelected && normSelected !== '' && !standardTeams.includes(normSelected) && normSelected !== 'Engineering') {
+    options.push([normSelected, normSelected]);
   }
   const required = !allowOrg;
-  return `<label>${formatLabel(label, required)}<select name="${name}" ${required ? 'required aria-required="true"' : ''}>${options.map(([id, title]) => `<option value="${escape(id)}" ${id === selected ? 'selected' : ''}>${escape(title)}</option>`).join('')}</select></label>`;
+  return `<label>${formatLabel(label, required)}<select name="${name}" ${required ? 'required aria-required="true"' : ''}>${options.map(([id, title]) => {
+    const isSel = normSelected ? id.toLowerCase() === normSelected.toLowerCase() : id === selected;
+    return `<option value="${escape(id)}" ${isSel ? 'selected' : ''}>${escape(title)}</option>`;
+  }).join('')}</select></label>`;
 };
 const skills = v => v.split(',').map(s=>s.trim()).filter(Boolean);
 const checkSkills = v => {
@@ -918,7 +953,8 @@ async function openDemoModal(isSwitch=false){
     const options=[];
     if(isOrgRole)options.push(['','Organization (Org-wide access)']);
     for(const t of teamList)options.push([t,t]);
-    teamSelectEl.innerHTML=options.map(([val,label])=>`<option value="${escape(val)}" ${val===currentTeam?'selected':''}>${escape(label)}</option>`).join('');
+    const normCurrent = normalizeTeam(currentTeam);
+    teamSelectEl.innerHTML=options.map(([val,label])=>`<option value="${escape(val)}" ${(normCurrent ? val.toLowerCase() === normCurrent.toLowerCase() : val===currentTeam)?'selected':''}>${escape(label)}</option>`).join('');
     const isRequired = !isOrgRole;
     if (isRequired) {
       teamSelectEl.setAttribute('required', '');
@@ -1162,7 +1198,7 @@ async function render() {
                 }
               }
               let interviewChip = '';
-              const isInterviewStage = !isTraining && !isTerm && !/onboarding|offer/i.test(stage);
+              const isInterviewStage = !isTraining && !isTerm && !/applied|onboarding|offer/i.test(stage);
               if (isInterviewStage) {
                 if (a.pending_interview) {
                   const ready = feedbackReady(a.pending_interview);
@@ -1280,7 +1316,7 @@ async function render() {
                     actionsHtml += button('Training Plan', 'review-training-plan', a.id, 'class="secondary" style="font-size:0.75rem;padding:4px 8px;"');
                   }
                 } else {
-                  const hasPendingInv = Boolean(a.pending_interview);
+                  const hasPendingInv = isInterviewStage && Boolean(a.pending_interview);
                   if (hasPendingInv) {
                     const ready = feedbackReady(a.pending_interview);
                     const canSubmit = a.pending_interview.interviewer_id === me.id;
@@ -1296,7 +1332,7 @@ async function render() {
                   if (nextStage) {
                     actionsHtml += button(`Move to ${nextStage}`, 'move', a.id, `data-stage="${escape(nextStage)}"`);
                   }
-                  if (canSkipForward && !hasPendingInv) {
+                  if (canSkipForward) {
                     actionsHtml += button('Skip to...', 'skip-stage', a.id, 'class="secondary skip-stage-btn" title="Skip intermediate interview or evaluation rounds"');
                   }
                   actionsHtml += button('Reject', 'reject-app', a.id, 'class="secondary"');
@@ -4337,7 +4373,8 @@ document.addEventListener('click',async event=>{
           const inp=$('#edit-form [name="skills"]');if(inp){inp.setCustomValidity(sErr);inp.reportValidity();}
           throw new Error(sErr);
         }
-        await api('requisitions','POST',{...v,currency:v.currency.trim().toUpperCase(),headcount:Number(v.headcount),salary_min:Number(v.salary_min),salary_max:Number(v.salary_max),skills:skills(v.skills)});
+        const normTeam = normalizeTeam(v.team) || v.team;
+        await api('requisitions','POST',{...v,team:normTeam,currency:v.currency.trim().toUpperCase(),headcount:Number(v.headcount),salary_min:Number(v.salary_min),salary_max:Number(v.salary_max),skills:skills(v.skills)});
         return 'Requisition created successfully.';
       });
       bindValidation('currency',checkCurrency);
@@ -4445,7 +4482,8 @@ document.addEventListener('click',async event=>{
           const inp=$('#edit-form [name="skills"]');if(inp){inp.setCustomValidity(sErr);inp.reportValidity();}
           throw new Error(sErr);
         }
-        const payload = {...v,currency:v.currency.trim().toUpperCase(),headcount:Number(v.headcount),salary_min:Number(v.salary_min),salary_max:Number(v.salary_max),skills:skills(v.skills)};
+        const normTeam = normalizeTeam(v.team) || v.team;
+        const payload = {...v,team:normTeam,currency:v.currency.trim().toUpperCase(),headcount:Number(v.headcount),salary_min:Number(v.salary_min),salary_max:Number(v.salary_max),skills:skills(v.skills)};
         if(allows('requisitions.override')||allows('system.override')) payload.admin_override = true;
         await api(`requisitions/${id}`,'PUT',payload);
         return 'Requisition updated successfully.';
@@ -4465,7 +4503,8 @@ document.addEventListener('click',async event=>{
       const cached = Array.isArray(window._cachedOpenReqs) ? window._cachedOpenReqs : [];
       const reqOptions = [['', 'None (Candidate pool only)'], ...cached.map(r => [r.id, `${r.title} — ${r.id} (${r.team})`])];
       const uploadWidget = `<div class="resume-upload-box full" style="border:1px dashed var(--line);border-radius:8px;padding:12px 14px;background:var(--surface-alt);margin-bottom:8px;"><label style="display:flex;flex-direction:column;gap:6px;cursor:pointer;"><span class="label-heading">Upload resume (PDF or DOCX) <span class="field-optional">Optional</span></span><input type="file" id="resume-file-input" accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" style="font-size:0.85rem;"><input type="hidden" name="resume_id" id="resume-id-input" value=""></label><div id="resume-upload-status" class="muted" style="margin-top:6px;font-size:0.83rem;" aria-live="polite">Upload a PDF or DOCX file to automatically extract text for review.</div></div>`;
-      modal('Add candidate',`<div class="form-grid">${uploadWidget}${field('Full name','name')}${field('Email','email','email')}${field('Phone','phone','tel','',false)}${teamSelect('Team','team',me.team||'Dev',false)}${select('Associated requisition','requisition_id',reqOptions,'',false)}${field('Skills, comma separated','skills','text','',false)}${field('Source','source','text','Direct')}${area('Experience / Resume text','resume_text')}</div>${button('Extract email and phone','parse-resume','','class="secondary"')}`,async v=>{
+      const defaultTeam = (me.team ? normalizeTeam(String(me.team).split(/[,;/|]+/)[0]) : '') || (me.team || 'Dev');
+      modal('Add candidate',`<div class="form-grid">${uploadWidget}${field('Full name','name')}${field('Email','email','email')}${field('Phone','phone','tel','',false)}${teamSelect('Team','team',defaultTeam,false)}${select('Associated requisition','requisition_id',reqOptions,'',false)}${field('Skills, comma separated','skills','text','',false)}${field('Source','source','text','Direct')}${area('Experience / Resume text','resume_text')}</div>${button('Extract email and phone','parse-resume','','class="secondary"')}`,async v=>{
         const eErr=checkEmail(v.email);
         if(eErr){
           const el=$('#email-error');if(el)el.textContent=eErr;
@@ -4483,9 +4522,31 @@ document.addEventListener('click',async event=>{
           const inp=$('#edit-form [name="skills"]');if(inp){inp.setCustomValidity(sErr);inp.reportValidity();}
           throw new Error(sErr);
         }
-        await api('candidates','POST',{...v,skills:skills(v.skills),experience:v.resume_text,resume_id:v.resume_id||undefined,requisition_id:v.requisition_id||undefined});
+        const normTeam = normalizeTeam(v.team) || v.team;
+        await api('candidates','POST',{...v,team:normTeam,skills:skills(v.skills),experience:v.resume_text,resume_id:v.resume_id||undefined,requisition_id:v.requisition_id||undefined});
         return v.requisition_id ? 'Candidate created and added to pipeline (Applied stage).' : 'Candidate created successfully.';
       });
+      const syncReqTeam = () => {
+        const rSel = $('#edit-form select[name="requisition_id"]');
+        const tSel = $('#edit-form select[name="team"]');
+        if (!rSel || !tSel) return;
+        const rid = rSel.value;
+        if (rid) {
+          const open = window._cachedOpenReqs || [];
+          const r = open.find(item => item.id === rid);
+          if (r && r.team) {
+            const nt = normalizeTeam(r.team);
+            for (const opt of tSel.options) {
+              if (opt.value.toLowerCase() === nt.toLowerCase() || opt.value.toLowerCase() === r.team.toLowerCase()) {
+                tSel.value = opt.value;
+                break;
+              }
+            }
+          }
+        }
+      };
+      const rSelInitial = $('#edit-form select[name="requisition_id"]');
+      if (rSelInitial) rSelInitial.addEventListener('change', syncReqTeam);
       api('requisitions').then(rs => {
         if (!Array.isArray(rs)) return;
         const open = rs.filter(r => r.status === 'open');
@@ -4495,6 +4556,7 @@ document.addEventListener('click',async event=>{
           const curVal = sel.value;
           sel.innerHTML = `<option value="">None (Candidate pool only)</option>` +
             open.map(r => `<option value="${escape(r.id)}" ${r.id === curVal ? 'selected' : ''}>${escape(r.title)} — ${escape(r.id)} (${escape(r.team)})</option>`).join('');
+          sel.addEventListener('change', syncReqTeam);
         }
       }).catch(() => {});
       bindValidation('email',checkEmail);
@@ -4529,7 +4591,8 @@ document.addEventListener('click',async event=>{
           const inp=$('#edit-form [name="skills"]');if(inp){inp.setCustomValidity(sErr);inp.reportValidity();}
           throw new Error(sErr);
         }
-        await api(`candidates/${id}`,'PUT',{...v,skills:skills(v.skills),experience:v.resume_text,resume_id:v.resume_id||undefined});
+        const normTeam = normalizeTeam(v.team) || v.team;
+        await api(`candidates/${id}`,'PUT',{...v,team:normTeam,skills:skills(v.skills),experience:v.resume_text,resume_id:v.resume_id||undefined});
         return 'Candidate updated successfully.';
       },{ actions: formActions({ deleteAction: inPipeline ? '' : 'delete-candidate', deleteId: id }) });
       bindValidation('email',checkEmail);
@@ -5194,7 +5257,11 @@ document.addEventListener('click',async event=>{
       }
 
       // 3. Interview scorecard rating validation: cannot advance with planned unrated interview
-      if (!isBackMove && !['Rejected', 'Revoked', app.stage].includes(stage) && app.pending_interview && !allows('admin')) {
+      const nonInterviewStages = ['Applied', 'Offer', 'Pre-Onboarding Training', 'Onboarding', 'Hired', 'Rejected', 'Revoked'];
+      const isCurStageInterview = app.pending_interview && !nonInterviewStages.includes(app.stage) &&
+        (app.pending_interview.round === app.stage || (!app.pending_interview.round && /round|interview|screening/i.test(app.stage)));
+
+      if (!isBackMove && !['Rejected', 'Revoked', app.stage].includes(stage) && isCurStageInterview && !allows('admin')) {
         const ready = feedbackReady(app.pending_interview);
         const invName = app.pending_interview.interviewer_name || 'Assigned interviewer';
         const roundName = app.pending_interview.round || app.stage;

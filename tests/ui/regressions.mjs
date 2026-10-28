@@ -383,6 +383,40 @@ try {
   // Automated pipeline progression: Move to Interview schedules interview; Move to Offer creates offer & e-signature request.
   await click(`document.querySelector('[data-nav="Pipeline"]')`);
   await waitFor("document.querySelector('.board') !== null");
+
+  // Verify Applied column cards do NOT show interview chips or feedback pending buttons, and DO show Skip to...
+  const appliedCheck = await evaluate(`(() => {
+    const appliedCol = document.querySelector('.column[data-stage="Applied"]');
+    if (!appliedCol) return { ok: false, reason: 'Applied column not found' };
+    const hasInterviewChip = Boolean(appliedCol.querySelector('.interview-card-chip'));
+    const hasFeedbackBtn = Boolean(appliedCol.querySelector('[data-action="feedback-pending"], [data-action="scorecard"]'));
+    const skipBtn = appliedCol.querySelector('[data-action="skip-stage"]');
+    
+    // Check bounding box containment: no button should exceed card bounds
+    const cards = Array.from(document.querySelectorAll('.card'));
+    let anyOverflow = false;
+    for (const card of cards) {
+      const cardRect = card.getBoundingClientRect();
+      const btns = Array.from(card.querySelectorAll('button'));
+      for (const btn of btns) {
+        const btnRect = btn.getBoundingClientRect();
+        if (btnRect.right > cardRect.right + 2 || btnRect.left < cardRect.left - 2) {
+          anyOverflow = true;
+        }
+      }
+    }
+
+    return {
+      hasInterviewChip,
+      hasFeedbackBtn,
+      hasSkipBtn: Boolean(skipBtn),
+      anyOverflow
+    };
+  })()`);
+  check('Applied stage cards do not show interview chips or feedback actions', !appliedCheck.hasInterviewChip && !appliedCheck.hasFeedbackBtn);
+  check('Applied stage cards render the Skip to... button when skippable stages exist', appliedCheck.hasSkipBtn);
+  check('Pipeline card action buttons do not overflow horizontally outside card bounds', !appliedCheck.anyOverflow);
+
   const setupApp = await evaluate(`(async () => {
     const c = await api('candidates', 'POST', { name: 'Automated Pipeline Lead', email: 'pipeline.lead@example.com', team: 'Dev', skills: ['Architecture'] });
     const r = (await api('requisitions')).find(x => x.status === 'open' && x.team === 'Dev');
@@ -451,6 +485,21 @@ try {
   await waitFor("document.querySelector('#candidate-table')?.innerText.includes('No candidates added yet')");
   check('empty directory with no active search shows No candidates added yet',
     await evaluate("!document.querySelector('#candidate-table').innerText.includes('No matching candidates found.')"));
+
+  // QA authorized user creates candidate in QA candidate pool
+  const qaUserLogin = await evaluate(`fetch('/auth/demo-login', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ role: 'Recruiter', team: 'QA' })
+  }).then(async r => ({ ok: r.ok, data: await r.json() }))`);
+  check('QA Recruiter demo login succeeds', qaUserLogin.ok);
+  await send('Page.navigate', { url: `${base}/?qa=1#/Candidates` });
+  await waitFor("document.querySelector('#candidate-table')");
+  const qaPoolCandidate = await evaluate(`(async () => {
+    const c = await api('candidates', 'POST', { name: 'QA Pool Engineer', email: 'qa.pool.eng@example.com', team: 'QA', skills: ['Automation', 'QA'] });
+    await render();
+    return c;
+  })()`);
+  check('QA user can create and save candidate to QA candidate pool', Boolean(qaPoolCandidate && qaPoolCandidate.id && qaPoolCandidate.team === 'QA'));
 
   // Agency role navigation/landing and direct API denial.
   const login = await evaluate(`fetch('/auth/demo-login', {
