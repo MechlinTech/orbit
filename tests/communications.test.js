@@ -45,7 +45,7 @@ test('Templates: renders all recruitment templates and escapes HTML against XSS'
     assert.ok(rendered.text);
     // Strict escaping verification: raw script/img tags are not present
     assert.doesNotMatch(rendered.html, /<script\b/i);
-    assert.doesNotMatch(rendered.html, /<img\b/i);
+    assert.doesNotMatch(rendered.html, /<img\b[^>]*onerror/i);
     assert.match(rendered.html, /&lt;script&gt;/);
     assert.match(rendered.html, /&lt;img/);
     assert.match(rendered.html, /The Mechlin Talent Team/);

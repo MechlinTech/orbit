@@ -215,11 +215,11 @@ export function createApp({db = openDb(process.env.DATABASE_PATH), c = config(),
         }
         actor = user.id;
         if (!['GET','POST','PUT','DELETE'].includes(req.method)) throw new HttpError(405,'Method not allowed.');
-        if (req.method === 'DELETE' && !/^\/api\/(?:(?:referrals|candidates|requisitions)\/[^/]+|agencies\/[^/]+\/(?:requisitions|assignments)\/[^/]+)$/.test(path)) throw new HttpError(405,'Method not allowed.');
+        if (req.method === 'DELETE' && !/^\/api\/(?:(?:referrals|candidates|requisitions|offer-letter-assets)\/[^/]+|agencies\/[^/]+\/(?:requisitions|assignments)\/[^/]+|training-plans\/templates\/[^/]+)$/.test(path)) throw new HttpError(405,'Method not allowed.');
         let body = {};
         if (req.method !== 'GET') {
           if (req.headers.origin !== c.origin || req.headers['x-csrf-token'] !== user.csrf) throw new HttpError(403,'Request validation failed. Refresh and retry.');
-          const isUpload = path === '/api/resume/upload' || path === '/api/agency/resume/upload' || path === '/api/offer-letter-assets';
+          const isUpload = path === '/api/resume/upload' || path === '/api/agency/resume/upload' || path === '/api/offer-letter-assets' || path === '/api/training-plans/assets';
           const maxLimit = isUpload ? Math.max(c.maxResumeSizeBytes || 10485760, 10485760) : 131072;
           const contentType = String(req.headers['content-type'] || '');
           if (!contentType.startsWith('application/json') && !(isUpload && contentType.startsWith('multipart/form-data'))) {

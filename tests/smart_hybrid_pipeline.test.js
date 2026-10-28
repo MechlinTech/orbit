@@ -24,7 +24,7 @@ test('Smart Hybrid Pipeline: Presets API returns configured workflows', () => {
   assert.ok(presets.standard);
   assert.deepEqual(presets.smart_hybrid, [
     'Applied', 'Screening Round', 'Interview Round 1', 'Interview Round 2',
-    'HR Round', 'Pre-Onboarding Training', 'Onboarding', 'Hired', 'Rejected', 'Revoked'
+    'HR Round', 'Offer', 'Pre-Onboarding Training', 'Onboarding', 'Hired', 'Rejected', 'Revoked'
   ]);
   f.db.close();
 });
@@ -32,14 +32,15 @@ test('Smart Hybrid Pipeline: Presets API returns configured workflows', () => {
 test('Smart Hybrid Pipeline: Admin can switch pipeline to Smart Hybrid workflow', () => {
   const f = hybridFixture();
   const updated = call(f, f.admin, 'PUT', 'pipeline', { preset: 'smart_hybrid' });
-  assert.equal(updated.length, 10);
+  assert.equal(updated.length, 11);
   assert.equal(updated[0], 'Applied');
   assert.equal(updated[1], 'Screening Round');
   assert.equal(updated[4], 'HR Round');
-  assert.equal(updated[5], 'Pre-Onboarding Training');
-  assert.equal(updated[6], 'Onboarding');
-  assert.equal(updated[7], 'Hired');
-  assert.equal(updated[9], 'Revoked');
+  assert.equal(updated[5], 'Offer');
+  assert.equal(updated[6], 'Pre-Onboarding Training');
+  assert.equal(updated[7], 'Onboarding');
+  assert.equal(updated[8], 'Hired');
+  assert.equal(updated[10], 'Revoked');
   f.db.close();
 });
 
@@ -63,7 +64,12 @@ test('Smart Hybrid Pipeline: Full 2-round sequence from Applied to Hired', () =>
   const s4 = call(f, f.recruiter, 'POST', `applications/${f.app.id}/stage`, { stage: 'HR Round' });
   assert.equal(s4.stage, 'HR Round');
 
-  // 5. HR Round -> Pre-Onboarding Training
+  // 5. HR Round -> Offer
+  const sOffer = call(f, f.recruiter, 'POST', `applications/${f.app.id}/stage`, { stage: 'Offer' });
+  assert.equal(sOffer.stage, 'Offer');
+
+  // 6. Offer -> Pre-Onboarding Training (requires signed offer)
+  addSignedOffer(f.db, f.app.id, f.candidate, f.req);
   const s5 = call(f, f.recruiter, 'POST', `applications/${f.app.id}/stage`, { stage: 'Pre-Onboarding Training' });
   assert.equal(s5.stage, 'Pre-Onboarding Training');
 
@@ -79,8 +85,7 @@ test('Smart Hybrid Pipeline: Full 2-round sequence from Applied to Hired', () =>
   assert.equal(evalRes.evaluation.decision, 'next');
   assert.equal(evalRes.application.stage, 'Onboarding');
 
-  // 7. Onboarding -> Hired (requires signed offer)
-  addSignedOffer(f.db, f.app.id, f.candidate, f.req);
+  // 7. Onboarding -> Hired
   const sFinal = call(f, f.recruiter, 'POST', `applications/${f.app.id}/stage`, { stage: 'Hired' });
   assert.equal(sFinal.stage, 'Hired');
 
@@ -125,10 +130,12 @@ test('Smart Hybrid Pipeline: Pre-Onboarding Training rating evaluation can rejec
   const f = hybridFixture();
   call(f, f.admin, 'PUT', 'pipeline', { preset: 'smart_hybrid' });
 
-  // Move to Pre-Onboarding Training
-  for (const st of ['Screening Round', 'Interview Round 1', 'Interview Round 2', 'HR Round', 'Pre-Onboarding Training']) {
+  // Move to Pre-Onboarding Training (requires signed offer)
+  for (const st of ['Screening Round', 'Interview Round 1', 'Interview Round 2', 'HR Round', 'Offer']) {
     call(f, f.recruiter, 'POST', `applications/${f.app.id}/stage`, { stage: st });
   }
+  addSignedOffer(f.db, f.app.id, f.candidate, f.req);
+  call(f, f.recruiter, 'POST', `applications/${f.app.id}/stage`, { stage: 'Pre-Onboarding Training' });
 
   // Evaluate candidate as failed with 'rejected' decision
   const evalFail = call(f, f.recruiter, 'POST', `applications/${f.app.id}/training-evaluation`, {
@@ -139,14 +146,17 @@ test('Smart Hybrid Pipeline: Pre-Onboarding Training rating evaluation can rejec
   });
   assert.equal(evalFail.evaluation.rating, 2);
   assert.equal(evalFail.evaluation.status, 'failed');
-  assert.equal(evalFail.application.stage, 'Rejected');
+  assert.equal(evalFail.application.stage, 'Pre-Onboarding Training');
+  assert.equal(evalFail.application.training_status, 'evaluation_failed');
 
   // Verify second candidate test with 'revoked' decision
   const c2 = call(f, f.recruiter, 'POST', 'candidates', { ...candidateBody, email: 'training.revoke@example.com' });
   const a2 = call(f, f.recruiter, 'POST', 'applications', { candidate_id: c2.id, requisition_id: f.req.id });
-  for (const st of ['Screening Round', 'Interview Round 1', 'Interview Round 2', 'HR Round', 'Pre-Onboarding Training']) {
+  for (const st of ['Screening Round', 'Interview Round 1', 'Interview Round 2', 'HR Round', 'Offer']) {
     call(f, f.recruiter, 'POST', `applications/${a2.id}/stage`, { stage: st });
   }
+  addSignedOffer(f.db, a2.id, c2, f.req);
+  call(f, f.recruiter, 'POST', `applications/${a2.id}/stage`, { stage: 'Pre-Onboarding Training' });
   const evalRevoke = call(f, f.recruiter, 'POST', `applications/${a2.id}/training-evaluation`, {
     rating: 1,
     decision: 'revoked',
@@ -309,6 +319,62 @@ test('Smart Hybrid Pipeline: Freely skips intermediate interview rounds while st
   // But fast-tracking directly from Interview Round 1 to Offer succeeds
   const fastOffer = call(f, f.recruiter, 'POST', `applications/${a2.id}/stage`, { stage: 'Offer' });
   assert.equal(fastOffer.stage, 'Offer');
+
+  f.db.close();
+});
+
+test('Orbit prevents candidate from moving to Pre-Onboarding Training until offer letter is signed', () => {
+  const f = hybridFixture();
+  call(f, f.admin, 'PUT', 'pipeline', { preset: 'smart_hybrid' });
+
+  // Progress candidate through interviews to Offer
+  call(f, f.recruiter, 'POST', `applications/${f.app.id}/stage`, { stage: 'Screening Round' });
+  call(f, f.recruiter, 'POST', `applications/${f.app.id}/stage`, { stage: 'Interview Round 1' });
+  call(f, f.recruiter, 'POST', `applications/${f.app.id}/stage`, { stage: 'Interview Round 2' });
+  call(f, f.recruiter, 'POST', `applications/${f.app.id}/stage`, { stage: 'HR Round' });
+  call(f, f.recruiter, 'POST', `applications/${f.app.id}/stage`, { stage: 'Offer' });
+
+  // 1. Without an offer letter, transition to Pre-Onboarding Training must be blocked (HTTP 409)
+  assert.throws(
+    () => call(f, f.recruiter, 'POST', `applications/${f.app.id}/stage`, { stage: 'Pre-Onboarding Training' }),
+    err => {
+      assert.equal(err.status, 409);
+      assert.match(err.message, /Cannot advance to Pre-Onboarding Training: The candidate must sign the offer letter before starting pre-onboarding training/);
+      assert.match(err.message, /No offer letter found for this candidate/);
+      return true;
+    }
+  );
+
+  // 2. With an unsigned/pending offer letter, transition to Pre-Onboarding Training must still be blocked (HTTP 409)
+  addSignedOffer(f.db, f.app.id, f.candidate, f.req);
+  f.db.prepare("UPDATE signature_requests SET status = 'pending' WHERE application_id = ?").run(f.app.id);
+
+  assert.throws(
+    () => call(f, f.recruiter, 'POST', `applications/${f.app.id}/stage`, { stage: 'Pre-Onboarding Training' }),
+    err => {
+      assert.equal(err.status, 409);
+      assert.match(err.message, /Cannot advance to Pre-Onboarding Training: The candidate must sign the offer letter before starting pre-onboarding training/);
+      assert.match(err.message, /Offer letter is pending signature/);
+      return true;
+    }
+  );
+
+  // 3. With a declined offer letter, transition must also be blocked (HTTP 409)
+  f.db.prepare("UPDATE signature_requests SET status = 'declined' WHERE application_id = ?").run(f.app.id);
+  assert.throws(
+    () => call(f, f.recruiter, 'POST', `applications/${f.app.id}/stage`, { stage: 'Pre-Onboarding Training' }),
+    err => {
+      assert.equal(err.status, 409);
+      assert.match(err.message, /Cannot advance to Pre-Onboarding Training/);
+      assert.match(err.message, /Offer letter was declined/);
+      return true;
+    }
+  );
+
+  // 4. Once offer letter is signed and completed, moving to Pre-Onboarding Training succeeds
+  f.db.prepare("UPDATE signature_requests SET status = 'completed' WHERE application_id = ?").run(f.app.id);
+  const successMove = call(f, f.recruiter, 'POST', `applications/${f.app.id}/stage`, { stage: 'Pre-Onboarding Training' });
+  assert.equal(successMove.stage, 'Pre-Onboarding Training');
 
   f.db.close();
 });

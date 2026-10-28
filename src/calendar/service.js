@@ -179,9 +179,13 @@ export async function syncScheduleMeeting({
     });
 
     const finalJoinUrl = isPhysical ? null : event.joinUrl;
+    if (!isPhysical && !finalJoinUrl) {
+      throw new Error('Microsoft Graph event was created but failed to return a valid Teams join URL.');
+    }
+
     db.prepare(`
       UPDATE interviews
-      SET meeting_url = ?, calendar_event_id = ?, calendar_status = 'synced'
+      SET meeting_url = ?, calendar_event_id = ?, calendar_status = 'synced', meeting_error = ''
       WHERE id = ?
     `).run(finalJoinUrl, event.id, interviewId);
 
@@ -202,9 +206,9 @@ export async function syncScheduleMeeting({
   } catch (err) {
     db.prepare(`
       UPDATE interviews
-      SET calendar_status = 'sync_failed'
+      SET calendar_status = 'sync_failed', meeting_error = ?
       WHERE id = ?
-    `).run(interviewId);
+    `).run(err.message, interviewId);
 
     audit(db, user?.id || 'system', 'calendar.sync_failed', interviewId, {
       operation: 'schedule',
@@ -275,6 +279,30 @@ export async function syncRescheduleMeeting({
     });
   }
 
+  const wasPhysical = current?.interview_type === 'in_person';
+  if (!isPhysical && wasPhysical) {
+    if (current?.calendar_event_id) {
+      await syncCancelMeeting({ db, user, interviewId, comment: 'Switched format to virtual', transport, config }).catch(() => {});
+    }
+    return syncScheduleMeeting({
+      db,
+      user,
+      interviewId,
+      scheduledAt,
+      durationMinutes,
+      timezone,
+      title,
+      notes,
+      candidate,
+      req,
+      interviewer,
+      interviewType: 'virtual',
+      location: '',
+      transport,
+      config
+    });
+  }
+
   const isDemo = Boolean(
     (conf.tenant && conf.tenant.includes('demo')) ||
     (conf.client && conf.client.includes('demo')) ||
@@ -285,7 +313,7 @@ export async function syncRescheduleMeeting({
     const demoMeetingUrl = isPhysical ? null : (current.meeting_url || `https://teams.microsoft.com/l/meetup-join/orbit-demo-meeting-${interviewId}`);
     db.prepare(`
       UPDATE interviews
-      SET calendar_status = 'synced', meeting_url = ?
+      SET calendar_status = 'synced', meeting_url = ?, meeting_error = ''
       WHERE id = ?
     `).run(demoMeetingUrl, interviewId);
 
@@ -346,9 +374,13 @@ export async function syncRescheduleMeeting({
     });
 
     const finalJoinUrl = isPhysical ? null : (event.joinUrl || current.meeting_url);
+    if (!isPhysical && !finalJoinUrl) {
+      throw new Error('Microsoft Graph event was updated but no valid Teams join URL was available.');
+    }
+
     db.prepare(`
       UPDATE interviews
-      SET calendar_status = 'synced', meeting_url = ?
+      SET calendar_status = 'synced', meeting_url = ?, meeting_error = ''
       WHERE id = ?
     `).run(finalJoinUrl, interviewId);
 
@@ -368,9 +400,9 @@ export async function syncRescheduleMeeting({
   } catch (err) {
     db.prepare(`
       UPDATE interviews
-      SET calendar_status = 'sync_failed'
+      SET calendar_status = 'sync_failed', meeting_error = ?
       WHERE id = ?
-    `).run(interviewId);
+    `).run(err.message, interviewId);
 
     audit(db, user?.id || 'system', 'calendar.sync_failed', interviewId, {
       operation: 'reschedule',

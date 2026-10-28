@@ -188,13 +188,17 @@ export class CommunicationAdapter {
       throw new Error('Email body (html or text) is required.');
     }
 
+    const sanitizedTagValue = idempotencyKey
+      ? String(idempotencyKey).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 256)
+      : null;
+
     const payload = {
       from: this.from,
       to: [recipient],
       subject,
       ...(html ? { html } : {}),
       ...(text ? { text } : {}),
-      ...(idempotencyKey ? { tags: [{ name: 'idempotency_key', value: idempotencyKey }] } : {})
+      ...(sanitizedTagValue ? { tags: [{ name: 'idempotency_key', value: sanitizedTagValue }] } : {})
     };
 
     return withRetries(async () => {
@@ -203,7 +207,7 @@ export class CommunicationAdapter {
         headers: {
           'Authorization': `Bearer ${this.apiKey}`,
           'Content-Type': 'application/json',
-          ...(idempotencyKey ? { 'Idempotency-Key': String(idempotencyKey).slice(0, 256) } : {})
+          ...(sanitizedTagValue ? { 'Idempotency-Key': sanitizedTagValue } : {})
         },
         body: JSON.stringify(payload),
         signal: AbortSignal.timeout(10000)
