@@ -743,7 +743,9 @@ const renderPagination = (view, page, totalPages, total, start, pageSize = 10) =
 };
 const currencies = ['USD','EUR','GBP','CAD','AUD','INR','JPY','CHF','SGD','NZD','AED','HKD','SEK','NOK','DKK','BRL','MXN','ZAR'];
 const checkCurrency = v => { const s = String(v ?? '').trim().toUpperCase(); return (!s || !/^[A-Z]{3}$/.test(s) || !currencies.includes(s)) ? 'Enter a supported three-letter currency code.' : ''; };
+let isPointerDownOutsideModal = false;
 const closeModal = () => {
+  isPointerDownOutsideModal = false;
   const n = $('#notice');
   if(n && n.parentElement !== document.body) document.body.appendChild(n);
   const m = $('#modal');
@@ -795,9 +797,50 @@ function deleteDialog(kind, record, impact, path, success) {
     actions: `<div class="form-actions"><button type="button" class="secondary" data-action="close-modal">Cancel</button><button type="submit" class="btn-delete">Delete ${escape(kind)}</button></div>`
   });
 }
-$('#close-modal').onclick=closeModal;
-$('#modal').addEventListener('click',e=>{if(e.target===$('#modal'))closeModal();});
-$('#modal').addEventListener('close',()=>{const n=$('#notice');if(n&&n.parentElement!==document.body)document.body.appendChild(n);if($('#modal').open)return;const body=$('#modal-body');if(body)body.innerHTML='';});
+$('#close-modal').onclick = closeModal;
+
+const isEventOutsideModal = (e) => {
+  const m = $('#modal');
+  if (!m || !m.open) return false;
+  if (e.target !== m && m.contains(e.target)) return false;
+  const rect = m.getBoundingClientRect();
+  const clientX = e.clientX ?? (e.touches && e.touches[0] ? e.touches[0].clientX : (e.changedTouches && e.changedTouches[0] ? e.changedTouches[0].clientX : undefined));
+  const clientY = e.clientY ?? (e.touches && e.touches[0] ? e.touches[0].clientY : (e.changedTouches && e.changedTouches[0] ? e.changedTouches[0].clientY : undefined));
+  if (clientX === undefined || clientY === undefined) return false;
+  return (
+    clientX < rect.left ||
+    clientX > rect.right ||
+    clientY < rect.top ||
+    clientY > rect.bottom
+  );
+};
+
+const modalEl = $('#modal');
+if (modalEl) {
+  const recordPointerDown = (e) => {
+    isPointerDownOutsideModal = (e.target === modalEl && isEventOutsideModal(e));
+  };
+  modalEl.addEventListener('pointerdown', recordPointerDown, { capture: true });
+  modalEl.addEventListener('mousedown', recordPointerDown, { capture: true });
+  modalEl.addEventListener('touchstart', recordPointerDown, { passive: true, capture: true });
+
+  modalEl.addEventListener('click', (e) => {
+    const wasPointerDownOutside = isPointerDownOutsideModal;
+    isPointerDownOutsideModal = false;
+    if (wasPointerDownOutside && e.target === modalEl && isEventOutsideModal(e)) {
+      closeModal();
+    }
+  });
+
+  modalEl.addEventListener('close', () => {
+    isPointerDownOutsideModal = false;
+    const n = $('#notice');
+    if (n && n.parentElement !== document.body) document.body.appendChild(n);
+    if (modalEl.open) return;
+    const body = $('#modal-body');
+    if (body) body.innerHTML = '';
+  });
+}
 function permissionActionBucket(id) {
   const action = String(id || '').split('.').slice(1).join('.');
   if (/^(read|read_all|assigned\.read|personal\.read|resume\.read|communications\.read|consent\.read|fraud\.read|compensation\.read|feedback\.read|templates\.read|submissions\.read)$/.test(action) || action.endsWith('.read')) return 'Read';
@@ -1464,9 +1507,9 @@ async function render() {
         const hasBg = t.background_config?.assetId || t.background_config?.firstPageAssetId;
         const bgBadge = hasBg ? `<span class="badge" style="background:#e0f2fe;color:#0369a1;">Stationery</span>` : `<span class="muted" style="font-size:0.75rem;">Standard A4</span>`;
         const defBadge = t.is_default ? ` <span class="badge" style="background:#fef3c7;color:#92400e;margin-left:6px;">Default</span>` : '';
-        return `<tr><td><strong>${escape(t.name)}</strong>${defBadge}<br><small class="muted">${escape(t.description||'No description')}</small></td><td style="text-align:center;"><span class="badge mono" style="font-size:0.75rem;">v${t.version}</span></td><td style="text-align:center;">${badge(t.status)}</td><td>${bgBadge}</td><td>${escape(formatDateIST(t.updated_at))}</td><td><div class="plan-actions-group">${button('Preview','preview-template',t.id,'class="plan-btn-action plan-btn-secondary"')}${canManageTemplates?`${button('Edit','edit-template',t.id,'class="plan-btn-action plan-btn-primary"')}${button('Duplicate','duplicate-template',t.id,'class="plan-btn-icon" title="Duplicate template"')}${!t.is_default?button('Set Default','set-template-default',t.id,'class="plan-btn-icon" title="Set as default"'):''}${t.status!=='archived'?button('Archive','archive-template',t.id,'class="plan-btn-icon plan-btn-danger" title="Archive"'):button('Activate','activate-template',t.id,'class="plan-btn-icon plan-btn-success" title="Activate"')}`:''}</div></td></tr>`;
+        return `<tr><td><strong>${escape(t.name)}</strong>${defBadge}<br><small class="muted">${escape(t.description||'No description')}</small></td><td style="text-align:center;"><span class="badge mono" style="font-size:0.75rem;">v${t.version}</span></td><td style="text-align:center;">${badge(t.status)}</td><td>${bgBadge}</td><td>${escape(formatDateIST(t.updated_at))}</td><td><div class="plan-actions-group"><button type="button" class="plan-btn-action plan-btn-secondary" data-action="preview-template" data-id="${t.id}" title="Preview template"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg><span>Preview</span></button>${canManageTemplates?`<button type="button" class="plan-btn-action plan-btn-primary" data-action="edit-template" data-id="${t.id}" title="Edit template"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg><span>Edit</span></button><button type="button" class="plan-btn-icon" data-action="duplicate-template" data-id="${t.id}" title="Duplicate template" aria-label="Duplicate template"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>${!t.is_default?`<button type="button" class="plan-btn-icon" data-action="set-template-default" data-id="${t.id}" title="Set as default template" aria-label="Set as default"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></button>`:''}${t.status!=='archived'?`<button type="button" class="plan-btn-icon plan-btn-danger" data-action="archive-template" data-id="${t.id}" title="Archive template" aria-label="Archive template"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg></button>`:`<button type="button" class="plan-btn-icon plan-btn-success" data-action="activate-template" data-id="${t.id}" title="Activate template" aria-label="Activate template"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg></button>`}`:''}</div></td></tr>`;
       }), 'offer-templates-table') : empty('No offer templates created yet. Click "+ New Template" to create your first company offer letter.')}</section>`+
-      `<section class="panel"><div class="panel-head"><div><h2>Company Letterhead & Background Stationery</h2><p class="muted">Upload official PNG, JPG, PDF, or DOCX stationery for multi-page branding</p></div>${canManageAssets?button('+ Upload Letterhead','upload-letterhead','','class="secondary"'):''}</div>${assets.length?table(['Asset name','Format','Dimensions','File size','Uploaded','Actions'],assets.map(a=>`<tr><td><strong>${escape(a.name||a.filename)}</strong><br><small class="muted mono">${escape(a.filename)}</small></td><td><span class="badge mono" style="font-size:0.72rem;text-transform:uppercase;">${escape(a.file_format||a.format)}</span></td><td><small class="mono">${a.width&&a.height?`${a.width} × ${a.height} px`:'A4 Document'}</small></td><td><small class="mono">${a.file_size?`${Math.round(a.file_size/1024)} KB`:'—'}</small></td><td>${escape(formatDateIST(a.created_at))}</td><td><div class="plan-actions-group"><a href="/api/offer-letter-assets/${a.id}" target="_blank" class="button secondary" style="font-size:0.78rem;padding:4px 8px;">View File</a>${canManageAssets?button('Delete','delete-letterhead-asset',a.id,'class="plan-btn-icon plan-btn-danger" title="Delete letterhead asset"'):''}</div></td></tr>`)):empty('No company letterhead uploaded yet. Click "+ Upload Letterhead" to add company stationery.')}</section>`;
+      `<section class="panel"><div class="panel-head"><div><h2>Company Letterhead & Background Stationery</h2><p class="muted">Upload official PNG, JPG, PDF, or DOCX stationery for multi-page branding</p></div>${canManageAssets?button('+ Upload Letterhead','upload-letterhead','','class="secondary"'):''}</div>${assets.length?table(['Asset name','Format','Dimensions','File size','Uploaded','Actions'],assets.map(a=>`<tr><td><strong>${escape(a.name||a.filename)}</strong><br><small class="muted mono">${escape(a.filename)}</small></td><td><span class="badge mono" style="font-size:0.72rem;text-transform:uppercase;">${escape(a.file_format||a.format)}</span></td><td><small class="mono">${a.width&&a.height?`${a.width} × ${a.height} px`:'A4 Document'}</small></td><td><small class="mono">${a.file_size?`${Math.round(a.file_size/1024)} KB`:'—'}</small></td><td>${escape(formatDateIST(a.created_at))}</td><td><div class="plan-actions-group"><a href="/api/offer-letter-assets/${a.id}" target="_blank" class="button secondary plan-btn-action" style="font-size:0.75rem;padding:0 8px;min-height:28px;height:28px;display:inline-flex;align-items:center;">View File</a>${canManageAssets?`<button type="button" class="plan-btn-icon plan-btn-danger" data-action="delete-letterhead-asset" data-id="${a.id}" title="Delete letterhead asset" aria-label="Delete letterhead asset"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>`:''}</div></td></tr>`)):empty('No company letterhead uploaded yet. Click "+ Upload Letterhead" to add company stationery.')}</section>`;
     }
     if(current==='Training Plans') {
       const templates = await api('training-plans/templates').catch(() => []);
@@ -1523,21 +1566,58 @@ async function render() {
                 ? `<span class="plan-default-badge" title="Default fallback plan for all candidates"><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg> Default</span>`
                 : '';
 
+              const getVisibleChipCount = (items, maxChars = 22) => {
+                if (!items || !items.length) return 0;
+                if (items[0].length >= maxChars) return 1;
+                if (items.length === 1) return 1;
+                return (items[0].length + (items[1]?.length || 0) <= maxChars) ? 2 : 1;
+              };
+
               const positions = Array.isArray(t.positions) ? t.positions : [];
-              const maxPosVisible = (positions[0] && positions[0].length > 18) ? 1 : 2;
+              const maxPosVisible = getVisibleChipCount(positions);
               const posChips = positions.length
-                ? `<div class="chips-cloud" title="${escape(positions.join(', '))}">` +
+                ? `<div class="chips-cloud">` +
                     positions.slice(0, maxPosVisible).map(p => `<span class="plan-chip plan-chip-pos" title="${escape(p)}">${escape(p)}</span>`).join('') +
-                    (positions.length > maxPosVisible ? `<span class="plan-chip plan-chip-more" title="${escape(positions.slice(maxPosVisible).join(', '))}">+${positions.length - maxPosVisible} more</span>` : '') +
+                    (positions.length > maxPosVisible
+                      ? `<div class="plan-chip-more-container">` +
+                          `<button type="button" class="plan-chip plan-chip-more" data-action="toggle-chips-expand" aria-label="Show all ${positions.length} positions">+${positions.length - maxPosVisible} more</button>` +
+                          `<div class="plan-chips-popover" role="tooltip">` +
+                            `<div class="plan-chips-popover-header"><span>All Mapped Positions (${positions.length})</span></div>` +
+                            `<div class="plan-chips-popover-list">` +
+                              positions.map(p => `<span class="plan-chip plan-chip-pos">${escape(p)}</span>`).join('') +
+                            `</div>` +
+                            `<div class="plan-chips-popover-footer">Click to view in table</div>` +
+                          `</div>` +
+                        `</div>` +
+                        `<div class="expanded-chips">` +
+                          positions.slice(maxPosVisible).map(p => `<span class="plan-chip plan-chip-pos" title="${escape(p)}">${escape(p)}</span>`).join('') +
+                          `<button type="button" class="plan-chip plan-chip-less" data-action="toggle-chips-collapse" aria-label="Collapse positions">Show less</button>` +
+                        `</div>`
+                      : '') +
                   `</div>`
                 : `<span class="plan-chip-scope"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg> All / General</span>`;
 
               const deptRoles = [...(t.departments || []), ...(t.roles || [])];
-              const maxDeptVisible = (deptRoles[0] && deptRoles[0].length > 18) ? 1 : 2;
+              const maxDeptVisible = getVisibleChipCount(deptRoles);
               const deptChips = deptRoles.length
-                ? `<div class="chips-cloud" title="${escape(deptRoles.join(', '))}">` +
+                ? `<div class="chips-cloud">` +
                     deptRoles.slice(0, maxDeptVisible).map(d => `<span class="plan-chip plan-chip-dept" title="${escape(d)}">${escape(d)}</span>`).join('') +
-                    (deptRoles.length > maxDeptVisible ? `<span class="plan-chip plan-chip-more" title="${escape(deptRoles.slice(maxDeptVisible).join(', '))}">+${deptRoles.length - maxDeptVisible} more</span>` : '') +
+                    (deptRoles.length > maxDeptVisible
+                      ? `<div class="plan-chip-more-container">` +
+                          `<button type="button" class="plan-chip plan-chip-more" data-action="toggle-chips-expand" aria-label="Show all ${deptRoles.length} departments and roles">+${deptRoles.length - maxDeptVisible} more</button>` +
+                          `<div class="plan-chips-popover" role="tooltip">` +
+                            `<div class="plan-chips-popover-header"><span>All Departments & Roles (${deptRoles.length})</span></div>` +
+                            `<div class="plan-chips-popover-list">` +
+                              deptRoles.map(d => `<span class="plan-chip plan-chip-dept">${escape(d)}</span>`).join('') +
+                            `</div>` +
+                            `<div class="plan-chips-popover-footer">Click to view in table</div>` +
+                          `</div>` +
+                        `</div>` +
+                        `<div class="expanded-chips">` +
+                          deptRoles.slice(maxDeptVisible).map(d => `<span class="plan-chip plan-chip-dept" title="${escape(d)}">${escape(d)}</span>`).join('') +
+                          `<button type="button" class="plan-chip plan-chip-less" data-action="toggle-chips-collapse" aria-label="Collapse departments and roles">Show less</button>` +
+                        `</div>`
+                      : '') +
                   `</div>`
                 : `<span class="plan-chip-scope muted">All Depts</span>`;
 
@@ -2958,10 +3038,6 @@ async function openOfferTemplateEditor(templateId) {
                 <p id="studio-preview-meta" class="muted" style="margin:2px 0 0;font-size:0.76rem;">Generating real-time multi-page layout...</p>
               </div>
               <div class="studio-preview-actions">
-                <div class="studio-view-toggle-group">
-                  <button type="button" class="studio-view-toggle active" id="btn-studio-view-visual">Visual Canvas</button>
-                  <button type="button" class="studio-view-toggle" id="btn-studio-view-pdf">PDF View</button>
-                </div>
                 <a id="btn-studio-open-pdf" href="#" target="_blank" class="button secondary studio-preview-btn">Open in Tab</a>
                 <a id="btn-studio-download-pdf" href="#" download="offer_letter.pdf" class="button secondary studio-preview-btn">Download PDF</a>
                 <button type="button" class="secondary studio-preview-btn" id="btn-studio-force-refresh">Refresh</button>
@@ -2970,8 +3046,7 @@ async function openOfferTemplateEditor(templateId) {
 
             <div id="studio-preview-validation" style="margin-bottom:10px;"></div>
 
-            <div id="studio-visual-canvas" class="studio-a4-sheet-container" style="display:flex;"></div>
-            <div id="studio-pdf-canvas" class="offer-studio-preview-frame-wrap" style="display:none;">
+            <div id="studio-pdf-canvas" class="offer-studio-preview-frame-wrap" style="display:flex;">
               <iframe id="studio-preview-iframe" class="offer-studio-preview-iframe" title="Real-time A4 PDF Preview"></iframe>
             </div>
           </div>
@@ -3046,6 +3121,11 @@ async function openOfferTemplateEditor(templateId) {
     };
 
     let previewDebounce = null;
+    const debouncedPreview = (delay = 120) => {
+      clearTimeout(previewDebounce);
+      previewDebounce = setTimeout(triggerLivePreview, delay);
+    };
+
     const triggerLivePreview = async () => {
       syncSectionsFromDom();
       const metaEl = $('#studio-preview-meta');
@@ -3080,34 +3160,13 @@ async function openOfferTemplateEditor(templateId) {
         }
 
         if (valEl) {
-          const valid = previewData.validation?.valid;
-          const missing = previewData.validation?.missingRequired || [];
-          if (valid) {
+          const rawMissing = previewData.validation?.missing || previewData.validation?.missingRequired || [];
+          const missingList = rawMissing.map(m => typeof m === 'string' ? m : (m.key || m.label || String(m))).filter(Boolean);
+          if (missingList.length === 0) {
             valEl.innerHTML = `<div class="validation-box valid" style="padding:6px 10px;font-size:0.75rem;"><span style="font-weight:600;">Ready for Issuance:</span> All dynamic placeholders resolved.</div>`;
           } else {
-            valEl.innerHTML = `<div class="validation-box" style="padding:6px 10px;font-size:0.75rem;"><span style="font-weight:600;">Missing Placeholders (${missing.length}):</span> <span style="font-family:monospace;">${missing.join(', ')}</span></div>`;
+            valEl.innerHTML = `<div class="validation-box" style="padding:6px 10px;font-size:0.75rem;"><span style="font-weight:600;">Missing Placeholders (${missingList.length}):</span> <span style="font-family:monospace;">${missingList.join(', ')}</span></div>`;
           }
-        }
-
-        const visualCanvas = $('#studio-visual-canvas');
-        if (visualCanvas) {
-          const simVars = {
-            'company.name': 'Mechlin Technologies',
-            'candidate.name': $('#sim-cand-name')?.value || 'Raman Joshi',
-            'employment.designation': $('#sim-designation')?.value || 'Senior Full-Stack Engineer',
-            'offer.salary': $('#sim-salary')?.value || '2,400,000',
-            'offer.annual_ctc': `${$('#sim-currency')?.value || 'INR'} ${$('#sim-salary')?.value || '2,400,000'}`,
-            'offer.currency': $('#sim-currency')?.value || 'INR',
-            'offer.currency_symbol': ($('#sim-currency')?.value || 'INR') === 'USD' ? '$' : '₹',
-            'employment.joining_date': 'December 1, 2026',
-            'employment.location': 'Mohali, India (Hybrid)',
-            'employment.probation_period': '3 months',
-            'employment.notice_period': '30 days',
-            'offer.expiry_date': 'November 15, 2026',
-            'signature.authorizer_name': 'Managing Director',
-            'signature.signer_name': $('#sim-cand-name')?.value || 'Raman Joshi'
-          };
-          visualCanvas.innerHTML = renderSectionsToA4Html(currentSections, simVars, headerConfig?.text, footerConfig?.text);
         }
 
         if (iframe && previewData.pdfBase64) {
@@ -3122,34 +3181,24 @@ async function openOfferTemplateEditor(templateId) {
           const dlLink = $('#btn-studio-download-pdf');
           if (dlLink) dlLink.href = targetUrl;
         }
-
-        const studioVisBtn = $('#btn-studio-view-visual');
-        const studioPdfBtn = $('#btn-studio-view-pdf');
-        const studioVisBox = $('#studio-visual-canvas');
-        const studioPdfBox = $('#studio-pdf-canvas');
-        if (studioVisBtn && studioPdfBtn && studioVisBox && studioPdfBox && !studioVisBtn._bound) {
-          studioVisBtn._bound = true;
-          studioVisBtn.onclick = () => {
-            studioVisBtn.classList.add('active');
-            studioPdfBtn.classList.remove('active');
-            studioVisBox.style.display = 'flex';
-            studioPdfBox.style.display = 'none';
-          };
-          studioPdfBtn.onclick = () => {
-            studioPdfBtn.classList.add('active');
-            studioVisBtn.classList.remove('active');
-            studioVisBox.style.display = 'none';
-            studioPdfBox.style.display = 'block';
-          };
-        }
       } catch (err) {
         if (metaEl) metaEl.textContent = `Preview error: ${err.message}`;
       }
     };
 
-    const debouncedPreview = () => {
-      clearTimeout(previewDebounce);
-      previewDebounce = setTimeout(triggerLivePreview, 600);
+    let lastActiveSectionIdx = null;
+
+    const updateActiveCardClass = () => {
+      const container = $('#studio-sections-list');
+      if (!container) return;
+      container.querySelectorAll('.studio-section-card').forEach(card => {
+        const idx = Number(card.dataset.idx);
+        if (idx === lastActiveSectionIdx) {
+          card.classList.add('is-active');
+        } else {
+          card.classList.remove('is-active');
+        }
+      });
     };
 
     const renderSections = () => {
@@ -3244,8 +3293,9 @@ async function openOfferTemplateEditor(templateId) {
         }
 
         const badgeClass = `studio-badge-${s.type}`;
+        const isActiveClass = idx === lastActiveSectionIdx ? ' is-active' : '';
         return `
-          <div class="studio-section-card" data-idx="${idx}">
+          <div class="studio-section-card${isActiveClass}" data-idx="${idx}">
             <div class="studio-section-header">
               <div class="studio-sec-title-group">
                 <span class="studio-section-badge ${badgeClass}">${s.type.replace('_', ' ')}</span>
@@ -3263,9 +3313,25 @@ async function openOfferTemplateEditor(templateId) {
         `;
       }).join('');
 
+      container.querySelectorAll('.studio-section-card').forEach(card => {
+        card.addEventListener('click', (e) => {
+          if (e.target.closest('[data-sec-act]')) return;
+          lastActiveSectionIdx = Number(card.dataset.idx);
+          updateActiveCardClass();
+        });
+      });
+
       container.querySelectorAll('textarea, input').forEach(el => {
-        el.onfocus = () => { lastActiveField = el; };
-        el.oninput = () => { syncSectionsFromDom(); debouncedPreview(); };
+        el.onfocus = () => {
+          lastActiveField = el;
+          const card = el.closest('.studio-section-card');
+          if (card && card.dataset.idx !== undefined) {
+            lastActiveSectionIdx = Number(card.dataset.idx);
+            updateActiveCardClass();
+          }
+        };
+        el.oninput = () => { syncSectionsFromDom(); debouncedPreview(120); };
+        el.onchange = () => { syncSectionsFromDom(); triggerLivePreview(); };
       });
 
       container.querySelectorAll('[data-fmt]').forEach(btn => {
@@ -3277,9 +3343,10 @@ async function openOfferTemplateEditor(templateId) {
           const hiddenInput = card?.querySelector(`[data-field="${fmt}"]`);
           if (hiddenInput) {
             hiddenInput.value = val;
+            lastActiveSectionIdx = idx;
             syncSectionsFromDom();
             renderSections();
-            debouncedPreview();
+            debouncedPreview(50);
           }
         };
       });
@@ -3293,19 +3360,23 @@ async function openOfferTemplateEditor(templateId) {
             const temp = currentSections[i];
             currentSections[i] = currentSections[i - 1];
             currentSections[i - 1] = temp;
+            lastActiveSectionIdx = i - 1;
           } else if (act === 'down' && i < currentSections.length - 1) {
             const temp = currentSections[i];
             currentSections[i] = currentSections[i + 1];
             currentSections[i + 1] = temp;
+            lastActiveSectionIdx = i + 1;
           } else if (act === 'clone') {
             const clone = JSON.parse(JSON.stringify(currentSections[i]));
             clone.id = `sec_${Date.now()}`;
             currentSections.splice(i + 1, 0, clone);
+            lastActiveSectionIdx = i + 1;
           } else if (act === 'del') {
             currentSections.splice(i, 1);
+            lastActiveSectionIdx = currentSections.length ? Math.min(i, currentSections.length - 1) : null;
           }
           renderSections();
-          debouncedPreview();
+          debouncedPreview(50);
         };
       });
     };
@@ -3356,6 +3427,25 @@ async function openOfferTemplateEditor(templateId) {
       };
     }
 
+    const getTargetInsertIndex = () => {
+      if (lastActiveSectionIdx !== null && lastActiveSectionIdx >= 0 && lastActiveSectionIdx < currentSections.length) {
+        return lastActiveSectionIdx + 1;
+      }
+      const editor = $('.offer-studio-editor');
+      const cards = $('#studio-sections-list')?.querySelectorAll('.studio-section-card');
+      if (editor && cards && cards.length) {
+        const editorRect = editor.getBoundingClientRect();
+        for (const card of cards) {
+          const cardRect = card.getBoundingClientRect();
+          if (cardRect.bottom > editorRect.top + 90) {
+            const idx = Number(card.dataset.idx);
+            if (!isNaN(idx)) return idx + 1;
+          }
+        }
+      }
+      return currentSections.length;
+    };
+
     // Add quick section toolbar
     document.querySelectorAll('[data-add-sec]').forEach(btn => {
       btn.onclick = () => {
@@ -3371,10 +3461,27 @@ async function openOfferTemplateEditor(templateId) {
           newSec.authorizerName = '{{signature.authorizer_name}}';
           newSec.authorizerTitle = 'Managing Director';
           newSec.signerName = '{{signature.signer_name}}';
+        } else if (type === 'page_break') {
+          newSec.text = '';
+        } else if (type === 'divider') {
+          newSec.text = '';
         }
-        currentSections.push(newSec);
+
+        const insertIdx = getTargetInsertIndex();
+        currentSections.splice(insertIdx, 0, newSec);
+        lastActiveSectionIdx = insertIdx;
         renderSections();
-        debouncedPreview();
+        debouncedPreview(50);
+
+        requestAnimationFrame(() => {
+          const container = $('#studio-sections-list');
+          const newCard = container?.querySelector(`.studio-section-card[data-idx="${insertIdx}"]`);
+          if (newCard) {
+            newCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            const input = newCard.querySelector('input[type=text], textarea');
+            if (input) input.focus();
+          }
+        });
       };
     });
 
@@ -3382,9 +3489,18 @@ async function openOfferTemplateEditor(templateId) {
     const openLibrary = () => {
       openClauseLibraryModal(clauseSections => {
         syncSectionsFromDom();
-        currentSections.push(...clauseSections);
+        const insertIdx = getTargetInsertIndex();
+        currentSections.splice(insertIdx, 0, ...clauseSections);
+        lastActiveSectionIdx = insertIdx + clauseSections.length - 1;
         renderSections();
-        debouncedPreview();
+        debouncedPreview(50);
+        requestAnimationFrame(() => {
+          const container = $('#studio-sections-list');
+          const firstNewCard = container?.querySelector(`.studio-section-card[data-idx="${insertIdx}"]`);
+          if (firstNewCard) {
+            firstNewCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          }
+        });
       });
     };
     const libBtn1 = $('#btn-studio-clause-lib');
@@ -3403,6 +3519,33 @@ async function openOfferTemplateEditor(templateId) {
     const selCont = $('#cfg-continuation-asset');
     if (selFirst) selFirst.onchange = triggerLivePreview;
     if (selCont) selCont.onchange = triggerLivePreview;
+
+    // Wire all margin, header/footer, and simulator inputs for instant live preview
+    const wireInstantInput = (selector, immediate = false) => {
+      const el = $(selector);
+      if (!el) return;
+      el.addEventListener('input', () => {
+        syncSectionsFromDom();
+        if (immediate) triggerLivePreview();
+        else debouncedPreview(120);
+      });
+      el.addEventListener('change', () => {
+        syncSectionsFromDom();
+        triggerLivePreview();
+      });
+    };
+
+    wireInstantInput('#cfg-margin-top');
+    wireInstantInput('#cfg-margin-bottom');
+    wireInstantInput('#cfg-margin-left');
+    wireInstantInput('#cfg-margin-right');
+    wireInstantInput('#cfg-header-text');
+    wireInstantInput('#cfg-footer-text');
+    wireInstantInput('#cfg-header-first-page', true);
+    wireInstantInput('#sim-cand-name');
+    wireInstantInput('#sim-designation');
+    wireInstantInput('#sim-salary');
+    wireInstantInput('#sim-currency');
 
     // Quick upload letterhead directly in studio without destroying template modal
     const uploadAssetBtn = $('#btn-studio-upload-asset');
@@ -4344,6 +4487,16 @@ document.addEventListener('click',async event=>{
       await api(`offer-templates/${id}/status`, 'POST', { status: 'active' });
       notice('Template activated.', 'success');
       await render();
+      return;
+    }
+    if(a==='toggle-chips-expand'){
+      const cloud = b.closest('.chips-cloud');
+      if(cloud) cloud.classList.toggle('is-expanded');
+      return;
+    }
+    if(a==='toggle-chips-collapse'){
+      const cloud = b.closest('.chips-cloud');
+      if(cloud) cloud.classList.remove('is-expanded');
       return;
     }
     if(a==='new-training-template'){await openTrainingTemplateEditor();return;}
@@ -5399,7 +5552,8 @@ document.addEventListener('click',async event=>{
             meeting_url: isPhysical ? undefined : (v.meeting_url?.trim() || undefined),
             competencies: compList,
             round: stage,
-            notes: v.notes?.trim() || undefined
+            notes: v.notes?.trim() || undefined,
+            send_invitation: false
           });
           await api(`applications/${id}/stage`, 'POST', { stage, send_notification: true });
           const interviewerObj = users.find(u => u.id === v.interviewer_id);
