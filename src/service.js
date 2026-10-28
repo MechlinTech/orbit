@@ -1,12 +1,12 @@
 import { audit, id, now, transaction } from './db.js';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { HttpError, roles, teams, permissions as permissionCatalog, permissionDefinitions, permissionGroups, permissionIds, permissionById, requirePermission as permit, requireTeam, inTeam, can, text, email, phone as validatePhone, currency as validateCurrency, list, validateSkills, integer, isAgencyRole } from './policy.js';
+import { HttpError, roles, teams, permissions as permissionCatalog, permissionDefinitions, permissionGroups, permissionIds, permissionById, requirePermission as permit, requireTeam, inTeam, userTeams, can, text, email, phone as validatePhone, currency as validateCurrency, list, validateSkills, integer, isAgencyRole, normalizeTeamName } from './policy.js';
 import { accessSummary, archiveRole, assignmentImpact, createRole, duplicateRole, hydrateUser, listRoles, permissionsForRole, resolveRoleForAssignment, roleView, updateRole } from './rbac.js';
 import { getAppearance, setAppearance } from './appearance.js';
 import { isDemoUser } from './demo.js';
 import { ResumeAdapter, CommunicationAdapter, CalendarAdapter, MatchingAdapter, FraudAdapter, HrmsAdapter } from './adapters.js';
-import { isEmailConfigured, listCandidateCommunications, setCandidateConsent, getCandidateConsent, sendCandidateCommunication } from './communication/service.js';
+import { isEmailConfigured, listCandidateCommunications, setCandidateConsent, getCandidateConsent, sendCandidateCommunication, sendStageTransitionNotification } from './communication/service.js';
 import { getAvailableTemplates } from './communication/templates.js';
 import { isCalendarConfigured, syncScheduleMeeting, syncRescheduleMeeting, syncCancelMeeting } from './calendar/service.js';
 import { evaluateCandidateMatch } from './matching/engine.js';
@@ -22,8 +22,21 @@ import {
 import {
   listOfferTemplates, getOfferTemplate, createOfferTemplate, updateOfferTemplate,
   duplicateOfferTemplate, setOfferTemplateStatus, uploadLetterheadAsset,
-  getLetterheadAssetBuffer, previewOfferTemplate, compileTemplateToPdf, seedDefaultTemplatesIfEmpty
+  getLetterheadAssetBuffer, previewOfferTemplate, compileTemplateToPdf, seedDefaultTemplatesIfEmpty,
+  listOfferLetterAssets, deleteOfferLetterAsset
 } from './signature/template_service.js';
+import {
+  listTrainingTemplates, getTrainingTemplate, createTrainingTemplate, updateTrainingTemplate,
+  duplicateTrainingTemplate, setTrainingTemplateStatus, archiveTrainingTemplate,
+  suggestTrainingPlan, getOrCreateTrainingDraft, saveTrainingDraft, discardTrainingDraft,
+  previewTrainingEmail, sendTrainingPlan, resendTrainingPlan, uploadTrainingAsset,
+  getTrainingAsset, seedDefaultTrainingTemplatesIfEmpty
+} from './training/service.js';
+import {
+  startTraining, extendTrainingDeadline, restartTraining,
+  revokeOffer, evaluateTraining, getTrainingHistory,
+  isTrainingOverdue, resolveEffectiveTrainingStatus
+} from './training/lifecycle.js';
 import { VARIABLE_REGISTRY } from './signature/variables.js';
 import {
   listAgencies, getAgency, createAgency, updateAgency, setAgencyStatus, addAgencyMember,
@@ -90,6 +103,7 @@ export const PIPELINE_PRESETS = {
     'Interview Round 1',
     'Interview Round 2',
     'HR Round',
+    'Offer',
     'Pre-Onboarding Training',
     'Onboarding',
     'Hired',
@@ -103,6 +117,7 @@ export const PIPELINE_PRESETS = {
     'Interview Round 2',
     'Interview Round 3',
     'HR Round',
+    'Offer',
     'Pre-Onboarding Training',
     'Onboarding',
     'Hired',
@@ -368,6 +383,7 @@ function interviewContextView(db, interview, user) {
 }
 export function service(db, user, method, path, body = {}, query = new URLSearchParams(), c = {}) {
   seedDefaultTemplatesIfEmpty(db);
+  seedDefaultTrainingTemplatesIfEmpty(db);
   hydrateUser(db, user);
   const parts = path.split('/').filter(Boolean), key = parts[1], action = parts[2];
   if (path === 'appearance' && method === 'GET') return getAppearance(db);
@@ -637,7 +653,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       });
     }
     if (method === 'POST' && !key) {
-      permit(user,'requisitions.create'); const team = text(body.team,'Team',100); requireTeam(user,team);
+      permit(user,'requisitions.create'); const team = normalizeTeamName(text(body.team,'Team',100)); requireTeam(user,team);
       if (!can(user, 'requisitions.compensation.read') && ['salary_min','salary_max','currency'].some(field => body[field] !== undefined && body[field] !== null && body[field] !== '')) {
         throw new HttpError(403, 'You do not have permission to set compensation fields.');
       }
@@ -666,10 +682,10 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
         }
         throw new HttpError(409,`Cannot edit a requisition with status ${req.status}.`);
       }
-      const team = text(body.team ?? req.team,'Team',100);
+      const team = normalizeTeamName(text(body.team ?? req.team,'Team',100));
       requireTeam(user,team);
       const hasApps = Boolean(db.prepare('SELECT id FROM applications WHERE requisition_id=?').get(key));
-      if (team !== req.team && hasApps) {
+      if (team !== normalizeTeamName(req.team) && hasApps) {
         if (!canCrossTeam || (!body.admin_override && !body.override)) {
           throw new HttpError(409,'Cannot change team of a requisition with existing applications.');
         }
@@ -696,7 +712,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
           auditDetail.admin_pending_edit = true;
           auditDetail.previous_status = req.status;
         }
-        if (canCrossTeam && team !== req.team && hasApps) {
+        if (canCrossTeam && team !== normalizeTeamName(req.team) && hasApps) {
           auditDetail.admin_team_reassignment = true;
           auditDetail.previous_team = req.team;
         }
@@ -953,7 +969,11 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
         });
     }
     if (method === 'POST' && !key) {
-      permit(user,'candidates.create'); const team = text(body.team,'Team',100); requireTeam(user,team);
+      permit(user,'candidates.create');
+      const defaultTeam = user.team ? userTeams(user)[0] : '';
+      const rawTeam = (body.team !== undefined && body.team !== null && String(body.team).trim() !== '') ? body.team : defaultTeam;
+      const team = normalizeTeamName(text(rawTeam,'Team',100));
+      requireTeam(user,team);
       const address = email(body.email), name = text(body.name,'Name',200), phone = validatePhone(body.phone ?? '', true);
       const resumeVal = body.resume_text !== undefined ? body.resume_text : body.experience !== undefined ? body.experience : '';
       const resume = text(resumeVal, 'Resume text', 50000, true);
@@ -976,11 +996,11 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
           const req = get(db, 'requisitions', body.requisition_id);
           requireTeam(user, req.team);
           const isAdmin = can(user, 'system.override');
-          if (!isAdmin && team !== req.team) throw new HttpError(409, 'Candidate and requisition must belong to the same team.');
+          if (!isAdmin && normalizeTeamName(team) !== normalizeTeamName(req.team)) throw new HttpError(409, 'Candidate and requisition must belong to the same team.');
           if (req.status !== 'open') throw new HttpError(409, 'Requisition must be approved and open.');
           const aid = id();
           const firstStage = 'Applied';
-          db.prepare('INSERT INTO applications VALUES(?,?,?,?,?)').run(aid, cid, req.id, firstStage, now());
+          db.prepare('INSERT INTO applications(id, candidate_id, requisition_id, stage, created_at) VALUES(?,?,?,?,?)').run(aid, cid, req.id, firstStage, now());
           const auditDetail = { candidate_id: cid, requisition_id: req.id, stage: firstStage };
           if (team !== req.team) {
             auditDetail.cross_team_override = true;
@@ -1006,7 +1026,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       const candidate = get(db,'candidates',key);
       if (candidate.deleted_at) throw new HttpError(404, 'Candidate not found.');
       requireTeam(user,candidate.team);
-      const team = text(body.team || candidate.team,'Team',100); requireTeam(user,team);
+      const team = normalizeTeamName(text(body.team || candidate.team,'Team',100)); requireTeam(user,team);
       const address = email(body.email ?? candidate.email), name = text(body.name ?? candidate.name,'Name',200);
       const phone = validatePhone(body.phone ?? candidate.phone ?? '', true);
       const resumeVal = body.resume_text !== undefined ? body.resume_text : body.experience !== undefined ? body.experience : candidate.resume_text;
@@ -1193,9 +1213,60 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
         for (const e of evals) {
           if (!evalMap.has(e.application_id)) evalMap.set(e.application_id, e);
         }
+        let draftMap = new Map();
+        try {
+          const drafts = db.prepare(`SELECT application_id, status, template_id, sent_at FROM training_plan_drafts`).all();
+          for (const d of drafts) {
+            if (!draftMap.has(d.application_id)) draftMap.set(d.application_id, d);
+          }
+        } catch {}
+        let interviewMap = new Map();
+        try {
+          const interviews = db.prepare(`
+            SELECT i.id, i.application_id, i.status, i.round, i.round_number, i.interviewer_id, i.scheduled_at, u.name as interviewer_name,
+                   s.id as scorecard_id, s.ratings, s.recommendation, s.submitted_at
+            FROM interviews i
+            JOIN users u ON u.id = i.interviewer_id
+            LEFT JOIN scorecards s ON s.interview_id = i.id
+            ORDER BY i.scheduled_at DESC, i.created_at DESC
+          `).all();
+          for (const inv of interviews) {
+            if (!interviewMap.has(inv.application_id)) {
+              interviewMap.set(inv.application_id, []);
+            }
+            interviewMap.get(inv.application_id).push(inv);
+          }
+        } catch {}
         return apps.map(a => {
           const ev = evalMap.get(a.id);
-          const out = ev ? { ...a, training_evaluation: ev, training_rating: ev.rating, training_decision: ev.decision } : { ...a };
+          const dr = draftMap.get(a.id);
+          const overdue = isTrainingOverdue(a);
+          const effectiveStatus = resolveEffectiveTrainingStatus(a);
+          const appInvs = interviewMap.get(a.id) || [];
+          const nonInterviewStages = ['Applied', 'Offer', 'Pre-Onboarding Training', 'Onboarding', 'Hired', 'Rejected', 'Revoked'];
+          const isInterviewStage = !nonInterviewStages.includes(a.stage);
+          const pendingInv = isInterviewStage
+            ? (appInvs.find(i => i.status === 'planned' && (i.round?.toLowerCase() === a.stage?.toLowerCase() || !i.round || i.round === 'Round 1'))
+               || appInvs.find(i => i.status === 'planned'))
+            : null;
+          const latestRatedInv = appInvs.find(i => i.scorecard_id);
+          const out = {
+            ...a,
+            is_overdue: overdue,
+            effective_training_status: effectiveStatus,
+            pending_interview: pendingInv || null,
+            latest_scorecard: latestRatedInv ? {
+              id: latestRatedInv.scorecard_id,
+              interview_id: latestRatedInv.id,
+              ratings: latestRatedInv.ratings,
+              recommendation: latestRatedInv.recommendation,
+              submitted_at: latestRatedInv.submitted_at,
+              interviewer_name: latestRatedInv.interviewer_name,
+              round: latestRatedInv.round
+            } : null,
+            ...(ev ? { training_evaluation: ev, training_rating: ev.rating, training_decision: ev.decision } : {}),
+            ...(dr ? { training_plan_status: dr.status, training_plan_sent_at: dr.sent_at } : {})
+          };
           if (!can(user, 'candidates.personal.read')) delete out.email;
           return out;
         });
@@ -1211,11 +1282,11 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       const candidate = get(db,'candidates',body.candidate_id), req = get(db,'requisitions',body.requisition_id);
       requireTeam(user,candidate.team); requireTeam(user,req.team);
       const isAdmin = can(user, 'system.override');
-      if (!isAdmin && candidate.team !== req.team) throw new HttpError(409,'Candidate and requisition must belong to the same team.');
+      if (!isAdmin && normalizeTeamName(candidate.team) !== normalizeTeamName(req.team)) throw new HttpError(409,'Candidate and requisition must belong to the same team.');
       if (req.status !== 'open') throw new HttpError(409,'Requisition must be approved and open.');
       const aid = id();
       return transaction(db, () => {
-        db.prepare('INSERT INTO applications VALUES(?,?,?,?,?)').run(aid,candidate.id,req.id,'Applied',now());
+        db.prepare('INSERT INTO applications(id, candidate_id, requisition_id, stage, created_at) VALUES(?,?,?,?,?)').run(aid,candidate.id,req.id,'Applied',now());
         const auditDetail = { candidate_id: candidate.id, requisition_id: req.id };
         if (candidate.team !== req.team) {
           auditDetail.cross_team_override = true;
@@ -1269,84 +1340,93 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
         return getOrRunFraudReview(db, app.candidate_id, { application_id: app.id, refresh: true });
       }
     }
-    if (key && (action === 'training-evaluation' || action === 'training')) {
+    if (key && (action === 'training-evaluation' || action === 'training' || action === 'revoke')) {
       const { app, req } = appContext(db, user, key);
-      if (method === 'GET') {
-        permit(user, 'applications.read');
-        const evalRow = db.prepare(`
-          SELECT te.*, u.name AS evaluator_name, u.email AS evaluator_email
-          FROM training_evaluations te
-          JOIN users u ON u.id = te.evaluator_id
-          WHERE te.application_id = ?
-          ORDER BY te.created_at DESC LIMIT 1
-        `).get(app.id);
-        return { evaluation: evalRow || null };
+      const subAction = parts[3];
+
+      if (action === 'revoke' && method === 'POST') {
+        return revokeOffer(db, user, app, body, c);
       }
-      if (method === 'POST') {
-        permit(user, 'applications.evaluate');
-        const rating = integer(body.rating, 'Rating', 1, 5);
-        const practicalScore = body.practical_score !== undefined && body.practical_score !== '' && body.practical_score !== null
-          ? Number(body.practical_score)
-          : null;
-        if (practicalScore !== null && (!Number.isFinite(practicalScore) || practicalScore < 0 || practicalScore > 100)) {
-          throw new HttpError(400, 'Practical score must be a number between 0 and 100.');
+
+      if (action === 'training') {
+        if (subAction === 'start' && method === 'POST') {
+          return startTraining(db, user, app, body);
         }
-        const decision = ['next', 'rejected', 'revoked'].includes(body.decision) ? body.decision : 'next';
-        const status = ['passed', 'failed', 'in_progress'].includes(body.status)
-          ? body.status
-          : (decision === 'next' ? 'passed' : 'failed');
-        const notes = text(body.notes || '', 'Training notes', 2000, false);
-
-        const evalId = id();
-        const nowStr = now();
-        const stages = pipeline(db);
-
-        let targetStage = null;
-        if (decision === 'next') {
-          const curIdx = stages.indexOf(app.stage);
-          if (stages.includes('Onboarding')) {
-            targetStage = 'Onboarding';
-          } else if (curIdx !== -1 && curIdx + 1 < stages.length && !['Hired', 'Rejected', 'Revoked'].includes(stages[curIdx + 1])) {
-            targetStage = stages[curIdx + 1];
-          } else {
-            targetStage = 'Onboarding';
-          }
-        } else if (decision === 'revoked') {
-          targetStage = stages.includes('Revoked') ? 'Revoked' : 'Rejected';
-        } else {
-          targetStage = 'Rejected';
+        if (subAction === 'extend-deadline' && method === 'POST') {
+          return extendTrainingDeadline(db, user, app, body);
         }
+        if (subAction === 'restart' && method === 'POST') {
+          return restartTraining(db, user, app, body);
+        }
+        if ((subAction === 'revoke' || subAction === 'revoke-offer') && method === 'POST') {
+          return revokeOffer(db, user, app, body, c);
+        }
+        if (subAction === 'history' && method === 'GET') {
+          return getTrainingHistory(db, user, app);
+        }
+        throw new HttpError(404, 'Unknown training action.');
+      }
 
-        const result = transaction(db, () => {
-          db.prepare(`
-            INSERT INTO training_evaluations(id, application_id, candidate_id, evaluator_id, rating, practical_score, status, decision, notes, created_at, updated_at)
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `).run(evalId, app.id, app.candidate_id, user.id, rating, practicalScore, status, decision, notes, nowStr, nowStr);
-
-          if (targetStage && stages.includes(targetStage) && app.stage !== targetStage) {
-            db.prepare('UPDATE applications SET stage=? WHERE id=?').run(targetStage, app.id);
-            db.prepare("UPDATE referrals SET status=?, updated_at=? WHERE application_id=? AND status!='Withdrawn'").run(targetStage, nowStr, app.id);
-            db.prepare('INSERT INTO stage_events VALUES(?,?,?,?,?,?)').run(id(), app.id, app.stage, targetStage, user.id, nowStr);
-          }
-
-          audit(db, user.id, 'application.training_evaluated', app.id, {
-            rating, practical_score: practicalScore, decision, status, target_stage: targetStage
-          });
-
-          const savedEval = db.prepare(`
+      if (action === 'training-evaluation') {
+        if (method === 'GET') {
+          permit(user, 'applications.read', 'recruit', 'review');
+          const evalRow = db.prepare(`
             SELECT te.*, u.name AS evaluator_name, u.email AS evaluator_email
             FROM training_evaluations te
             JOIN users u ON u.id = te.evaluator_id
-            WHERE te.id = ?
-          `).get(evalId);
-
+            WHERE te.application_id = ?
+            ORDER BY te.created_at DESC LIMIT 1
+          `).get(app.id);
+          const overdue = isTrainingOverdue(app);
+          const effectiveStatus = resolveEffectiveTrainingStatus(app);
           return {
-            evaluation: savedEval,
-            application: get(db, 'applications', app.id)
+            evaluation: evalRow || null,
+            training_status: app.training_status,
+            effective_status: effectiveStatus,
+            is_overdue: overdue,
+            attempt: app.training_attempt || 1,
+            start_at: app.training_start_at,
+            end_at: app.training_end_at,
+            original_end_at: app.training_original_end_at
           };
-        });
+        }
 
-        return result;
+        if (method === 'POST') {
+          permit(user, 'applications.evaluate', 'recruit', 'admin');
+          return evaluateTraining(db, user, app, body, c);
+        }
+        throw new HttpError(405, 'Method not allowed.');
+      }
+    }
+    if (key && (action === 'training-plan' || action === 'training-draft')) {
+      const subAction = parts[3];
+      if (subAction === 'suggest' && method === 'GET') {
+        permit(user, 'recruit', 'review', 'admin');
+        return suggestTrainingPlan(db, { applicationId: key });
+      }
+      if (subAction === 'preview' && method === 'POST') {
+        permit(user, 'recruit', 'review', 'admin');
+        return previewTrainingEmail(db, user, key, body);
+      }
+      if (subAction === 'discard' && method === 'POST') {
+        permit(user, 'recruit', 'admin');
+        return discardTrainingDraft(db, user, key);
+      }
+      if (subAction === 'send' && method === 'POST') {
+        permit(user, 'recruit', 'admin');
+        return sendTrainingPlan(db, user, key, body, { communicationAdapter: c?.communicationAdapter, transport: c?.transport });
+      }
+      if (subAction === 'resend' && method === 'POST') {
+        permit(user, 'recruit', 'admin');
+        return resendTrainingPlan(db, user, key, body, { communicationAdapter: c?.communicationAdapter, transport: c?.transport });
+      }
+      if (!subAction && method === 'GET') {
+        permit(user, 'recruit', 'review', 'admin');
+        return getOrCreateTrainingDraft(db, user, key);
+      }
+      if (!subAction && method === 'PUT') {
+        permit(user, 'recruit', 'admin');
+        return saveTrainingDraft(db, user, key, body);
       }
     }
     if (key && (action === 'hrms-handoff' || action === 'handoff') && method === 'POST') {
@@ -1428,19 +1508,125 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
     if (method === 'POST' && action === 'stage') {
       permit(user,'applications.update'); const {app,req} = appContext(db,user,key), stages = pipeline(db);
       if (!stages.includes(body.stage)) throw new HttpError(400,'Unknown pipeline stage.');
+      if (body.stage === app.stage) {
+        throw new HttpError(400, `Application is already in ${app.stage} stage.`);
+      }
+
+      // 1. Offer revocation check: cannot advance if candidate's offer was revoked
+      if (app.offer_status === 'revoked' && !['Rejected', 'Revoked'].includes(body.stage)) {
+        throw new HttpError(409, 'Cannot advance candidate: The candidate offer has been revoked.');
+      }
+
+      // 2. Offer signature verification for gated post-offer stages
+      if (body.stage === 'Pre-Onboarding Training' || /pre-onboarding/i.test(body.stage)) {
+        const sigCheck = verifyApplicationOfferSignature(db, key, app.candidate_id, req.id);
+        if (!sigCheck.verified) {
+          throw new HttpError(409, `Cannot advance to Pre-Onboarding Training: The candidate must sign the offer letter before starting pre-onboarding training. ${sigCheck.reason}`);
+        }
+      }
+      if (body.stage === 'Onboarding' || /onboarding/i.test(body.stage)) {
+        const sigCheck = verifyApplicationOfferSignature(db, key, app.candidate_id, req.id);
+        if (!sigCheck.verified) {
+          throw new HttpError(409, `Cannot advance to Onboarding: The candidate must sign the offer letter before proceeding. ${sigCheck.reason}`);
+        }
+      }
       if (body.stage === 'Hired') {
         const sigCheck = verifyApplicationOfferSignature(db, key, app.candidate_id, req.id);
         if (!sigCheck.verified) {
           throw new HttpError(409, sigCheck.reason);
         }
       }
-      const isAdmin = can(user, 'applications.override') || can(user, 'system.override');
+      const fromIdx = stages.indexOf(app.stage);
+      const toIdx = stages.indexOf(body.stage);
+      const isAdvancing = toIdx > fromIdx && !['Rejected', 'Revoked'].includes(body.stage);
+
+      // 3. Pre-onboarding training rating & evaluation gate:
+      // Without passing rating and passed evaluation, candidate cannot be moved to next stage!
+      if (/pre-onboarding|training/i.test(app.stage) && isAdvancing) {
+        const latestEval = db.prepare(`
+          SELECT * FROM training_evaluations 
+          WHERE application_id = ? 
+          ORDER BY attempt DESC, created_at DESC LIMIT 1
+        `).get(key);
+
+        const passingEval = db.prepare(`
+          SELECT id FROM training_evaluations 
+          WHERE application_id = ? AND status = 'passed' AND rating >= 3
+          ORDER BY created_at DESC LIMIT 1
+        `).get(key);
+
+        if (!latestEval && app.training_status !== 'completed') {
+          if (!app.training_start_at || app.training_status === 'not_started') {
+            throw new HttpError(409, 'Cannot advance candidate: Pre-onboarding training has not started. A passing performance rating and evaluation are required before moving to the next stage.');
+          }
+          throw new HttpError(409, 'Cannot advance candidate: Pre-onboarding training performance rating and passing evaluation are required before moving to the next stage.');
+        }
+
+        if (latestEval && (latestEval.status === 'failed' || latestEval.rating < 3 || app.training_status === 'evaluation_failed')) {
+          throw new HttpError(409, `Cannot advance candidate: Candidate failed training evaluation (Rating: ${latestEval.rating}/5, Status: ${latestEval.status}). Training must be restarted and passed with a satisfactory rating before moving to the next stage.`);
+        }
+
+        if (!passingEval && app.training_status !== 'completed') {
+          throw new HttpError(409, 'Cannot advance candidate: Pre-onboarding training performance rating and passing evaluation are required before moving to the next stage.');
+        }
+
+        if (isTrainingOverdue(app) && app.training_status !== 'completed') {
+          throw new HttpError(409, 'Cannot advance candidate: Training deadline has passed. Please extend deadline or restart training before evaluating.');
+        }
+      }
+
+      const isAdmin = can(user, 'applications.override') || can(user, 'system.override') || can(user, 'admin');
+
+      // 4. Interview round evaluation & rating validations:
+      if (isAdvancing) {
+        const nonInterviewStages = ['Applied', 'Offer', 'Pre-Onboarding Training', 'Onboarding', 'Hired', 'Rejected', 'Revoked'];
+        const isInterviewStage = !nonInterviewStages.includes(app.stage);
+
+        if (isInterviewStage) {
+          // Any scheduled interview for this application's current round that is planned / unrated
+          const plannedInterview = db.prepare(`
+            SELECT i.*, u.name as interviewer_name 
+            FROM interviews i
+            JOIN users u ON u.id = i.interviewer_id
+            WHERE i.application_id = ? AND i.status = 'planned' 
+              AND (i.round = ? OR (i.round IS NULL AND ? != 'Applied'))
+            ORDER BY i.scheduled_at ASC LIMIT 1
+          `).get(key, app.stage, app.stage);
+          if (plannedInterview && !isAdmin) {
+            throw new HttpError(409, `Cannot advance candidate: An interview with ${plannedInterview.interviewer_name} is scheduled for ${plannedInterview.round || app.stage} and has not been rated. A completed scorecard rating is required before moving to the next stage.`);
+          }
+        }
+
+        // Any completed interview missing a scorecard
+        const unratedCompleted = db.prepare(`
+          SELECT i.*, u.name as interviewer_name 
+          FROM interviews i
+          JOIN users u ON u.id = i.interviewer_id
+          LEFT JOIN scorecards s ON s.interview_id = i.id
+          WHERE i.application_id = ? AND i.status = 'completed' AND s.id IS NULL
+          LIMIT 1
+        `).get(key);
+        if (unratedCompleted && !isAdmin) {
+          throw new HttpError(409, `Cannot advance candidate: Completed interview with ${unratedCompleted.interviewer_name} for ${unratedCompleted.round || app.stage} is missing a scorecard rating.`);
+        }
+      }
+
+      // 5. Negative interview scorecard recommendation check
+      const latestScorecard = isAdvancing ? db.prepare(`
+        SELECT s.*, i.round, u.name as author_name
+        FROM scorecards s
+        JOIN interviews i ON i.id = s.interview_id
+        JOIN users u ON u.id = s.author
+        WHERE i.application_id = ?
+        ORDER BY s.submitted_at DESC LIMIT 1
+      `).get(key) : null;
+      const isNegativeRec = Boolean(latestScorecard && ['No', 'Strong no'].includes(latestScorecard.recommendation));
       const isTerminal = ['Hired','Rejected','Revoked'].includes(app.stage);
       const isSequential = isAllowedStageProgression(app.stage, body.stage, stages);
       const hiredCount = db.prepare("SELECT count(*) n FROM applications WHERE requisition_id=? AND stage='Hired'").get(req.id).n;
       const isOverHeadcount = body.stage === 'Hired' && hiredCount >= req.headcount;
 
-      const hasRuleViolation = isTerminal || !isSequential || isOverHeadcount;
+      const hasRuleViolation = isTerminal || !isSequential || isOverHeadcount || isNegativeRec;
       let isOverride = false;
       let overrideReason = '';
       let bypassedRule = '';
@@ -1450,18 +1636,21 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
           if (isTerminal) throw new HttpError(409,'Terminal applications cannot be moved.');
           if (!isSequential) throw new HttpError(409,'Move to the next stage or reject the application.');
           if (isOverHeadcount) throw new HttpError(409,'Approved headcount is filled.');
+          if (isNegativeRec) throw new HttpError(409,`Cannot advance candidate: Candidate received a negative recommendation ('${latestScorecard.recommendation}') from ${latestScorecard.author_name} for ${latestScorecard.round || 'interview'}. Advancing requires administrative override.`);
         }
         if (!body.admin_override && !body.override && !body.override_reason && !body.reason) {
           if (isTerminal) throw new HttpError(409,'Terminal applications cannot be moved without administrative override.');
           if (!isSequential) throw new HttpError(409,'Non-sequential stage transition requires administrative override.');
           if (isOverHeadcount) throw new HttpError(409,'Hiring beyond approved headcount requires administrative override.');
+          if (isNegativeRec) throw new HttpError(409,`Advancing a candidate with negative recommendation ('${latestScorecard.recommendation}') requires administrative override.`);
         }
         isOverride = true;
         overrideReason = text(body.override_reason || body.reason || 'Administrative pipeline correction', 'Override reason', 2000, true);
         bypassedRule = [
           isTerminal ? 'terminal_stage' : '',
           !isSequential ? 'non_sequential_transition' : '',
-          isOverHeadcount ? 'headcount_limit' : ''
+          isOverHeadcount ? 'headcount_limit' : '',
+          isNegativeRec ? 'negative_recommendation' : ''
         ].filter(Boolean).join(', ');
       }
 
@@ -1479,7 +1668,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
         return get(db,'applications',key);
       });
 
-      const emailConfigured = (isEmailConfigured(db) || Boolean(c?.communicationAdapter)) && body.send_notification !== false;
+      const emailConfigured = (isEmailConfigured(db, c) || Boolean(c?.communicationAdapter)) && body.send_notification !== false;
       const hrmsEffective = getEffectiveIntegrationConfig(db, 'hrms');
       const hrmsSyncEnabled = Boolean(
         hrmsEffective.enabled &&
@@ -1491,44 +1680,19 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
         return (async () => {
           // 1. Candidate email notification
           if (emailConfigured && app.stage !== body.stage) {
-            try {
-              const cand = db.prepare('SELECT id, name, email, team FROM candidates WHERE id = ?').get(app.candidate_id);
-              if (cand && cand.email) {
-                const commAdapter = c?.communicationAdapter || new CommunicationAdapter({ db, fromEnv: true, transport: c?.transport });
-                const templateId = body.stage === 'Rejected' ? 'application_rejection' : 'stage_update';
-                const emailVars = {
-                  candidate_name: cand.name,
-                  candidate_email: cand.email,
-                  requisition_title: req?.title || '',
-                  team: req?.team || cand.team || '',
-                  stage: body.stage,
-                  new_stage: body.stage,
-                  previous_stage: app.stage,
-                  from_stage: app.stage,
-                  notes: body.notes || body.comment || ''
-                };
-                const idempotencyKey = `stage_update_${key}_${body.stage}_${app.stage}`;
-                await sendCandidateCommunication(db, user, {
-                  candidate_id: cand.id,
-                  requisition_id: req?.id || undefined,
-                  template_id: templateId,
-                  recipient_email: cand.email,
-                  variables: emailVars,
-                  idempotency_key: idempotencyKey
-                }, commAdapter);
-                audit(db, user.id, 'application.stage_email_sent', key, {
-                  stage: body.stage,
-                  previous_stage: app.stage,
-                  candidate_id: cand.id,
-                  recipient: cand.email
-                });
-              }
-            } catch (emailErr) {
-              audit(db, user.id, 'application.stage_email_failed', key, {
-                stage: body.stage,
-                error: emailErr.message
-              });
-            }
+            await sendStageTransitionNotification({
+              db,
+              user,
+              applicationId: key,
+              oldStage: app.stage,
+              newStage: body.stage,
+              requisition: req,
+              notes: body.notes || body.comment || '',
+              sendNotification: body.send_notification !== false,
+              config: c,
+              adapter: c?.communicationAdapter,
+              templateId: body.template_id || (body.stage === 'Rejected' ? 'application_rejection' : 'stage_update')
+            });
           }
 
           // 2. Automated HRMS employee onboarding handoff
@@ -1611,6 +1775,34 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
 
       return updatedApp;
     }
+    if (key && action === 'retry-stage-notification' && method === 'POST') {
+      permit(user, 'recruit');
+      const { app, req } = appContext(db, user, key, true);
+      const lastEvent = db.prepare('SELECT * FROM stage_events WHERE application_id = ? ORDER BY at DESC LIMIT 1').get(key);
+      if (!lastEvent) {
+        throw new HttpError(400, 'No stage transition found to retry notification for.');
+      }
+      const cand = db.prepare('SELECT id, name, email, team FROM candidates WHERE id = ?').get(app.candidate_id);
+      if (!cand || !cand.email) {
+        throw new HttpError(400, 'Candidate does not have a valid email address.');
+      }
+      return (async () => {
+        const result = await sendStageTransitionNotification({
+          db,
+          user,
+          applicationId: key,
+          oldStage: lastEvent.from_stage,
+          newStage: lastEvent.to_stage,
+          candidate: cand,
+          requisition: req,
+          notes: body.notes || '',
+          sendNotification: true,
+          config: c,
+          adapter: c?.communicationAdapter
+        });
+        return { success: result.sent, result };
+      })();
+    }
   }
   if (parts[0] === 'interviews') {
     permit(user,'interviews.read','interviews.schedule','interviews.update','interviews.cancel','interviews.evaluate','interviews.proxy_evaluate','interviews.feedback.read');
@@ -1645,8 +1837,8 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       const title = body.title ? text(body.title, 'Title', 200, false) : `${round}: ${cand.name} — ${req.title}`;
       const iid = id();
       transaction(db, () => {
-        db.prepare('INSERT INTO interviews(id,application_id,interviewer_id,scheduled_at,competencies,title,duration_minutes,timezone,notes,status,calendar_status,meeting_url,round,round_number,interview_type,location,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(
-          iid, app.id, interviewer.id, scheduled.toISOString(), JSON.stringify(competencies), title, duration, timezone, notes, 'planned', customMeetingUrl ? 'manual_link' : 'not_synced', customMeetingUrl, round, roundNumber, interviewType, location, now()
+        db.prepare('INSERT INTO interviews(id,application_id,interviewer_id,scheduled_at,competencies,title,duration_minutes,timezone,notes,status,calendar_status,meeting_url,round,round_number,interview_type,location,invitation_status,invitation_error,meeting_error,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(
+          iid, app.id, interviewer.id, scheduled.toISOString(), JSON.stringify(competencies), title, duration, timezone, notes, 'planned', customMeetingUrl ? 'manual_link' : 'not_synced', customMeetingUrl, round, roundNumber, interviewType, location, 'pending', '', '', now()
         );
         audit(db, user.id, 'interview.planned', iid, { scheduled_at: scheduled.toISOString(), interviewer_id: interviewer.id, duration_minutes: duration, timezone, meeting_url: customMeetingUrl, round, round_number: roundNumber, interview_type: interviewType, location });
       });
@@ -1666,25 +1858,41 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
             db.prepare('UPDATE interviews SET meeting_url = ? WHERE id = ?').run(meetingUrl, iid);
           }
           if (emailConfigured) {
-            try {
-              const commAdapter = c?.communicationAdapter || new CommunicationAdapter({ db, fromEnv: true, transport: c?.transport });
-              await sendCandidateCommunication(db, user, {
-                candidate_id: cand.id,
-                requisition_id: req.id,
-                template_id: 'interview_invitation',
-                scheduled_at: scheduled.toISOString(),
-                duration_minutes: duration,
-                timezone,
-                interviewer_name: interviewer.name,
-                meeting_url: meetingUrl || undefined,
-                notes: notes || undefined,
-                interview_type: interviewType,
-                location,
-                idempotency_key: `interview_invite_${iid}`
-              }, commAdapter);
-            } catch (emailErr) {
-              audit(db, user.id, 'communication.invitation_failed', iid, { error: emailErr.message });
+            if (interviewType === 'virtual' && !meetingUrl) {
+              db.prepare("UPDATE interviews SET invitation_status = 'pending', invitation_error = 'Waiting for valid Teams meeting link' WHERE id = ?").run(iid);
+              audit(db, user.id, 'interview.invitation_held', iid, {
+                reason: 'Online interview missing valid Teams join URL'
+              });
+            } else {
+              try {
+                const commAdapter = c?.communicationAdapter || new CommunicationAdapter({ db, fromEnv: true, transport: c?.transport });
+                await sendCandidateCommunication(db, user, {
+                  candidate_id: cand.id,
+                  requisition_id: req.id,
+                  template_id: 'interview_invitation',
+                  scheduled_at: scheduled.toISOString(),
+                  duration_minutes: duration,
+                  timezone,
+                  interviewer_name: interviewer.name,
+                  meeting_url: meetingUrl || undefined,
+                  notes: notes || undefined,
+                  interview_type: interviewType,
+                  location,
+                  idempotency_key: `interview_invite_${iid}`
+                }, commAdapter);
+                db.prepare("UPDATE interviews SET invitation_status = 'accepted', invitation_error = '' WHERE id = ?").run(iid);
+                audit(db, user.id, 'interview.invitation_sent', iid, {
+                  candidate_id: cand.id,
+                  recipient: cand.email,
+                  meeting_url: meetingUrl
+                });
+              } catch (emailErr) {
+                db.prepare("UPDATE interviews SET invitation_status = 'failed', invitation_error = ? WHERE id = ?").run(emailErr.message, iid);
+                audit(db, user.id, 'communication.invitation_failed', iid, { error: emailErr.message });
+              }
             }
+          } else {
+            db.prepare("UPDATE interviews SET invitation_status = 'not_required' WHERE id = ?").run(iid);
           }
           const row = get(db, 'interviews', iid);
           return { ...row, calendar_status: row.calendar_status || 'Not synced; provider adapter required' };
@@ -1736,8 +1944,14 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       const title = body.title !== undefined ? text(body.title, 'Title', 200, false) : (interview.title || '');
       const cand = get(db, 'candidates', app.candidate_id);
       const interviewType = body.interview_type !== undefined ? (body.interview_type === 'in_person' ? 'in_person' : 'virtual') : (interview.interview_type || 'virtual');
-      const location = body.location !== undefined ? (text(body.location, 'Location', 500, true) || (interviewType === 'in_person' ? 'Mechlin Technologies Office' : '')) : (interview.location || (interviewType === 'in_person' ? 'Mechlin Technologies Office' : ''));
-      const customMeetingUrl = interviewType === 'in_person' ? null : (body.meeting_url !== undefined ? (body.meeting_url ? text(body.meeting_url, 'Meeting URL', 1000, false) : null) : interview.meeting_url);
+      const location = body.location !== undefined
+        ? (text(body.location, 'Location', 500, true) || (interviewType === 'in_person' ? 'Mechlin Technologies Office' : ''))
+        : (interview.location || (interviewType === 'in_person' ? 'Mechlin Technologies Office' : ''));
+      const customMeetingUrl = interviewType === 'in_person'
+        ? null
+        : (body.meeting_url !== undefined
+            ? (body.meeting_url && String(body.meeting_url).trim() !== '' ? text(String(body.meeting_url).trim(), 'Meeting URL', 1000, false) : null)
+            : interview.meeting_url);
 
       transaction(db, () => {
         db.prepare('UPDATE interviews SET scheduled_at=?, interviewer_id=?, competencies=?, duration_minutes=?, timezone=?, notes=?, title=?, meeting_url=?, interview_type=?, location=? WHERE id=?').run(
@@ -1762,24 +1976,38 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
             db.prepare('UPDATE interviews SET meeting_url = ? WHERE id = ?').run(meetingUrl, key);
           }
           if (emailConfigured) {
-            try {
-              const commAdapter = c?.communicationAdapter || new CommunicationAdapter({ db, fromEnv: true, transport: c?.transport });
-              await sendCandidateCommunication(db, user, {
-                candidate_id: cand.id,
-                requisition_id: req.id,
-                template_id: 'interview_update',
-                scheduled_at: scheduled.toISOString(),
-                duration_minutes: duration,
-                timezone,
-                interviewer_name: assignedInterviewer.name,
-                meeting_url: meetingUrl || undefined,
-                notes: notes || undefined,
-                interview_type: interviewType,
-                location,
-                idempotency_key: `interview_update_${key}_${scheduled.getTime()}`
-              }, commAdapter);
-            } catch (emailErr) {
-              audit(db, user.id, 'communication.update_failed', key, { error: emailErr.message });
+            if (interviewType === 'virtual' && !meetingUrl) {
+              db.prepare("UPDATE interviews SET invitation_status = 'pending', invitation_error = 'Waiting for valid Teams meeting link' WHERE id = ?").run(key);
+              audit(db, user.id, 'interview.invitation_held', key, {
+                reason: 'Online interview missing valid Teams join URL on update'
+              });
+            } else {
+              try {
+                const commAdapter = c?.communicationAdapter || new CommunicationAdapter({ db, fromEnv: true, transport: c?.transport });
+                await sendCandidateCommunication(db, user, {
+                  candidate_id: cand.id,
+                  requisition_id: req.id,
+                  template_id: 'interview_update',
+                  scheduled_at: scheduled.toISOString(),
+                  duration_minutes: duration,
+                  timezone,
+                  interviewer_name: assignedInterviewer.name,
+                  meeting_url: meetingUrl || undefined,
+                  notes: notes || undefined,
+                  interview_type: interviewType,
+                  location,
+                  idempotency_key: `interview_update_${key}_${scheduled.getTime()}`
+                }, commAdapter);
+                db.prepare("UPDATE interviews SET invitation_status = 'accepted', invitation_error = '' WHERE id = ?").run(key);
+                audit(db, user.id, 'interview.invitation_updated', key, {
+                  candidate_id: cand.id,
+                  recipient: cand.email,
+                  meeting_url: meetingUrl
+                });
+              } catch (emailErr) {
+                db.prepare("UPDATE interviews SET invitation_status = 'failed', invitation_error = ? WHERE id = ?").run(emailErr.message, key);
+                audit(db, user.id, 'communication.update_failed', key, { error: emailErr.message });
+              }
             }
           }
           const row = get(db, 'interviews', key);
@@ -1804,7 +2032,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       const cand = get(db, 'candidates', app.candidate_id);
 
       transaction(db, () => {
-        db.prepare("UPDATE interviews SET status='cancelled', calendar_status='cancelled' WHERE id=?").run(key);
+        db.prepare("UPDATE interviews SET status='cancelled', calendar_status='cancelled', invitation_status='cancelled' WHERE id=?").run(key);
         audit(db, user.id, 'interview.cancelled', key, { reason });
       });
 
@@ -1839,6 +2067,98 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       }
       return get(db, 'interviews', key);
     }
+    if (key && action === 'retry-meeting' && method === 'POST') {
+      permit(user, 'recruit', 'interview');
+      const interview = get(db, 'interviews', key);
+      const { app, req } = appContext(db, user, interview.application_id, true);
+      if (interview.status === 'completed' || interview.status === 'cancelled') {
+        throw new HttpError(409, `Cannot retry meeting sync for a ${interview.status} interview.`);
+      }
+      if (interview.interview_type === 'in_person') {
+        throw new HttpError(400, 'Physical / in-person interviews do not use Microsoft Teams online meetings.');
+      }
+      const calConfigured = isCalendarConfigured(c, db) || Boolean(c?.calendarAdapter);
+      if (!calConfigured) {
+        throw new HttpError(400, 'Microsoft Calendar integration is not configured.');
+      }
+      const cand = get(db, 'candidates', app.candidate_id);
+      const interviewer = get(db, 'users', interview.interviewer_id);
+      return (async () => {
+        const calResult = await syncScheduleMeeting({
+          db, user, interviewId: key, scheduledAt: interview.scheduled_at, durationMinutes: interview.duration_minutes, timezone: interview.timezone, title: interview.title, notes: interview.notes, candidate: cand, req, interviewer, transport: c?.calendarAdapter?.transport || c?.transport || fetch, config: c,
+          interviewType: 'virtual', location: ''
+        });
+        if (calResult.synced && calResult.meeting_url) {
+          const emailConfigured = (isEmailConfigured(db) || Boolean(c?.communicationAdapter)) && body.send_invitation !== false;
+          if (emailConfigured && interview.invitation_status !== 'accepted') {
+            try {
+              const commAdapter = c?.communicationAdapter || new CommunicationAdapter({ db, fromEnv: true, transport: c?.transport });
+              await sendCandidateCommunication(db, user, {
+                candidate_id: cand.id,
+                requisition_id: req.id,
+                template_id: 'interview_invitation',
+                scheduled_at: interview.scheduled_at,
+                duration_minutes: interview.duration_minutes,
+                timezone: interview.timezone,
+                interviewer_name: interviewer.name,
+                meeting_url: calResult.meeting_url,
+                notes: interview.notes || undefined,
+                interview_type: 'virtual',
+                idempotency_key: `interview_invite_${key}`
+              }, commAdapter);
+              db.prepare("UPDATE interviews SET invitation_status = 'accepted', invitation_error = '' WHERE id = ?").run(key);
+            } catch (invErr) {
+              db.prepare("UPDATE interviews SET invitation_status = 'failed', invitation_error = ? WHERE id = ?").run(invErr.message, key);
+            }
+          }
+        }
+        return get(db, 'interviews', key);
+      })();
+    }
+    if (key && action === 'retry-invitation' && method === 'POST') {
+      permit(user, 'recruit', 'interview');
+      const interview = get(db, 'interviews', key);
+      const { app, req } = appContext(db, user, interview.application_id, true);
+      if (interview.status === 'completed' || interview.status === 'cancelled') {
+        throw new HttpError(409, `Cannot resend invitation for a ${interview.status} interview.`);
+      }
+      const isPhysical = interview.interview_type === 'in_person';
+      if (!isPhysical && !interview.meeting_url) {
+        throw new HttpError(400, 'Cannot send invitation: Microsoft Teams meeting link is missing. Retry meeting creation first.');
+      }
+      const emailConfigured = isEmailConfigured(db) || Boolean(c?.communicationAdapter);
+      if (!emailConfigured) {
+        throw new HttpError(400, 'Email communication is not configured.');
+      }
+      const cand = get(db, 'candidates', app.candidate_id);
+      const interviewer = get(db, 'users', interview.interviewer_id);
+      return (async () => {
+        const commAdapter = c?.communicationAdapter || new CommunicationAdapter({ db, fromEnv: true, transport: c?.transport });
+        const idempotencyKey = `interview_invite_${key}_retry_${Date.now()}`;
+        try {
+          await sendCandidateCommunication(db, user, {
+            candidate_id: cand.id,
+            requisition_id: req.id,
+            template_id: 'interview_invitation',
+            scheduled_at: interview.scheduled_at,
+            duration_minutes: interview.duration_minutes,
+            timezone: interview.timezone,
+            interviewer_name: interviewer.name,
+            meeting_url: isPhysical ? undefined : interview.meeting_url,
+            notes: interview.notes || undefined,
+            interview_type: interview.interview_type,
+            location: interview.location,
+            idempotency_key: idempotencyKey
+          }, commAdapter);
+          db.prepare("UPDATE interviews SET invitation_status = 'accepted', invitation_error = '' WHERE id = ?").run(key);
+          audit(db, user.id, 'interview.invitation_retried', key, { candidate_id: cand.id, recipient: cand.email });
+        } catch (invErr) {
+          db.prepare("UPDATE interviews SET invitation_status = 'failed', invitation_error = ? WHERE id = ?").run(invErr.message, key);
+          throw invErr;
+        }
+        return get(db, 'interviews', key);
+      })();
+    }
     if (key && action === 'scorecards') {
       const interview = get(db,'interviews',key); appContext(db,user,interview.application_id,true);
       if (method === 'POST') {
@@ -1848,7 +2168,11 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
         if (!isAssigned && !isAdmin) {
           throw new HttpError(403,'Only the assigned interviewer can submit this scorecard.');
         }
-        const scheduledTime = Date.parse(interview.scheduled_at);
+        let schedStr = String(interview.scheduled_at || '').trim();
+        if (schedStr && !schedStr.endsWith('Z') && !schedStr.includes('+')) {
+          schedStr = schedStr.replace(' ', 'T') + (schedStr.length === 10 ? 'T00:00:00Z' : 'Z');
+        }
+        const scheduledTime = Date.parse(schedStr);
         if (!Number.isFinite(scheduledTime) || scheduledTime > Date.now()) {
           throw new HttpError(409,'Feedback can be submitted after the scheduled interview time.');
         }
@@ -2009,7 +2333,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
         const referral = referralRow(db,key);
         let candidate = db.prepare('SELECT * FROM candidates WHERE email=?').get(referral.email);
         if (candidate?.deleted_at) throw new HttpError(409,'A deleted candidate already uses this email. Ask TA operations to restore or resolve the record.');
-        if (candidate && !can(user,'system.override') && candidate.team !== req.team) throw new HttpError(409,'The matching candidate belongs to another team. Ask a System Admin to process this cross-team referral.');
+        if (candidate && !can(user,'system.override') && normalizeTeamName(candidate.team) !== normalizeTeamName(req.team)) throw new HttpError(409,'The matching candidate belongs to another team. Ask a System Admin to process this cross-team referral.');
         let candidateCreated = false;
         if (!candidate) {
           const cid = id();
@@ -2022,7 +2346,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
         let applicationCreated = false;
         if (!application) {
           const aid = id();
-          db.prepare('INSERT INTO applications VALUES(?,?,?,?,?)').run(aid,candidate.id,req.id,'Applied',now());
+          db.prepare('INSERT INTO applications(id, candidate_id, requisition_id, stage, created_at) VALUES(?,?,?,?,?)').run(aid,candidate.id,req.id,'Applied',now());
           application = get(db,'applications',aid);
           applicationCreated = true;
           audit(db,user.id,'application.created',aid,{candidate_id:candidate.id,requisition_id:req.id,referral_id:key});
@@ -2123,6 +2447,10 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
     return { variables: VARIABLE_REGISTRY };
   }
   if (parts[0] === 'offer-letter-assets') {
+    if (method === 'GET' && !key) {
+      permit(user, 'offers.templates.read', 'offers.read');
+      return listOfferLetterAssets(db, user);
+    }
     if (method === 'POST' && !key) {
       permit(user, 'offers.assets.manage');
       let assetBuffer = body.buffer;
@@ -2151,6 +2479,10 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
         contentType: asset.mimeType,
         filename: asset.filename
       };
+    }
+    if (key && method === 'DELETE') {
+      permit(user, 'offers.assets.manage');
+      return deleteOfferLetterAsset(db, user, key);
     }
   }
   if (parts[0] === 'offer-templates') {
@@ -2224,6 +2556,61 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
         contentType: 'application/pdf',
         filename: `${tpl.name.replace(/\s+/g, '_')}_preview.pdf`
       };
+    }
+  }
+  if (parts[0] === 'training-plans') {
+    if (parts[1] === 'templates') {
+      const templateId = parts[2];
+      const templateAction = parts[3];
+      if (!templateId && method === 'GET') {
+        permit(user, 'recruit', 'review', 'admin');
+        return listTrainingTemplates(db, user, query);
+      }
+      if (!templateId && method === 'POST') {
+        permit(user, 'recruit', 'admin');
+        return createTrainingTemplate(db, user, body);
+      }
+      if (templateId && !templateAction && method === 'GET') {
+        permit(user, 'recruit', 'review', 'admin');
+        return getTrainingTemplate(db, user, templateId);
+      }
+      if (templateId && !templateAction && method === 'PUT') {
+        permit(user, 'recruit', 'admin');
+        return updateTrainingTemplate(db, user, templateId, body);
+      }
+      if (templateId && templateAction === 'duplicate' && method === 'POST') {
+        permit(user, 'recruit', 'admin');
+        return duplicateTrainingTemplate(db, user, templateId, body);
+      }
+      if (templateId && templateAction === 'status' && method === 'POST') {
+        permit(user, 'recruit', 'admin');
+        return setTrainingTemplateStatus(db, user, templateId, body.status, body.is_default);
+      }
+      if (templateId && templateAction === 'archive' && method === 'POST') {
+        permit(user, 'recruit', 'admin');
+        return archiveTrainingTemplate(db, user, templateId);
+      }
+      if (templateId && method === 'DELETE') {
+        permit(user, 'recruit', 'admin');
+        return archiveTrainingTemplate(db, user, templateId);
+      }
+    }
+    if (parts[1] === 'assets') {
+      const assetId = parts[2];
+      if (!assetId && method === 'POST') {
+        permit(user, 'recruit', 'admin');
+        return uploadTrainingAsset(db, user, body);
+      }
+      if (assetId && method === 'GET') {
+        permit(user, 'recruit', 'review', 'admin');
+        const asset = getTrainingAsset(db, user, assetId);
+        return {
+          isRaw: true,
+          buffer: asset.buffer,
+          contentType: asset.contentType,
+          filename: asset.filename
+        };
+      }
     }
   }
   if (parts[0] === 'agencies') {

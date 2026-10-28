@@ -20,7 +20,10 @@ export function getFromAddress(db = null) {
   return process.env.EMAIL_FROM || process.env.RESEND_FROM_EMAIL || null;
 }
 
-export function isEmailConfigured(db = null) {
+export function isEmailConfigured(db = null, config = null) {
+  if (config?.communicationAdapter || (config?.resendApiKey && (config?.emailFrom || getFromAddress(db)))) {
+    return true;
+  }
   if (db) {
     try {
       const eff = getEffectiveIntegrationConfig(db, 'email_communication');
@@ -179,13 +182,19 @@ export async function sendCandidateCommunication(db, user, body, adapter) {
 
   // Idempotency check: if an idempotency key was supplied and was already processed, return existing
   const idempotencyKey = body.idempotency_key ? String(body.idempotency_key).trim() : null;
+  let commId = id();
+  let isRetryOfFailed = false;
   if (idempotencyKey) {
     const existing = db.prepare('SELECT * FROM candidate_communications WHERE idempotency_key = ?').get(idempotencyKey);
     if (existing) {
-      return {
-        ...existing,
-        idempotent_replay: true
-      };
+      if (existing.status !== 'failed') {
+        return {
+          ...existing,
+          idempotent_replay: true
+        };
+      }
+      commId = existing.id;
+      isRetryOfFailed = true;
     }
   }
 
@@ -213,38 +222,45 @@ export async function sendCandidateCommunication(db, user, body, adapter) {
   }
 
   const subject = body.subject ? validateText(body.subject, 'Subject', 300) : rendered.subject;
-  const html = rendered.html;
-  const text = rendered.text;
-  const commId = id();
+  const html = body.html || rendered.html;
+  const text = body.text || rendered.text;
   const createdAt = now();
 
   // Create communication record in queued state
   try {
     transaction(db, () => {
-      db.prepare(`
-        INSERT INTO candidate_communications(
-          id, candidate_id, requisition_id, channel, template_id,
-          recipient_email, subject, idempotency_key, provider_message_id,
-          status, error_message, metadata, sent_by, created_at, updated_at
-        ) VALUES(?, ?, ?, 'email', ?, ?, ?, ?, NULL, 'queued', NULL, ?, ?, ?, ?)
-      `).run(
-        commId,
-        candidateId,
-        reqId,
-        templateId,
-        recipient,
-        subject,
-        idempotencyKey,
-        JSON.stringify({ isEssential: rendered.isEssential, consentReference: consent.opted_out ? 'operational_exemption' : 'active_consent' }),
-        user.id,
-        createdAt,
-        createdAt
-      );
+      if (isRetryOfFailed) {
+        db.prepare(`
+          UPDATE candidate_communications
+          SET status = 'queued', error_message = NULL, recipient_email = ?, subject = ?, updated_at = ?
+          WHERE id = ?
+        `).run(recipient, subject, createdAt, commId);
+      } else {
+        db.prepare(`
+          INSERT INTO candidate_communications(
+            id, candidate_id, requisition_id, channel, template_id,
+            recipient_email, subject, idempotency_key, provider_message_id,
+            status, error_message, metadata, sent_by, created_at, updated_at
+          ) VALUES(?, ?, ?, 'email', ?, ?, ?, ?, NULL, 'queued', NULL, ?, ?, ?, ?)
+        `).run(
+          commId,
+          candidateId,
+          reqId,
+          templateId,
+          recipient,
+          subject,
+          idempotencyKey,
+          JSON.stringify({ isEssential: rendered.isEssential, consentReference: consent.opted_out ? 'operational_exemption' : 'active_consent' }),
+          user.id,
+          createdAt,
+          createdAt
+        );
+      }
     });
   } catch (insertErr) {
     if (idempotencyKey && String(insertErr.message).includes('UNIQUE constraint')) {
       const existing = db.prepare('SELECT * FROM candidate_communications WHERE idempotency_key = ?').get(idempotencyKey);
-      if (existing) {
+      if (existing && existing.status !== 'failed') {
         return {
           ...existing,
           idempotent_replay: true
@@ -319,3 +335,109 @@ export async function sendCandidateCommunication(db, user, body, adapter) {
     throw new HttpError(errorStatus, `Email delivery failed: ${sanitizedError}`);
   }
 }
+
+/**
+ * Centralized pipeline stage transition notification service.
+ * Enforces consistent status email triggers across all stage changes.
+ */
+export async function sendStageTransitionNotification({
+  db,
+  user,
+  applicationId,
+  oldStage,
+  newStage,
+  candidate = null,
+  requisition = null,
+  notes = '',
+  sendNotification = true,
+  config = null,
+  adapter = null,
+  templateId = null
+}) {
+  if (oldStage === newStage) {
+    return { sent: false, reason: 'unchanged_stage' };
+  }
+  if (sendNotification === false) {
+    return { sent: false, reason: 'notification_disabled' };
+  }
+
+  const emailConfigured = isEmailConfigured(db, config) || Boolean(adapter || config?.communicationAdapter);
+  if (!emailConfigured) {
+    return { sent: false, reason: 'email_not_configured' };
+  }
+
+  let cand = candidate;
+  if (!cand && applicationId) {
+    const app = db.prepare('SELECT candidate_id FROM applications WHERE id = ?').get(applicationId);
+    if (app?.candidate_id) {
+      cand = db.prepare('SELECT id, name, email, team FROM candidates WHERE id = ?').get(app.candidate_id);
+    }
+  }
+
+  if (!cand || !cand.email) {
+    return { sent: false, reason: 'missing_candidate_email' };
+  }
+
+  let req = requisition;
+  if (!req && applicationId) {
+    req = db.prepare('SELECT r.* FROM requisitions r JOIN applications a ON a.requisition_id = r.id WHERE a.id = ?').get(applicationId);
+  }
+
+  let commAdapter = adapter || config?.communicationAdapter;
+  if (!commAdapter) {
+    const { CommunicationAdapter } = await import('../adapters.js');
+    commAdapter = new CommunicationAdapter({ db, fromEnv: true, transport: config?.transport });
+  }
+
+  const chosenTemplateId = templateId || (newStage === 'Rejected' ? 'application_rejection' : 'stage_update');
+  const appOrigin = config?.origin || (typeof process !== 'undefined' ? process.env?.APP_ORIGIN : null) || 'http://localhost:3000';
+
+  const emailVars = {
+    candidate_name: cand.name,
+    candidate_email: cand.email,
+    requisition_title: req?.title || '',
+    team: req?.team || cand.team || '',
+    stage: newStage,
+    new_stage: newStage,
+    previous_stage: oldStage,
+    from_stage: oldStage,
+    notes: notes || '',
+    app_origin: appOrigin
+  };
+
+  const safeAppId = String(applicationId || '').replace(/[^a-zA-Z0-9_-]/g, '_');
+  const safeNew = String(newStage || '').replace(/[^a-zA-Z0-9_-]/g, '_');
+  const safeOld = String(oldStage || 'none').replace(/[^a-zA-Z0-9_-]/g, '_');
+  const idempotencyKey = `stage_update_${safeAppId}_${safeNew}_${safeOld}`;
+
+  try {
+    const result = await sendCandidateCommunication(db, user, {
+      candidate_id: cand.id,
+      requisition_id: req?.id || undefined,
+      template_id: chosenTemplateId,
+      recipient_email: cand.email,
+      variables: emailVars,
+      idempotency_key: idempotencyKey
+    }, commAdapter);
+
+    audit(db, user.id, 'application.stage_email_sent', applicationId, {
+      stage: newStage,
+      previous_stage: oldStage,
+      candidate_id: cand.id,
+      recipient: cand.email,
+      communication_id: result.id
+    });
+
+    return { sent: true, communication_id: result.id, idempotent_replay: Boolean(result.idempotent_replay) };
+  } catch (emailErr) {
+    audit(db, user.id, 'application.stage_email_failed', applicationId, {
+      stage: newStage,
+      previous_stage: oldStage,
+      candidate_id: cand.id,
+      recipient: cand.email,
+      error: emailErr.message
+    });
+    return { sent: false, error: emailErr.message };
+  }
+}
+

@@ -5,7 +5,7 @@
  * and authoritative candidate offer issuance.
  */
 
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { id, now, audit, transaction } from '../db.js';
 import { HttpError, requirePermission as permit, can, text as validateText } from '../policy.js';
@@ -503,7 +503,7 @@ export function setOfferTemplateStatus(db, user, templateId, status, isDefault =
 /**
  * Uploads and stores a company letterhead asset.
  */
-export function uploadLetterheadAsset(db, user, { buffer, filename, format = null } = {}, storage = null) {
+export function uploadLetterheadAsset(db, user, { buffer, filename, format = null, name = null, scaling = null, pageTarget = null } = {}, storage = null) {
   permit(user, 'offers.templates.manage', 'offers.assets.manage', 'recruit', 'admin');
   if (!buffer || !Buffer.isBuffer(buffer)) {
     throw new HttpError(400, 'Missing or invalid file buffer for letterhead upload.');
@@ -519,15 +519,19 @@ export function uploadLetterheadAsset(db, user, { buffer, filename, format = nul
 
   writeFileSync(diskPath, processed.buffer, { mode: 0o600 });
   const nowStr = now();
+  const displayName = (name && String(name).trim()) || processed.filename;
+  const scalingMode = scaling || 'fit';
+  const targetPages = pageTarget || 'all';
 
   db.prepare(`
     INSERT INTO offer_letter_assets(
-      id, filename, file_format, file_size, mime_type, storage_path,
-      sha256_hash, width, height, created_by, created_at
+      id, name, filename, file_format, file_size, mime_type, storage_path,
+      sha256_hash, width, height, scaling_mode, page_target, created_by, created_at
     )
-    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     assetId,
+    displayName,
     processed.filename,
     processed.format,
     processed.size,
@@ -536,11 +540,14 @@ export function uploadLetterheadAsset(db, user, { buffer, filename, format = nul
     processed.sha256,
     processed.width,
     processed.height,
+    scalingMode,
+    targetPages,
     user.id,
     nowStr
   );
 
   audit(db, user.id, 'offer_asset.uploaded', assetId, {
+    name: displayName,
     filename: processed.filename,
     format: processed.format,
     width: processed.width,
@@ -549,13 +556,66 @@ export function uploadLetterheadAsset(db, user, { buffer, filename, format = nul
 
   return {
     id: assetId,
+    name: displayName,
     filename: processed.filename,
     format: processed.format,
+    file_format: processed.format,
     mimeType: processed.mimeType,
     width: processed.width,
     height: processed.height,
-    size: processed.size
+    size: processed.size,
+    file_size: processed.size,
+    scaling_mode: scalingMode,
+    page_target: targetPages,
+    created_at: nowStr
   };
+}
+
+/**
+ * Lists all uploaded company letterhead assets.
+ */
+export function listOfferLetterAssets(db, user) {
+  permit(user, 'offers.templates.read', 'offers.read', 'recruit', 'review', 'admin');
+  const rows = db.prepare('SELECT * FROM offer_letter_assets ORDER BY created_at DESC').all();
+  return rows.map(r => ({
+    id: r.id,
+    name: r.name || r.filename,
+    filename: r.filename,
+    file_format: r.file_format,
+    format: r.file_format,
+    file_size: r.file_size,
+    size: r.file_size,
+    mime_type: r.mime_type,
+    width: r.width,
+    height: r.height,
+    scaling_mode: r.scaling_mode || 'fit',
+    page_target: r.page_target || 'all',
+    created_at: r.created_at,
+    created_by: r.created_by
+  }));
+}
+
+/**
+ * Deletes a letterhead asset and its physical file on disk.
+ */
+export function deleteOfferLetterAsset(db, user, assetId) {
+  permit(user, 'offers.templates.manage', 'offers.assets.manage', 'recruit', 'admin');
+  const record = db.prepare('SELECT * FROM offer_letter_assets WHERE id = ?').get(assetId);
+  if (!record) throw new HttpError(404, 'Letterhead asset not found.');
+
+  if (existsSync(record.storage_path)) {
+    try {
+      unlinkSync(record.storage_path);
+    } catch {}
+  }
+
+  db.prepare('DELETE FROM offer_letter_assets WHERE id = ?').run(assetId);
+
+  audit(db, user.id, 'offer_asset.deleted', assetId, {
+    filename: record.filename
+  });
+
+  return { success: true, id: assetId };
 }
 
 /**

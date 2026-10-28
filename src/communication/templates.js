@@ -13,7 +13,16 @@ export function escapeHtml(str) {
     .replace(/'/g, '&#39;');
 }
 
-function baseLayout({ title, bodyHtml, candidateName, isOperational = false }) {
+export function resolveAppOrigin(vars = {}) {
+  const raw = vars.app_origin || vars.appOrigin || (typeof process !== 'undefined' && (process.env.APP_ORIGIN || process.env.ORIGIN)) || 'http://localhost:3000';
+  return String(raw).replace(/\/+$/, '');
+}
+
+function baseLayout({ title, bodyHtml, candidateName, isOperational = false, appOrigin = null }) {
+  const origin = resolveAppOrigin({ appOrigin });
+  const orbitLogoUrl = `${origin}/icon-192.png`;
+  const mechlinLogoUrl = `${origin}/mechlin-logo.webp`;
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -25,9 +34,29 @@ function baseLayout({ title, bodyHtml, candidateName, isOperational = false }) {
   <div style="max-width: 560px; margin: 32px auto; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#0f172a" style="border-collapse: collapse; background-color: #0f172a;">
       <tr>
-        <td bgcolor="#0f172a" style="background-color: #0f172a; padding: 24px 32px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
-          <span style="font-size: 20px; font-weight: 700; color: #ffffff; letter-spacing: -0.5px;">Orbit</span>
-          <span style="font-size: 14px; color: #cbd5e1; margin-left: 8px;">&middot; Mechlin Recruitment</span>
+        <td bgcolor="#0f172a" style="background-color: #0f172a; padding: 20px 32px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse;">
+            <tr>
+              <td style="vertical-align: middle; padding: 0 16px 0 0;">
+                <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse;">
+                  <tr>
+                    <td style="vertical-align: middle;">
+                      <img src="${orbitLogoUrl}" alt="Orbit" width="30" height="30" style="display: block; width: 30px; height: 30px; border-radius: 6px; border: 0;" />
+                    </td>
+                    <td style="vertical-align: middle; padding-left: 10px;">
+                      <span style="font-size: 19px; font-weight: 700; color: #ffffff; letter-spacing: -0.5px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1;">Orbit</span>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+              <td style="vertical-align: middle; padding: 0 16px; border-left: 1px solid rgba(255, 255, 255, 0.35); height: 26px;">
+                &nbsp;
+              </td>
+              <td style="vertical-align: middle; padding: 0 0 0 2px;">
+                <img src="${mechlinLogoUrl}" alt="Mechlin Technologies" width="130" height="30" style="display: block; max-height: 30px; width: auto; border: 0;" />
+              </td>
+            </tr>
+          </table>
         </td>
       </tr>
     </table>
@@ -497,32 +526,53 @@ export const EXTRA_TEMPLATES = {
       const team = vars.team ? ` with the ${vars.team} team` : '';
       const notes = vars.notes ? `<div style="background-color: #f1f5f9; border-radius: 8px; padding: 14px 16px; margin: 16px 0;"><p style="margin: 0; font-size: 14px; color: #334155;"><strong>Note from Hiring Team:</strong><br>${escapeHtml(vars.notes)}</p></div>` : '';
 
-      let stageMessage = 'Your application is progressing through our evaluation process. Thank you for your continued interest in Mechlin Orbit.';
-      if (stage === 'Screening') {
+      let stageMessage = `Your application has moved to the ${stage} stage in our recruitment process. Our talent acquisition team will keep you informed of subsequent steps.`;
+      const normStage = String(stage).trim().toLowerCase();
+
+      if (normStage === 'applied') {
+        stageMessage = 'Your application has been received and logged into our candidate pipeline. Our recruiting team will review your qualifications and credentials.';
+      } else if (normStage === 'screening' || normStage === 'screening round') {
         stageMessage = 'Our recruiting team is currently reviewing your profile and credentials. We will reach out if there is strong alignment for an initial discussion.';
-      } else if (stage === 'Interview') {
+      } else if (normStage === 'interview round 1' || normStage === 'round 1') {
+        stageMessage = 'Congratulations on advancing to Interview Round 1! Our recruiting team will follow up shortly to coordinate interview scheduling.';
+      } else if (normStage === 'interview round 2' || normStage === 'round 2') {
+        stageMessage = 'Congratulations on advancing to Interview Round 2! Our team will follow up with scheduling details for your next technical evaluation.';
+      } else if (normStage === 'interview round 3' || normStage === 'round 3') {
+        stageMessage = 'Congratulations on advancing to Interview Round 3! Our recruiting team will coordinate your final round interview.';
+      } else if (normStage === 'hr round' || normStage === 'hr discussion') {
+        stageMessage = 'Congratulations on advancing to the HR Round! Our talent acquisition team will connect with you to discuss organizational alignment and next steps.';
+      } else if (normStage === 'interview') {
         stageMessage = 'Congratulations on advancing to the interview stage! Our recruiting team will follow up shortly to coordinate interview scheduling.';
-      } else if (stage === 'Offer') {
+      } else if (normStage === 'offer') {
         stageMessage = 'We are pleased to inform you that your application has advanced to the offer stage. Our talent team will be in touch with details regarding your formal employment offer.';
-      } else if (stage === 'Hired') {
+      } else if (normStage === 'pre-onboarding training' || normStage === 'training') {
+        stageMessage = 'Congratulations! Your application has advanced to Pre-Onboarding Training. Our team will share your orientation milestones and curriculum.';
+      } else if (normStage === 'onboarding') {
+        stageMessage = 'Congratulations on completing your evaluation milestones! Your application has advanced to Onboarding as we prepare for your official start.';
+      } else if (normStage === 'hired') {
         stageMessage = 'Congratulations on successfully completing our hiring process and joining Mechlin! Welcome to the team!';
-      } else if (stage === 'Applied') {
-        stageMessage = 'Your application has been received and logged into our candidate pipeline. Our recruiting team will review your qualifications.';
+      } else if (normStage === 'rejected') {
+        stageMessage = 'Thank you for your interest in Mechlin and for the time invested in our evaluation process. After careful review, we have decided to move forward with other applicants whose experience more closely matches our immediate needs for this specific role.';
+      } else if (normStage === 'revoked') {
+        stageMessage = 'Please be advised that your formal employment offer for this position has been revoked. If you have questions regarding this decision, please contact your talent acquisition representative.';
       }
 
-      const title = `Application Status Update: ${stage}`;
-      const subject = `Update on your application for ${reqTitle}: ${stage}`;
+      const isRejection = normStage === 'rejected' || normStage === 'revoked';
+      const title = isRejection ? `Application Status Update: ${stage}` : `Application Status Update: ${stage}`;
+      const subject = isRejection ? `Update regarding your application for ${reqTitle}: ${stage}` : `Update on your application for ${reqTitle}: ${stage}`;
+      const appOrigin = resolveAppOrigin(vars);
 
       const html = baseLayout({
         title,
         candidateName,
         isOperational: true,
+        appOrigin,
         bodyHtml: `
           <p style="font-size: 15px; margin-bottom: 16px;">Dear ${escapeHtml(candidateName)},</p>
           <p style="font-size: 15px; margin-bottom: 16px;">We would like to share an update regarding your application for the <strong>${escapeHtml(reqTitle)}</strong> position${escapeHtml(team)}.</p>
           <div style="background-color: #f1f5f9; border-radius: 8px; padding: 16px; margin: 20px 0;">
             <p style="margin: 0 0 6px 0; font-size: 14px;"><strong>Position:</strong> ${escapeHtml(reqTitle)}</p>
-            <p style="margin: 0 0 6px 0; font-size: 14px;"><strong>Updated Pipeline Stage:</strong> <span style="background-color: #e0e7ff; color: #3730a3; padding: 2px 8px; border-radius: 4px; font-weight: 600;">${escapeHtml(stage)}</span></p>
+            <p style="margin: 0 0 6px 0; font-size: 14px;"><strong>Updated Pipeline Stage:</strong> <span style="background-color: ${isRejection ? '#fee2e2' : '#e0e7ff'}; color: ${isRejection ? '#991b1b' : '#3730a3'}; padding: 2px 8px; border-radius: 4px; font-weight: 600;">${escapeHtml(stage)}</span></p>
             ${previousStage ? `<p style="margin: 0; font-size: 13px; color: #64748b;">Previous Stage: ${escapeHtml(previousStage)}</p>` : ''}
           </div>
           <p style="font-size: 15px; margin-bottom: 16px;">${stageMessage}</p>
@@ -531,7 +581,88 @@ export const EXTRA_TEMPLATES = {
         `
       });
 
-      const text = `Dear ${candidateName},\n\nWe would like to share an update regarding your application for the ${reqTitle} position${team}.\n\nUpdated Pipeline Stage: ${stage}${previousStage ? ` (Previous: ${previousStage})` : ''}\n\n${stageMessage}\n${vars.notes ? `\nNote from Hiring Team:\n${vars.notes}\n` : ''}\nOur talent acquisition team will keep you informed as we proceed through the process.\n\nWarm regards,\nThe Mechlin Talent Team`;
+      const text = `Orbit | Mechlin Technologies\n=================================\n\nDear ${candidateName},\n\nWe would like to share an update regarding your application for the ${reqTitle} position${team}.\n\nUpdated Pipeline Stage: ${stage}${previousStage ? ` (Previous: ${previousStage})` : ''}\n\n${stageMessage}\n${vars.notes ? `\nNote from Hiring Team:\n${vars.notes}\n` : ''}\nOur talent acquisition team will keep you informed as we proceed through the process.\n\nWarm regards,\nThe Mechlin Talent Team`;
+
+      return { subject, html, text };
+    }
+  },
+  pre_onboarding_training: {
+    id: 'pre_onboarding_training',
+    name: 'Pre-Onboarding Training Plan',
+    category: 'training',
+    isEssential: true,
+    render(vars) {
+      if (vars.html && vars.text) {
+        return {
+          subject: vars.subject || 'Pre-Onboarding Training Plan',
+          html: vars.html,
+          text: vars.text
+        };
+      }
+      const candidateName = vars.candidate_name || 'Candidate';
+      const reqTitle = vars.requisition_title || vars.position || 'Position';
+      const planName = vars.training_plan_name || vars.plan_name || 'Pre-Onboarding Training Plan';
+      const intro = vars.introduction || 'Welcome to Mechlin! We have prepared this pre-onboarding training plan to support your preparation prior to your start date.';
+      const objectives = vars.objectives || '';
+      const duration = vars.duration_text || vars.duration || '';
+      const supportName = vars.support_contact_name || vars.contact_name || 'The Mechlin Talent Team';
+      const supportEmail = vars.support_contact_email || vars.contact_email || 'hr@mechlintech.com';
+
+      const title = vars.subject || `Pre-Onboarding Training Plan: ${reqTitle}`;
+      const subject = title;
+
+      let sectionsHtml = '';
+      if (Array.isArray(vars.sections) && vars.sections.length > 0) {
+        sectionsHtml = vars.sections.map((s, idx) => `
+          <div style="margin-bottom: 20px; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px;">
+            <h3 style="margin-top: 0; margin-bottom: 8px; font-size: 15px; font-weight: 600; color: #0f172a;">${escapeHtml(s.title || `Section ${idx + 1}`)}</h3>
+            <p style="margin: 0; font-size: 14px; color: #334155; line-height: 1.5; white-space: pre-wrap;">${escapeHtml(s.content || '')}</p>
+          </div>
+        `).join('');
+      }
+
+      let linksHtml = '';
+      if (Array.isArray(vars.learning_links) && vars.learning_links.length > 0) {
+        linksHtml = `
+          <div style="margin-top: 24px;">
+            <h3 style="font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #64748b; margin-bottom: 12px;">Recommended Learning Links & Resources</h3>
+            ${vars.learning_links.map(l => `
+              <div style="margin-bottom: 10px; padding: 12px; background: #ffffff; border: 1px solid #cbd5e1; border-radius: 6px;">
+                <a href="${escapeHtml(l.url)}" style="font-weight: 600; color: #0284c7; text-decoration: none; font-size: 14px;">${escapeHtml(l.title || l.url)} &rarr;</a>
+                ${l.description ? `<p style="margin: 4px 0 0 0; font-size: 13px; color: #475569;">${escapeHtml(l.description)}</p>` : ''}
+              </div>
+            `).join('')}
+          </div>
+        `;
+      }
+
+      const html = baseLayout({
+        title,
+        candidateName,
+        isOperational: true,
+        bodyHtml: `
+          <p style="font-size: 15px; margin-bottom: 16px;">Dear ${escapeHtml(candidateName)},</p>
+          <p style="font-size: 15px; margin-bottom: 16px;">${escapeHtml(intro)}</p>
+          <div style="background-color: #f1f5f9; border-radius: 8px; padding: 16px; margin: 20px 0;">
+            <p style="margin: 0 0 6px 0; font-size: 14px;"><strong>Target Position:</strong> ${escapeHtml(reqTitle)}</p>
+            <p style="margin: 0 0 6px 0; font-size: 14px;"><strong>Training Plan:</strong> ${escapeHtml(planName)}</p>
+            ${duration ? `<p style="margin: 0; font-size: 13px; color: #64748b;"><strong>Duration:</strong> ${escapeHtml(duration)}</p>` : ''}
+          </div>
+          ${objectives ? `
+            <div style="background-color: #eff6ff; border-left: 4px solid #3b82f6; border-radius: 4px; padding: 14px 16px; margin: 20px 0;">
+              <h4 style="margin: 0 0 8px 0; font-size: 14px; color: #1e40af;">Training Objectives & Learning Outcomes</h4>
+              <p style="margin: 0; font-size: 14px; color: #1e3a8a; line-height: 1.5; white-space: pre-wrap;">${escapeHtml(objectives)}</p>
+            </div>
+          ` : ''}
+          ${sectionsHtml}
+          ${linksHtml}
+          <div style="margin-top: 24px; padding: 14px; background-color: #f8fafc; border-radius: 8px; border: 1px solid #e2e8f0; font-size: 13px; color: #475569;">
+            <strong>Need Assistance?</strong> For questions regarding this training plan, please reach out to ${escapeHtml(supportName)} at <a href="mailto:${escapeHtml(supportEmail)}" style="color: #0284c7;">${escapeHtml(supportEmail)}</a>.
+          </div>
+        `
+      });
+
+      const text = `Dear ${candidateName},\n\n${intro}\n\nPosition: ${reqTitle}\nTraining Plan: ${planName}${duration ? `\nDuration: ${duration}` : ''}\n\n${objectives ? `Objectives:\n${objectives}\n\n` : ''}${Array.isArray(vars.sections) ? vars.sections.map((s, i) => `${i + 1}. ${s.title}\n${s.content}\n`).join('\n') : ''}\nSupport Contact: ${supportName} (${supportEmail})\n\nWarm regards,\nThe Mechlin Talent Team`;
 
       return { subject, html, text };
     }
