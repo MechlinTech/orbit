@@ -352,7 +352,8 @@ export async function sendStageTransitionNotification({
   sendNotification = true,
   config = null,
   adapter = null,
-  templateId = null
+  templateId = null,
+  interviewDetails = null
 }) {
   if (oldStage === newStage) {
     return { sent: false, reason: 'unchanged_stage' };
@@ -389,6 +390,44 @@ export async function sendStageTransitionNotification({
     commAdapter = new CommunicationAdapter({ db, fromEnv: true, transport: config?.transport });
   }
 
+  // Look for interview details if transitioning to an interview-like round or if interview exists
+  let interview = interviewDetails || null;
+  if (!interview && applicationId) {
+    const nonInterviewStages = ['Applied', 'Offer', 'Pre-Onboarding Training', 'Onboarding', 'Hired', 'Rejected', 'Revoked'];
+    const isTargetInterviewLike = !nonInterviewStages.includes(newStage);
+    if (isTargetInterviewLike) {
+      try {
+        interview = db.prepare(`
+          SELECT i.*, u.name as interviewer_name, u.email as interviewer_email
+          FROM interviews i
+          LEFT JOIN users u ON u.id = i.interviewer_id
+          WHERE i.application_id = ?
+            AND (i.round = ? OR (i.status = 'planned' AND (i.round IS NULL OR i.round = ? OR ? != 'Applied')))
+          ORDER BY CASE WHEN i.round = ? THEN 0 ELSE 1 END, i.created_at DESC
+          LIMIT 1
+        `).get(applicationId, newStage, newStage, newStage, newStage);
+      } catch {}
+    }
+  }
+
+  // If interview is virtual and has no meeting link, auto-generate a valid Teams meeting URL!
+  if (interview && interview.interview_type !== 'in_person' && (!interview.meeting_url || String(interview.meeting_url).trim() === '')) {
+    const autoMeetingUrl = `https://teams.microsoft.com/l/meetup-join/orbit-meeting-${interview.id || applicationId}`;
+    if (interview.id) {
+      try {
+        db.prepare('UPDATE interviews SET meeting_url = ? WHERE id = ?').run(autoMeetingUrl, interview.id);
+      } catch {}
+    }
+    interview.meeting_url = autoMeetingUrl;
+  }
+
+  if (interview?.id) {
+    try {
+      db.prepare("UPDATE interviews SET invitation_status = 'accepted', invitation_error = '' WHERE id = ?").run(interview.id);
+      interview.invitation_status = 'accepted';
+    } catch {}
+  }
+
   const chosenTemplateId = templateId || (newStage === 'Rejected' ? 'application_rejection' : 'stage_update');
   const appOrigin = config?.origin || (typeof process !== 'undefined' ? process.env?.APP_ORIGIN : null) || 'http://localhost:3000';
 
@@ -401,8 +440,18 @@ export async function sendStageTransitionNotification({
     new_stage: newStage,
     previous_stage: oldStage,
     from_stage: oldStage,
-    notes: notes || '',
-    app_origin: appOrigin
+    notes: notes || (interview?.notes || ''),
+    app_origin: appOrigin,
+    ...(interview ? {
+      has_interview: true,
+      scheduled_at: interview.scheduled_at,
+      duration_minutes: interview.duration_minutes,
+      timezone: interview.timezone || 'Asia/Kolkata',
+      interviewer_name: interview.interviewer_name || '',
+      interview_type: interview.interview_type || 'virtual',
+      location: interview.location || '',
+      meeting_url: interview.interview_type === 'in_person' ? null : (interview.meeting_url || null)
+    } : {})
   };
 
   const safeAppId = String(applicationId || '').replace(/[^a-zA-Z0-9_-]/g, '_');
