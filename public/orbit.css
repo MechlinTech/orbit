@@ -2039,8 +2039,35 @@ input[type="checkbox"],input[type="radio"]{width:18px!important;min-height:18px!
 .training-badge-revoked { background: #450a0a; color: #fee2e2; border: 1px solid #991b1b; }
 .training-badge-not-started { background: #f8fafc; color: #475569; border: 1px solid #cbd5e1; }
 
-
-
-
-
+/* Pipeline board card actions layout: prevent button text and badge overflow */
+.card .actions {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.card button,
+.card .actions button {
+  white-space: normal !important;
+  word-break: break-word;
+  overflow-wrap: break-word;
+  min-width: 0;
+  max-width: 100%;
+}
+.card button.skip-stage-btn {
+  font-weight: 600;
+  border-style: dashed;
+}
+.interview-card-chip,
+.training-card-chip {
+  max-width: 100%;
+  min-width: 0;
+}
+.interview-card-chip .badge,
+.training-card-chip .badge {
+  white-space: normal !important;
+  word-break: break-word;
+  overflow-wrap: break-word;
+  max-width: 100%;
+  display: inline-block;
+}
 
