@@ -26,7 +26,7 @@ const getNavList = () => {
       ...(allows('review') || allows('recruit') || allows('interview') || allows('interviews.read') ? ['Interviews'] : []),
       ...(allows('refer') || allows('referrals.read') ? ['Referrals'] : []),
       ...(allows('offers.templates.read') || allows('offers.read') || allows('recruit') || allows('admin') ? ['Offer Templates'] : []),
-      ...(allows('recruit') || allows('admin') || allows('applications.evaluate') ? ['Training Plans'] : []),
+      ...(allows('training.read') || allows('training.manage') || allows('training.lifecycle') || allows('applications.evaluate') || allows('recruit') || allows('admin') ? ['Training Plans'] : []),
       ...(allows('agencies.read') || allows('admin') || allows('recruit') ? ['Agencies'] : []),
       ...manage
     ];
@@ -39,7 +39,7 @@ const getNavList = () => {
     ...(allows('interviews.read') || allows('interviews.evaluate') || allows('interview') || allows('review') || allows('recruit') ? ['Interviews'] : []),
     ...(allows('referrals.read') || allows('refer') ? ['Referrals'] : []),
     ...(allows('offers.templates.read') || allows('offers.read') || allows('recruit') || allows('admin') ? ['Offer Templates'] : []),
-    ...(allows('applications.evaluate') || allows('recruit') || allows('admin') ? ['Training Plans'] : []),
+    ...(allows('training.read') || allows('training.manage') || allows('training.lifecycle') || allows('applications.evaluate') || allows('recruit') || allows('admin') ? ['Training Plans'] : []),
     ...(allows('agencies.read') || allows('admin') || allows('recruit') ? ['Agencies'] : []),
     ...manage
   ];
@@ -1351,7 +1351,11 @@ async function render() {
                 if (prevStage) {
                   actionsHtml += button(`Back to ${prevStage}`,'move',a.id,`data-stage="${escape(prevStage)}" class="secondary"`);
                 }
-                if (isTraining && (allowAction('applications.evaluate','recruit') || allows('recruit') || allows('admin'))) {
+                const canOpenTraining = allowAction('applications.evaluate','recruit') || allows('training.read') || allows('training.manage') || allows('training.lifecycle') || allows('recruit') || allows('admin');
+                const canRunTraining = allows('training.lifecycle') || allows('recruit') || allows('admin');
+                const canRateTraining = allowAction('applications.evaluate','recruit') || allows('recruit') || allows('admin');
+                const canPlanTraining = allows('training.manage') || allows('training.read') || allows('recruit') || allows('admin');
+                if (isTraining && canOpenTraining) {
                   actionsHtml += button('Training Details', 'view-training-details', a.id, 'class="secondary" title="View training history, evaluations, and deadline extensions" style="font-size:0.75rem;padding:4px 8px;"');
 
                   const isRevoked = a.offer_status === 'revoked';
@@ -1361,22 +1365,26 @@ async function render() {
 
                   if (!isRevoked) {
                     if (notStarted) {
-                      actionsHtml += button('Start Training', 'start-training', a.id, 'class="primary"');
+                      if (canRunTraining) actionsHtml += button('Start Training', 'start-training', a.id, 'class="primary"');
                     } else if (isFailed) {
-                      actionsHtml += button('Restart Training', 'restart-training', a.id, 'class="primary" title="Start retraining attempt"');
-                      actionsHtml += button('Extend Deadline', 'extend-training-deadline', a.id, 'class="secondary"');
-                      actionsHtml += button('Revoke Offer', 'training-revoke-offer', a.id, 'class="secondary text-button" style="color:var(--negative);"');
+                      if (canRunTraining) {
+                        actionsHtml += button('Restart Training', 'restart-training', a.id, 'class="primary" title="Start retraining attempt"');
+                        actionsHtml += button('Extend Deadline', 'extend-training-deadline', a.id, 'class="secondary"');
+                        actionsHtml += button('Revoke Offer', 'training-revoke-offer', a.id, 'class="secondary text-button" style="color:var(--negative);"');
+                      }
                     } else if (isDone) {
                       if (nextStage) {
                         actionsHtml += button(`Move to ${nextStage}`, 'move', a.id, `data-stage="${escape(nextStage)}" class="primary"`);
                       }
                     } else {
                       // in_progress, extended, retraining, or overdue
-                      actionsHtml += button('Evaluate', 'rate-training', a.id, 'class="primary training-rate-btn"');
-                      actionsHtml += button('Extend Deadline', 'extend-training-deadline', a.id, 'class="secondary"');
-                      actionsHtml += button('Revoke Offer', 'training-revoke-offer', a.id, 'class="secondary text-button" style="color:var(--negative);"');
+                      if (canRateTraining) actionsHtml += button('Evaluate', 'rate-training', a.id, 'class="primary training-rate-btn"');
+                      if (canRunTraining) {
+                        actionsHtml += button('Extend Deadline', 'extend-training-deadline', a.id, 'class="secondary"');
+                        actionsHtml += button('Revoke Offer', 'training-revoke-offer', a.id, 'class="secondary text-button" style="color:var(--negative);"');
+                      }
                     }
-                    actionsHtml += button('Training Plan', 'review-training-plan', a.id, 'class="secondary" style="font-size:0.75rem;padding:4px 8px;"');
+                    if (canPlanTraining) actionsHtml += button('Training Plan', 'review-training-plan', a.id, 'class="secondary" style="font-size:0.75rem;padding:4px 8px;"');
                   }
                 } else {
                   const hasPendingInv = isInterviewStage && Boolean(a.pending_interview);
@@ -1532,7 +1540,7 @@ async function render() {
         );
       }
 
-      const canManageTraining=allowAction('applications.evaluate','recruit') || allows('recruit') || allows('admin');
+      const canManageTraining=allows('training.manage') || allows('recruit') || allows('admin');
       html = heading('Configure position- and role-specific training plans, learning resources, and candidate preparation workflows.', canManageTraining?button('+ New Training Plan','new-training-template'):'')+
       `<div class="metrics">${[['Total plans',templates.length,'Training Plans','Configured training plans'],['Active plans',activeCount,'Requisitions','Available for candidate training'],['Draft plans',draftCount,'Settings','In design and revision'],['Default plan',defaultTpl?defaultTpl.name:'None','Candidates',defaultTpl?`v${defaultTpl.version} (Active)`:'Auto-selected fallback']].map(([label,count,i,note],n)=>`<div class="metric metric-${n}"><div class="metric-top"><span>${label}</span><span class="metric-icon">${icon(i)}</span></div><strong style="font-size:1.15rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${count}</strong><small>${note}</small></div>`).join('')}</div>`+
       `<section class="panel">`+
@@ -1552,10 +1560,10 @@ async function render() {
               `<option value="draft" ${window._trainingFilterStatus==='draft'?'selected':''}>Drafts only</option>`+
               `<option value="archived" ${window._trainingFilterStatus==='archived'?'selected':''}>Archived only</option>`+
             `</select>`+
-            `<button type="button" class="training-btn-new" data-action="new-training-template">`+
+            (canManageTraining ? `<button type="button" class="training-btn-new" data-action="new-training-template">`+
               `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>`+
               `<span>New Plan</span>`+
-            `</button>`+
+            `</button>` : '')+
           `</div>`+
         `</div>`+
         (templates.length ? (
@@ -1657,15 +1665,15 @@ async function render() {
                 `</td>` +
                 `<td>` +
                   `<div class="plan-actions-group">` +
-                    `<button type="button" class="plan-btn-action plan-btn-primary" data-action="edit-training-template" data-id="${t.id}" title="Edit plan modules and syllabus">` +
+                    (canManageTraining ? `<button type="button" class="plan-btn-action plan-btn-primary" data-action="edit-training-template" data-id="${t.id}" title="Edit plan modules and syllabus">` +
                       `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>` +
                       `<span>Edit</span>` +
-                    `</button>` +
+                    `</button>` : '') +
                     `<button type="button" class="plan-btn-action plan-btn-secondary" data-action="preview-training-template" data-id="${t.id}" title="Preview syllabus & resource portal">` +
                       `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>` +
                       `<span>Preview</span>` +
                     `</button>` +
-                    `<button type="button" class="plan-btn-icon" data-action="duplicate-training-template" data-id="${t.id}" title="Duplicate this training plan" aria-label="Duplicate plan">` +
+                    (canManageTraining ? `<button type="button" class="plan-btn-icon" data-action="duplicate-training-template" data-id="${t.id}" title="Duplicate this training plan" aria-label="Duplicate plan">` +
                       `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>` +
                     `</button>` +
                     `${!t.is_default ? `
@@ -1681,7 +1689,7 @@ async function render() {
                       <button type="button" class="plan-btn-icon plan-btn-success" data-action="activate-training-template" data-id="${t.id}" title="Reactivate plan" aria-label="Reactivate plan">
                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
                       </button>
-                    `}` +
+                    `}` : '') +
                   `</div>` +
                 `</td>` +
               `</tr>`;
@@ -4865,7 +4873,7 @@ document.addEventListener('click',async event=>{
             </div>
             <div style="margin-top:10px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
               <span class="muted" style="font-size:0.8rem;">Review curated learning materials, dynamic email content, and verify before manual confirmation.</span>
-              ${allows('recruit') || allows('admin') ? `<button type="button" class="button secondary" data-action="review-training-plan" data-id="${appForTraining.id}" style="font-size:0.8rem;padding:5px 12px;">${st === 'sent' ? 'View Sent Plan / Resend' : (st === 'draft_saved' ? 'Resume Training Draft' : 'Review Training Plan')}</button>` : ''}
+              ${allows('training.read') || allows('training.manage') || allows('recruit') || allows('admin') ? `<button type="button" class="button secondary" data-action="review-training-plan" data-id="${appForTraining.id}" style="font-size:0.8rem;padding:5px 12px;">${st === 'sent' ? 'View Sent Plan / Resend' : (st === 'draft_saved' ? 'Resume Training Draft' : 'Review Training Plan')}</button>` : ''}
             </div>
           </div>
         `;

@@ -1369,7 +1369,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
 
       if (action === 'training-evaluation') {
         if (method === 'GET') {
-          permit(user, 'applications.read', 'recruit', 'review');
+          permit(user, 'training.read', 'applications.read', 'recruit', 'review');
           const evalRow = db.prepare(`
             SELECT te.*, u.name AS evaluator_name, u.email AS evaluator_email
             FROM training_evaluations te
@@ -1401,31 +1401,31 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
     if (key && (action === 'training-plan' || action === 'training-draft')) {
       const subAction = parts[3];
       if (subAction === 'suggest' && method === 'GET') {
-        permit(user, 'recruit', 'review', 'admin');
+        permit(user, 'training.read', 'recruit', 'review', 'admin');
         return suggestTrainingPlan(db, { applicationId: key });
       }
       if (subAction === 'preview' && method === 'POST') {
-        permit(user, 'recruit', 'review', 'admin');
+        permit(user, 'training.read', 'recruit', 'review', 'admin');
         return previewTrainingEmail(db, user, key, body);
       }
       if (subAction === 'discard' && method === 'POST') {
-        permit(user, 'recruit', 'admin');
+        permit(user, 'training.manage', 'recruit', 'admin');
         return discardTrainingDraft(db, user, key);
       }
       if (subAction === 'send' && method === 'POST') {
-        permit(user, 'recruit', 'admin');
+        permit(user, 'training.manage', 'recruit', 'admin');
         return sendTrainingPlan(db, user, key, body, { communicationAdapter: c?.communicationAdapter, transport: c?.transport });
       }
       if (subAction === 'resend' && method === 'POST') {
-        permit(user, 'recruit', 'admin');
+        permit(user, 'training.manage', 'recruit', 'admin');
         return resendTrainingPlan(db, user, key, body, { communicationAdapter: c?.communicationAdapter, transport: c?.transport });
       }
       if (!subAction && method === 'GET') {
-        permit(user, 'recruit', 'review', 'admin');
+        permit(user, 'training.read', 'recruit', 'review', 'admin');
         return getOrCreateTrainingDraft(db, user, key);
       }
       if (!subAction && method === 'PUT') {
-        permit(user, 'recruit', 'admin');
+        permit(user, 'training.manage', 'recruit', 'admin');
         return saveTrainingDraft(db, user, key, body);
       }
     }
@@ -1810,7 +1810,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       return updatedApp;
     }
     if (key && action === 'retry-stage-notification' && method === 'POST') {
-      permit(user, 'recruit');
+      permit(user, 'candidates.communications.send', 'recruit');
       const { app, req } = appContext(db, user, key, true);
       const lastEvent = db.prepare('SELECT * FROM stage_events WHERE application_id = ? ORDER BY at DESC LIMIT 1').get(key);
       if (!lastEvent) {
@@ -2614,46 +2614,46 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       const templateId = parts[2];
       const templateAction = parts[3];
       if (!templateId && method === 'GET') {
-        permit(user, 'recruit', 'review', 'admin');
+        permit(user, 'training.read', 'recruit', 'review', 'admin');
         return listTrainingTemplates(db, user, query);
       }
       if (!templateId && method === 'POST') {
-        permit(user, 'recruit', 'admin');
+        permit(user, 'training.manage', 'recruit', 'admin');
         return createTrainingTemplate(db, user, body);
       }
       if (templateId && !templateAction && method === 'GET') {
-        permit(user, 'recruit', 'review', 'admin');
+        permit(user, 'training.read', 'recruit', 'review', 'admin');
         return getTrainingTemplate(db, user, templateId);
       }
       if (templateId && !templateAction && method === 'PUT') {
-        permit(user, 'recruit', 'admin');
+        permit(user, 'training.manage', 'recruit', 'admin');
         return updateTrainingTemplate(db, user, templateId, body);
       }
       if (templateId && templateAction === 'duplicate' && method === 'POST') {
-        permit(user, 'recruit', 'admin');
+        permit(user, 'training.manage', 'recruit', 'admin');
         return duplicateTrainingTemplate(db, user, templateId, body);
       }
       if (templateId && templateAction === 'status' && method === 'POST') {
-        permit(user, 'recruit', 'admin');
+        permit(user, 'training.manage', 'recruit', 'admin');
         return setTrainingTemplateStatus(db, user, templateId, body.status, body.is_default);
       }
       if (templateId && templateAction === 'archive' && method === 'POST') {
-        permit(user, 'recruit', 'admin');
+        permit(user, 'training.manage', 'recruit', 'admin');
         return archiveTrainingTemplate(db, user, templateId);
       }
       if (templateId && method === 'DELETE') {
-        permit(user, 'recruit', 'admin');
+        permit(user, 'training.manage', 'recruit', 'admin');
         return archiveTrainingTemplate(db, user, templateId);
       }
     }
     if (parts[1] === 'assets') {
       const assetId = parts[2];
       if (!assetId && method === 'POST') {
-        permit(user, 'recruit', 'admin');
+        permit(user, 'training.manage', 'recruit', 'admin');
         return uploadTrainingAsset(db, user, body);
       }
       if (assetId && method === 'GET') {
-        permit(user, 'recruit', 'review', 'admin');
+        permit(user, 'training.read', 'recruit', 'review', 'admin');
         const asset = getTrainingAsset(db, user, assetId);
         return {
           isRaw: true,
