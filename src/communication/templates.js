@@ -126,6 +126,50 @@ function interviewSchedule(vars = {}) {
   };
 }
 
+export function getMeetingDetails(url) {
+  if (!url) {
+    return {
+      name: 'Meeting',
+      buttonText: 'Join Meeting',
+      labelText: 'Meeting Link'
+    };
+  }
+  const u = String(url).toLowerCase();
+  if (u.includes('teams.microsoft.com') || u.includes('teams.live.com')) {
+    return {
+      name: 'Microsoft Teams',
+      buttonText: 'Join Microsoft Teams Meeting',
+      labelText: 'Microsoft Teams Meeting Link'
+    };
+  }
+  if (u.includes('meet.google.com')) {
+    return {
+      name: 'Google Meet',
+      buttonText: 'Join Google Meet',
+      labelText: 'Google Meet Link'
+    };
+  }
+  if (u.includes('zoom.us') || u.includes('zoom.com')) {
+    return {
+      name: 'Zoom',
+      buttonText: 'Join Zoom Meeting',
+      labelText: 'Zoom Meeting Link'
+    };
+  }
+  if (u.includes('webex.com')) {
+    return {
+      name: 'Webex',
+      buttonText: 'Join Webex Meeting',
+      labelText: 'Webex Meeting Link'
+    };
+  }
+  return {
+    name: 'Online Video Meeting',
+    buttonText: 'Join Meeting',
+    labelText: 'Meeting Link'
+  };
+}
+
 function interviewMeetingHtml(vars = {}) {
   const isPhysical = vars.interview_type === 'in_person' || vars.format === 'in_person' || vars.format === 'physical';
   if (isPhysical) {
@@ -139,16 +183,17 @@ function interviewMeetingHtml(vars = {}) {
     `;
   }
   if (vars.meeting_url) {
+    const meeting = getMeetingDetails(vars.meeting_url);
     return `
       <div style="margin: 20px 0; text-align: center;">
-        <a href="${escapeHtml(vars.meeting_url)}" style="background-color: #4f46e5; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: 600; display: inline-block;">Join Microsoft Teams Meeting</a>
+        <a href="${escapeHtml(vars.meeting_url)}" style="background-color: #4f46e5; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: 600; display: inline-block;">${escapeHtml(meeting.buttonText)}</a>
       </div>
-      <p style="font-size: 13px; color: #475569; word-break: break-all;">Meeting Link: <a href="${escapeHtml(vars.meeting_url)}">${escapeHtml(vars.meeting_url)}</a></p>
+      <p style="font-size: 13px; color: #475569; word-break: break-all;">${escapeHtml(meeting.labelText)}: <a href="${escapeHtml(vars.meeting_url)}">${escapeHtml(vars.meeting_url)}</a></p>
     `;
   }
   return `
     <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px 16px; margin: 18px 0;">
-      <p style="margin: 0; font-size: 14px; color: #334155;"><strong>Joining instructions:</strong> Your recruiter will send the Microsoft Teams meeting link before your interview. If you have not received it 24 hours before the scheduled time, please reply to this email and we will resend it.</p>
+      <p style="margin: 0; font-size: 14px; color: #334155;"><strong>Joining instructions:</strong> Your recruiter will send the meeting link before your interview. If you have not received it 24 hours before the scheduled time, please reply to this email and we will resend it.</p>
     </div>
   `;
 }
@@ -159,9 +204,11 @@ function interviewMeetingText(vars = {}) {
     const loc = vars.location || 'Mechlin Technologies Office';
     return `Interview Format: In-Person / Physical Interview\nLocation / Venue: ${loc}\nPlease arrive 10 minutes prior with a valid government photo ID. No online meeting link is required for this on-site evaluation.`;
   }
-  return vars.meeting_url
-    ? `Microsoft Teams Meeting Link:\n${vars.meeting_url}`
-    : 'Joining instructions: Your recruiter will send the Microsoft Teams meeting link before your interview. If you have not received it 24 hours before the scheduled time, please reply to this email and we will resend it.';
+  if (vars.meeting_url) {
+    const meeting = getMeetingDetails(vars.meeting_url);
+    return `${meeting.labelText}:\n${vars.meeting_url}`;
+  }
+  return 'Joining instructions: Your recruiter will send the meeting link before your interview. If you have not received it 24 hours before the scheduled time, please reply to this email and we will resend it.';
 }
 
 export const TEMPLATES = {
