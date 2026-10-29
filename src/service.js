@@ -1892,7 +1892,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
               db, user, interviewId: iid, scheduledAt: scheduled.toISOString(), durationMinutes: duration, timezone, title, notes, candidate: cand, req, interviewer, transport: c?.calendarAdapter?.transport || c?.transport || fetch, config: c,
               interviewType, location
             });
-            meetingUrl = interviewType === 'in_person' ? null : (calResult.meeting_url || customMeetingUrl);
+            meetingUrl = interviewType === 'in_person' ? null : (customMeetingUrl || calResult.meeting_url);
           }
           if (interviewType === 'virtual' && !meetingUrl && !calConfigured) {
             meetingUrl = `https://teams.microsoft.com/l/meetup-join/orbit-meeting-${iid}`;
@@ -2018,7 +2018,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
               db, user, interviewId: key, scheduledAt: scheduled.toISOString(), durationMinutes: duration, timezone, title, notes, candidate: cand, req, interviewer: assignedInterviewer, transport: c?.calendarAdapter?.transport || c?.transport || fetch, config: c,
               interviewType, location
             });
-            meetingUrl = interviewType === 'in_person' ? null : (calResult.meeting_url || customMeetingUrl);
+            meetingUrl = interviewType === 'in_person' ? null : (customMeetingUrl || calResult.meeting_url);
           }
           if (interviewType === 'virtual' && !meetingUrl && !calConfigured) {
             meetingUrl = `https://teams.microsoft.com/l/meetup-join/orbit-meeting-${key}`;

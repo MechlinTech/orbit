@@ -1462,7 +1462,13 @@ async function render() {
         if (isPhysical) {
           meetBadge = `<br><span class="badge" style="display:inline-flex;align-items:center;gap:4px;font-size:0.75rem;margin-top:4px;background:#f0f9ff;color:#0369a1;border:1px solid #bae6fd;padding:2px 8px;border-radius:4px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>In-Person • ${escape(i.location || 'Office')}</span>`;
         } else if (i.meeting_url) {
-          meetBadge = `<br><a href="${escape(i.meeting_url)}" target="_blank" rel="noopener noreferrer" class="teams-link" style="display:inline-flex;align-items:center;gap:4px;font-size:0.8rem;margin-top:4px;color:var(--accent,#4f46e5);font-weight:600;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>Join Teams</a>`;
+          const u = String(i.meeting_url).toLowerCase();
+          const isTeams = u.includes('teams.microsoft.com') || u.includes('teams.live.com');
+          const isGoogle = u.includes('meet.google.com');
+          const isZoom = u.includes('zoom.us') || u.includes('zoom.com');
+          const isWebex = u.includes('webex.com');
+          const label = isTeams ? 'Join Teams' : (isGoogle ? 'Join Meet' : (isZoom ? 'Join Zoom' : (isWebex ? 'Join Webex' : 'Join Meeting')));
+          meetBadge = `<br><a href="${escape(i.meeting_url)}" target="_blank" rel="noopener noreferrer" class="teams-link" style="display:inline-flex;align-items:center;gap:4px;font-size:0.8rem;margin-top:4px;color:var(--accent,#4f46e5);font-weight:600;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>${label}</a>`;
         } else if (i.calendar_status === 'sync_failed') {
           const errHint = i.meeting_error ? ` title="${escape(i.meeting_error)}"` : '';
           meetBadge = `<br><button type="button" class="badge" style="display:inline-flex;align-items:center;gap:4px;font-size:0.73rem;margin-top:4px;background:#fef2f2;color:#991b1b;border:1px solid #fecaca;padding:2px 6px;border-radius:4px;cursor:pointer;" data-action="view-meeting-error" data-id="${escape(i.id)}"${errHint}>Teams sync failed ℹ</button>`;
@@ -1580,11 +1586,11 @@ async function render() {
                 ? `<span class="plan-default-badge" title="Default fallback plan for all candidates"><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg> Default</span>`
                 : '';
 
-              const getVisibleChipCount = (items, maxChars = 22) => {
+              const getVisibleChipCount = (items) => {
                 if (!items || !items.length) return 0;
-                if (items[0].length >= maxChars) return 1;
                 if (items.length === 1) return 1;
-                return (items[0].length + (items[1]?.length || 0) <= maxChars) ? 2 : 1;
+                if (items.length === 2 && (items[0].length + items[1].length <= 14)) return 2;
+                return 1;
               };
 
               const positions = Array.isArray(t.positions) ? t.positions : [];
@@ -1593,19 +1599,14 @@ async function render() {
                 ? `<div class="chips-cloud">` +
                     positions.slice(0, maxPosVisible).map(p => `<span class="plan-chip plan-chip-pos" title="${escape(p)}">${escape(p)}</span>`).join('') +
                     (positions.length > maxPosVisible
-                      ? `<div class="plan-chip-more-container">` +
-                          `<button type="button" class="plan-chip plan-chip-more" data-action="toggle-chips-expand" aria-label="Show all ${positions.length} positions">+${positions.length - maxPosVisible} more</button>` +
+                      ? `<div class="plan-chip-more-container" tabindex="0" role="button" aria-label="All ${positions.length} mapped positions">` +
+                          `<span class="plan-chip plan-chip-more">+${positions.length - maxPosVisible} more</span>` +
                           `<div class="plan-chips-popover" role="tooltip">` +
                             `<div class="plan-chips-popover-header"><span>All Mapped Positions (${positions.length})</span></div>` +
                             `<div class="plan-chips-popover-list">` +
-                              positions.map(p => `<span class="plan-chip plan-chip-pos">${escape(p)}</span>`).join('') +
+                              positions.map(p => `<span class="plan-chip plan-chip-pos" title="${escape(p)}">${escape(p)}</span>`).join('') +
                             `</div>` +
-                            `<div class="plan-chips-popover-footer">Click to view in table</div>` +
                           `</div>` +
-                        `</div>` +
-                        `<div class="expanded-chips">` +
-                          positions.slice(maxPosVisible).map(p => `<span class="plan-chip plan-chip-pos" title="${escape(p)}">${escape(p)}</span>`).join('') +
-                          `<button type="button" class="plan-chip plan-chip-less" data-action="toggle-chips-collapse" aria-label="Collapse positions">Show less</button>` +
                         `</div>`
                       : '') +
                   `</div>`
@@ -1617,19 +1618,14 @@ async function render() {
                 ? `<div class="chips-cloud">` +
                     deptRoles.slice(0, maxDeptVisible).map(d => `<span class="plan-chip plan-chip-dept" title="${escape(d)}">${escape(d)}</span>`).join('') +
                     (deptRoles.length > maxDeptVisible
-                      ? `<div class="plan-chip-more-container">` +
-                          `<button type="button" class="plan-chip plan-chip-more" data-action="toggle-chips-expand" aria-label="Show all ${deptRoles.length} departments and roles">+${deptRoles.length - maxDeptVisible} more</button>` +
+                      ? `<div class="plan-chip-more-container" tabindex="0" role="button" aria-label="All ${deptRoles.length} departments and roles">` +
+                          `<span class="plan-chip plan-chip-more">+${deptRoles.length - maxDeptVisible} more</span>` +
                           `<div class="plan-chips-popover" role="tooltip">` +
                             `<div class="plan-chips-popover-header"><span>All Departments & Roles (${deptRoles.length})</span></div>` +
                             `<div class="plan-chips-popover-list">` +
-                              deptRoles.map(d => `<span class="plan-chip plan-chip-dept">${escape(d)}</span>`).join('') +
+                              deptRoles.map(d => `<span class="plan-chip plan-chip-dept" title="${escape(d)}">${escape(d)}</span>`).join('') +
                             `</div>` +
-                            `<div class="plan-chips-popover-footer">Click to view in table</div>` +
                           `</div>` +
-                        `</div>` +
-                        `<div class="expanded-chips">` +
-                          deptRoles.slice(maxDeptVisible).map(d => `<span class="plan-chip plan-chip-dept" title="${escape(d)}">${escape(d)}</span>`).join('') +
-                          `<button type="button" class="plan-chip plan-chip-less" data-action="toggle-chips-collapse" aria-label="Collapse departments and roles">Show less</button>` +
                         `</div>`
                       : '') +
                   `</div>`

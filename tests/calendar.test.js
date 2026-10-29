@@ -757,3 +757,77 @@ test('Calendar Integration: Demo Microsoft Calendar credentials generate simulat
 
   f.db.close();
 });
+
+test('Interview Meeting Links: custom meeting URLs (Google Meet, Zoom, custom) display accurate button text and labels instead of hardcoded Teams', async () => {
+  const f = fixture();
+  const recruiter = user(f.db, 'Recruiter');
+  const interviewer = user(f.db, 'Interviewer');
+  const c = testConfig();
+
+  const cand = f.db.prepare("INSERT INTO candidates(id, name, email, phone, skills, resume_text, source, team, created_by, created_at) VALUES('c_custom_1','Taylor Swift','taylor@example.com','1234567890','[]','','Direct','Engineering',?,?) RETURNING *").get(recruiter.id, new Date().toISOString());
+  const req = f.db.prepare("INSERT INTO requisitions(id, title, team, headcount, salary_min, salary_max, currency, description, skills, status, created_by, created_at) VALUES('r_custom_1','Software Engineer','Engineering',1,10,20,'USD','','[]','open',?,?) RETURNING *").get(recruiter.id, new Date().toISOString());
+  const app = f.db.prepare("INSERT INTO applications(id, candidate_id, requisition_id, stage, created_at) VALUES('a_custom_1', ?, ?, 'Interview', ?) RETURNING *").get(cand.id, req.id, new Date().toISOString());
+
+  const sentEmails = [];
+  c.communicationAdapter = {
+    configured: true,
+    send: async payload => {
+      sentEmails.push(payload);
+      return { id: 'msg-custom-test' };
+    }
+  };
+
+  // 1. Google Meet custom link
+  const googleMeetUrl = 'https://meet.google.com/xyz-abcd-uvw';
+  const resGoogle = await service(f.db, recruiter, 'POST', 'interviews', {
+    application_id: app.id,
+    interviewer_id: interviewer.id,
+    scheduled_at: new Date(Date.now() + 86400000).toISOString(),
+    competencies: ['Architecture'],
+    meeting_url: googleMeetUrl
+  }, new URLSearchParams(), c);
+
+  assert.equal(resGoogle.meeting_url, googleMeetUrl);
+  assert.equal(sentEmails.length, 1);
+  assert.ok(sentEmails[0].html.includes('Join Google Meet'));
+  assert.ok(sentEmails[0].html.includes('Google Meet Link:'));
+  assert.ok(!sentEmails[0].html.includes('Join Microsoft Teams Meeting'));
+  assert.ok(sentEmails[0].text.includes('Google Meet Link:'));
+  assert.ok(!sentEmails[0].text.includes('Microsoft Teams Meeting Link:'));
+
+  // 2. Zoom custom link
+  const zoomUrl = 'https://zoom.us/j/1234567890?pwd=test';
+  sentEmails.length = 0;
+  const resZoom = await service(f.db, recruiter, 'POST', 'interviews', {
+    application_id: app.id,
+    interviewer_id: interviewer.id,
+    scheduled_at: new Date(Date.now() + 172800000).toISOString(),
+    competencies: ['Coding'],
+    meeting_url: zoomUrl
+  }, new URLSearchParams(), c);
+
+  assert.equal(resZoom.meeting_url, zoomUrl);
+  assert.equal(sentEmails.length, 1);
+  assert.ok(sentEmails[0].html.includes('Join Zoom Meeting'));
+  assert.ok(sentEmails[0].html.includes('Zoom Meeting Link:'));
+  assert.ok(!sentEmails[0].html.includes('Join Microsoft Teams Meeting'));
+
+  // 3. Any arbitrary custom video URL
+  const customUrl = 'https://video.customcompany.org/interview-room-101';
+  sentEmails.length = 0;
+  const resCustom = await service(f.db, recruiter, 'POST', 'interviews', {
+    application_id: app.id,
+    interviewer_id: interviewer.id,
+    scheduled_at: new Date(Date.now() + 259200000).toISOString(),
+    competencies: ['Communication'],
+    meeting_url: customUrl
+  }, new URLSearchParams(), c);
+
+  assert.equal(resCustom.meeting_url, customUrl);
+  assert.equal(sentEmails.length, 1);
+  assert.ok(sentEmails[0].html.includes('Join Meeting'));
+  assert.ok(!sentEmails[0].html.includes('Join Microsoft Teams Meeting'));
+  assert.ok(sentEmails[0].html.includes('Meeting Link:'));
+
+  f.db.close();
+});
