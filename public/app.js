@@ -34,13 +34,13 @@ const getNavList = () => {
   return [
     ...(allows('analytics.read') ? ['Overview'] : []),
     ...(allows('jobs.read') || allows('requisitions.read') ? ['Requisitions'] : []),
-    ...(allows('candidates.read') || allows('review') || allows('recruit') ? ['Candidates'] : []),
-    ...(allows('applications.read') || allows('review') || allows('recruit') ? ['Pipeline'] : []),
-    ...(allows('interviews.read') || allows('interviews.evaluate') || allows('interview') || allows('review') || allows('recruit') ? ['Interviews'] : []),
-    ...(allows('referrals.read') || allows('refer') ? ['Referrals'] : []),
-    ...(allows('offers.templates.read') || allows('offers.read') || allows('recruit') || allows('admin') ? ['Offer Templates'] : []),
-    ...(allows('training.read') || allows('training.manage') || allows('training.lifecycle') || allows('applications.evaluate') || allows('recruit') || allows('admin') ? ['Training Plans'] : []),
-    ...(allows('agencies.read') || allows('admin') || allows('recruit') ? ['Agencies'] : []),
+    ...(allows('candidates.read') ? ['Candidates'] : []),
+    ...(allows('applications.read') ? ['Pipeline'] : []),
+    ...(allows('interviews.read') || allows('interviews.evaluate') ? ['Interviews'] : []),
+    ...(allows('referrals.read') ? ['Referrals'] : []),
+    ...(allows('offers.templates.read') || allows('offers.read') ? ['Offer Templates'] : []),
+    ...(allows('training.read') || allows('training.manage') || allows('training.lifecycle') ? ['Training Plans'] : []),
+    ...(allows('agencies.read') ? ['Agencies'] : []),
     ...manage
   ];
 };
@@ -151,9 +151,11 @@ const icon=name=>`<svg class="ui-icon" width="20" height="20" viewBox="0 0 24 24
 const initials=name=>escape(String(name).split(/\s+/).filter(Boolean).slice(0,2).map(n=>n[0]).join('').toUpperCase());
 const applyTheme=theme=>{document.documentElement.dataset.theme=theme;document.querySelector('meta[name="theme-color"]').content=theme==='midnight'?'#0b1322':'#111f35';};
 const brand=()=>`<div class="company-logo"><img src="/mechlin-logo.webp" alt="Mechlin Technologies" width="174" height="40"></div><div class="product-brand"><span class="orbit-symbol" aria-hidden="true"></span><span>Orbit<small>Talent workspace</small></span></div>`;
-const allows = p => permissions.includes(p) || grants.includes(p);
-// Persisted grants are authoritative. Legacy capability tokens are only a
-// fallback for sessions that have not received a grant list yet.
+// Broad legacy tokens (recruit, review, admin, and the rest) are derived from
+// whichever grants a role happens to have. They must not open extra modules
+// once the server has sent the real grant list.
+const legacyCapabilities = new Set(['admin','recruit','requisition','approve_manager','approve_finance','review','analytics','refer','jobs','interview']);
+const allows = p => (grants.length && legacyCapabilities.has(p) ? false : permissions.includes(p) || grants.includes(p));
 const allowAction = (id, ...legacyFallback) => allows(id) || (!grants.length && legacyFallback.some(token => permissions.includes(token)));
 const canEditRolePermissions = role => allows('roles.update') && (!role?.is_system || role?.permissions_editable === true);
 const notice = (() => {
@@ -1051,7 +1053,11 @@ function login() {
 }
 function shell() {
   const nav=getNavList();
-  if(!deniedView && !nav.includes(current))current=nav[0]||'Overview';
+  if (!nav.length) {
+    deniedView = deniedView || 'this workspace';
+  } else if (!deniedView && !nav.includes(current)) {
+    current = nav[0];
+  }
   const isDemoEnabled=document.documentElement.dataset.demoLogin==='true';
   const showQASwitch=Boolean(me?.isDemoUser||isDemoEnabled);
 
@@ -1351,10 +1357,10 @@ async function render() {
                 if (prevStage) {
                   actionsHtml += button(`Back to ${prevStage}`,'move',a.id,`data-stage="${escape(prevStage)}" class="secondary"`);
                 }
-                const canOpenTraining = allowAction('applications.evaluate','recruit') || allows('training.read') || allows('training.manage') || allows('training.lifecycle') || allows('recruit') || allows('admin');
-                const canRunTraining = allows('training.lifecycle') || allows('recruit') || allows('admin');
-                const canRateTraining = allowAction('applications.evaluate','recruit') || allows('recruit') || allows('admin');
-                const canPlanTraining = allows('training.manage') || allows('training.read') || allows('recruit') || allows('admin');
+                const canOpenTraining = allows('training.read') || allows('training.manage') || allows('training.lifecycle') || allowAction('applications.evaluate','recruit');
+                const canRunTraining = allows('training.lifecycle') || (!grants.length && (allows('recruit') || allows('admin')));
+                const canRateTraining = allowAction('applications.evaluate','recruit');
+                const canPlanTraining = allows('training.read') || allows('training.manage') || (!grants.length && (allows('recruit') || allows('admin')));
                 if (isTraining && canOpenTraining) {
                   actionsHtml += button('Training Details', 'view-training-details', a.id, 'class="secondary" title="View training history, evaluations, and deadline extensions" style="font-size:0.75rem;padding:4px 8px;"');
 
@@ -1391,7 +1397,7 @@ async function render() {
                   if (hasPendingInv) {
                     const ready = feedbackReady(a.pending_interview);
                     const canSubmit = a.pending_interview.interviewer_id === me.id;
-                    const canProxy = (allowAction('interviews.proxy_evaluate','admin') || allows('admin')) && !canSubmit;
+                    const canProxy = (allowAction('interviews.proxy_evaluate','admin') || allows('system.override')) && !canSubmit;
                     if (canSubmit && ready) {
                       actionsHtml += button('Submit Scorecard', 'scorecard', a.pending_interview.id, 'class="primary" style="font-size:0.75rem;padding:4px 8px;"');
                     } else if (canProxy && ready) {
@@ -1465,16 +1471,16 @@ async function render() {
           const invHint = i.invitation_error ? ` title="${escape(i.invitation_error)}"` : '';
           meetBadge += `<span class="badge" style="display:inline-flex;align-items:center;gap:4px;font-size:0.73rem;margin-top:4px;margin-left:4px;background:#fffbeb;color:#92400e;border:1px solid #fde68a;padding:2px 6px;border-radius:4px;"${invHint}>Invite failed</span>`;
         }
-        const canManageInterview = allowAction('interviews.update','recruit') || allows('recruit') || allows('admin');
+        const canManageInterview = allowAction('interviews.update','recruit') || allows('system.override');
         const retryTeamsBtn = (i.status === 'planned' && !isPhysical && i.calendar_status === 'sync_failed' && canManageInterview)
           ? button('Retry Teams', 'retry-meeting', i.id, 'class="secondary text-button" style="color:var(--accent);font-size:0.74rem;"')
           : '';
         const retryInviteBtn = (i.status === 'planned' && i.invitation_status === 'failed' && canManageInterview)
           ? button('Retry Invite', 'retry-invitation', i.id, 'class="secondary text-button" style="color:var(--accent);font-size:0.74rem;"')
           : '';
-        const canEdit = i.status !== 'completed' && (allowAction('interviews.update','recruit') || allows('recruit') || allows('admin') || i.interviewer_id === me.id);
-        const canCancel = i.status === 'planned' && (allowAction('interviews.cancel','recruit') || allows('recruit') || allows('admin') || i.interviewer_id === me.id);
-        const canViewFeedback = allowAction('interviews.feedback.read','interview','review','recruit') || allowAction('interviews.evaluate','interview') || allows('recruit') || allows('admin') || allows('review') || allows('interview');
+        const canEdit = i.status !== 'completed' && (allowAction('interviews.update','recruit') || allows('system.override') || i.interviewer_id === me.id);
+        const canCancel = i.status === 'planned' && (allowAction('interviews.cancel','recruit') || allows('system.override') || i.interviewer_id === me.id);
+        const canViewFeedback = allowAction('interviews.feedback.read','interview','review','recruit') || allowAction('interviews.evaluate','interview') || allows('system.override');
         return `<tr><td><strong>${escape(i.name)}</strong>${escape(i.title)}</td><td>${escape(i.interviewer)}</td><td>${escape(formatDateTimeIST(i.scheduled_at))}${meetBadge}</td><td>${badge(i.status)}</td><td><div class="actions">${i.candidate_id ? button('Candidate', 'candidate-details', i.candidate_id, 'class="secondary"') : ''}${retryTeamsBtn}${retryInviteBtn}${canSubmit && ready ? button('Submit scorecard', 'scorecard', i.id) : ''}${canProxy && ready ? button('Proxy scorecard', 'scorecard-proxy', i.id, 'class="secondary"') : ''}${canEdit ? button('Edit', 'edit-interview', i.id, 'class="secondary"') : ''}${canCancel ? button('Cancel', 'cancel-interview', i.id, 'class="secondary"') : ''}${canViewFeedback ? button('View feedback', 'feedback', i.id, 'class="secondary"') : ''}${showLock ? `<span class="muted feedback-locked">${FEEDBACK_LOCKED_MESSAGE}</span>` : ''}</div></td></tr>`;
       });
       html=heading('Structured interviews, independent feedback.',allowAction('interviews.schedule','recruit')?button('+ Plan interview','new-interview'):'')+calNotice+`<section class="panel">${table(['Candidate / role','Interviewer','Scheduled (IST)','Status','Feedback'],rows)}${pag}</section>`;
@@ -1507,8 +1513,8 @@ async function render() {
       const draftCount = templates.filter(t => t.status === 'draft').length;
       const defaultTpl = templates.find(t => t.is_default);
 
-      const canManageTemplates=allowAction('offers.templates.manage','recruit') || allows('recruit') || allows('admin');
-      const canManageAssets=allowAction('offers.assets.manage','recruit') || allows('recruit') || allows('admin');
+      const canManageTemplates=allowAction('offers.templates.manage','recruit');
+      const canManageAssets=allowAction('offers.assets.manage','recruit');
       html=heading('Design company-branded templates, manage letterheads, and configure dynamic A4 offer documents.',`<div style="display:flex;gap:8px;">${canManageTemplates?button('+ New Template','new-offer-template'):''}${canManageAssets?button('Upload Letterhead','upload-letterhead','','class="secondary"'):''}</div>`)+
       `<div class="metrics">${[['Total templates',templates.length,'Offer Templates','Configured offer templates'],['Active templates',activeCount,'Requisitions','Available for candidate offers'],['Draft templates',draftCount,'Settings','In design and revision'],['Default template',defaultTpl?defaultTpl.name:'None','Candidates',defaultTpl?`v${defaultTpl.version} (Active)`:'Auto-selected for new offers']].map(([label,count,i,note],n)=>`<div class="metric metric-${n}"><div class="metric-top"><span>${label}</span><span class="metric-icon">${icon(i)}</span></div><strong style="font-size:1.15rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${count}</strong><small>${note}</small></div>`).join('')}</div>`+
       `<section class="panel"><div class="panel-head"><div><h2>Offer Letter Templates</h2><p class="muted">Reusable templates with multi-page A4 flow, dynamic variables, and salary annexures</p></div></div>${templates.length?table(['Template name','Version','Status','Letterhead','Updated','Actions'],templates.map(t=>{
@@ -1540,7 +1546,7 @@ async function render() {
         );
       }
 
-      const canManageTraining=allows('training.manage') || allows('recruit') || allows('admin');
+      const canManageTraining=allows('training.manage') || (!grants.length && (allows('recruit') || allows('admin')));
       html = heading('Configure position- and role-specific training plans, learning resources, and candidate preparation workflows.', canManageTraining?button('+ New Training Plan','new-training-template'):'')+
       `<div class="metrics">${[['Total plans',templates.length,'Training Plans','Configured training plans'],['Active plans',activeCount,'Requisitions','Available for candidate training'],['Draft plans',draftCount,'Settings','In design and revision'],['Default plan',defaultTpl?defaultTpl.name:'None','Candidates',defaultTpl?`v${defaultTpl.version} (Active)`:'Auto-selected fallback']].map(([label,count,i,note],n)=>`<div class="metric metric-${n}"><div class="metric-top"><span>${label}</span><span class="metric-icon">${icon(i)}</span></div><strong style="font-size:1.15rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${count}</strong><small>${note}</small></div>`).join('')}</div>`+
       `<section class="panel">`+
@@ -2013,8 +2019,8 @@ async function render() {
   }catch(e){if(me)$('#main').innerHTML=`<section class="panel"><h1>Could not load this view</h1><p class="error">${escape(e.message)}</p>${button('Try again','refresh')}</section>`;}
 }
 function reqTable(reqs) {return table(['Position','Team','Headcount','Status','Actions'],reqs.map(r=>{
-  const canReviewManager = r.status==='pending_manager' && allows('approve_manager') && (r.created_by !== me?.id || allows('requisitions.override') || allows('system.override'));
-  const canReviewFinance = r.status==='pending_finance' && allows('approve_finance') && (r.created_by !== me?.id || allows('requisitions.override') || allows('system.override'));
+  const canReviewManager = r.status==='pending_manager' && allowAction('requisitions.approve_manager','approve_manager') && (r.created_by !== me?.id || allows('requisitions.override') || allows('system.override'));
+  const canReviewFinance = r.status==='pending_finance' && allowAction('requisitions.approve_finance','approve_finance') && (r.created_by !== me?.id || allows('requisitions.override') || allows('system.override'));
   return `<tr><td><strong>${escape(r.title)}</strong><small>${escape(r.skills.join(', '))}</small></td><td>${escape(r.team)}</td><td>${r.headcount}</td><td>${badge(r.status)}</td><td><div class="actions">${button('Details','req-details',r.id,'class="secondary"')}${['draft','open'].includes(r.status)&&allowAction('requisitions.update','requisition','recruit')?button('Edit','edit-req',r.id,'class="secondary"'):''}${r.status==='draft'&&allowAction('requisitions.submit','requisition','recruit')?button('Submit','submit-req',r.id):''}${(canReviewManager||canReviewFinance)?button('Review','approve-req',r.id):''}</div></td></tr>`;
 }),'requisitions-table');}
 const requisitionSectionHeadings=new Set(['purpose','role overview','about the role','required skills','required skills and experience','responsibilities','key responsibilities','what success looks like','interview process','accessibility']);
@@ -4606,10 +4612,10 @@ document.addEventListener('click',async event=>{
       if(!r || !['pending_manager','pending_finance'].includes(r.status)){
         throw new Error('Requisition is not awaiting approval.');
       }
-      if(r.status === 'pending_manager' && !allows('approve_manager') && !isAdmin){
+      if(r.status === 'pending_manager' && !allowAction('requisitions.approve_manager','approve_manager') && !isAdmin){
         throw new Error('Your role cannot perform this action.');
       }
-      if(r.status === 'pending_finance' && !allows('approve_finance') && !isAdmin){
+      if(r.status === 'pending_finance' && !allowAction('requisitions.approve_finance','approve_finance') && !isAdmin){
         throw new Error('Your role cannot perform this action.');
       }
       const summaryCard = r ? `
@@ -4808,9 +4814,7 @@ document.addEventListener('click',async event=>{
       notice((r.email||r.phone)?'Email and phone number extracted successfully.':(r.message||'No email or phone number found in resume text.'),hasExtracted?'success':'error');
     }
     if(a==='candidate-details'){
-      const c = (allows('recruit') || allows('review'))
-        ? ((await api('candidates')).find(c=>c.id===id)||await api(`candidates/${id}`))
-        : await api(`candidates/${id}`);
+      const c = await api(`candidates/${id}`);
       const limitedView = c.access_scope === 'assigned_interviews';
       const [commsData, fraudData, sigData] = await Promise.all([
         limitedView ? Promise.resolve({ consent: { opted_out: false }, communications: [] }) : api(`candidates/${id}/communications`).catch(() => ({ consent: { opted_out: false }, communications: [] })),
@@ -4873,7 +4877,7 @@ document.addEventListener('click',async event=>{
             </div>
             <div style="margin-top:10px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
               <span class="muted" style="font-size:0.8rem;">Review curated learning materials, dynamic email content, and verify before manual confirmation.</span>
-              ${allows('training.read') || allows('training.manage') || allows('recruit') || allows('admin') ? `<button type="button" class="button secondary" data-action="review-training-plan" data-id="${appForTraining.id}" style="font-size:0.8rem;padding:5px 12px;">${st === 'sent' ? 'View Sent Plan / Resend' : (st === 'draft_saved' ? 'Resume Training Draft' : 'Review Training Plan')}</button>` : ''}
+              ${allows('training.read') || allows('training.manage') || (!grants.length && (allows('recruit') || allows('admin'))) ? `<button type="button" class="button secondary" data-action="review-training-plan" data-id="${appForTraining.id}" style="font-size:0.8rem;padding:5px 12px;">${st === 'sent' ? 'View Sent Plan / Resend' : (st === 'draft_saved' ? 'Resume Training Draft' : 'Review Training Plan')}</button>` : ''}
             </div>
           </div>
         `;
@@ -4996,7 +5000,7 @@ document.addEventListener('click',async event=>{
 
       // Action footer guidance
       let footerActionHtml = '';
-      if (allows('recruit')) {
+      if (allows('signatures.request') || allows('offers.create') || (!grants.length && allows('recruit'))) {
         if (isRejected) {
           if (sigList.length > 0) {
             footerActionHtml = `
@@ -5451,13 +5455,13 @@ document.addEventListener('click',async event=>{
       const isCurStageInterview = app.pending_interview && !nonInterviewStages.includes(app.stage) &&
         (app.pending_interview.round === app.stage || (!app.pending_interview.round && /round|interview|screening/i.test(app.stage)));
 
-      if (!isBackMove && !['Rejected', 'Revoked', app.stage].includes(stage) && isCurStageInterview && !allows('admin')) {
+      if (!isBackMove && !['Rejected', 'Revoked', app.stage].includes(stage) && isCurStageInterview && !allows('applications.override') && !allows('system.override')) {
         const ready = feedbackReady(app.pending_interview);
         const invName = app.pending_interview.interviewer_name || 'Assigned interviewer';
         const roundName = app.pending_interview.round || app.stage;
         notice(`Cannot advance candidate: An interview with ${invName} is scheduled for ${roundName} and requires a scorecard rating first.`, 'error');
         if (ready) {
-          const isProxy = allows('admin') && app.pending_interview.interviewer_id !== me.id;
+          const isProxy = (allows('interviews.proxy_evaluate') || allows('system.override')) && app.pending_interview.interviewer_id !== me.id;
           openScorecardModal(app.pending_interview.id, isProxy);
         }
         return;
@@ -5467,7 +5471,7 @@ document.addEventListener('click',async event=>{
       if (!isBackMove && !['Rejected', 'Revoked', app.stage].includes(stage) && app.latest_scorecard) {
         const isNeg = ['No', 'Strong no'].includes(app.latest_scorecard.recommendation);
         if (isNeg) {
-          const isAdmin = allows('admin');
+          const isAdmin = allows('applications.override') || allows('system.override');
           if (!isAdmin) {
             notice(`Cannot advance candidate: Candidate received a negative recommendation ('${app.latest_scorecard.recommendation}') for ${app.latest_scorecard.round || 'interview'}. Advancing requires administrative override.`, 'error');
             return;
@@ -7852,6 +7856,19 @@ window.addEventListener('online',()=>notice('Connection restored.','success'));
   }
   if('serviceWorker'in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{});
 })();
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible' || !me) return;
+  const previous = grants.join('\n');
+  refreshCurrentUser().then(() => {
+    const next = grants.join('\n');
+    if (previous === next) return;
+    const nav = getNavList();
+    if (!nav.length) deniedView = deniedView || current || 'this workspace';
+    else if (!nav.includes(current)) { deniedView = current; }
+    else if (deniedView && nav.includes(current)) deniedView = '';
+    render();
+  }).catch(() => {});
+});
 document.addEventListener('input', event => {
   if (event.target.id !== 'role-search') return;
   const query = event.target.value.trim().toLowerCase();

@@ -85,7 +85,7 @@ export function getCandidateConsent(db, candidateId) {
  * Updates candidate communication consent preferences.
  */
 export function setCandidateConsent(db, user, candidateId, optedOut, reason = '') {
-  permit(user, 'candidates.consent.update', 'recruit');
+  permit(user, 'candidates.consent.update');
   const cand = db.prepare('SELECT * FROM candidates WHERE id = ?').get(candidateId);
   if (!cand) throw new HttpError(404, 'Candidate not found.');
   requireTeam(user, cand.team);
@@ -123,7 +123,7 @@ export function setCandidateConsent(db, user, candidateId, optedOut, reason = ''
  * Retrieves the communication history for a candidate.
  */
 export function listCandidateCommunications(db, user, candidateId) {
-  permit(user, 'candidates.communications.read', 'recruit', 'review');
+  permit(user, 'candidates.communications.read');
   const cand = db.prepare('SELECT * FROM candidates WHERE id = ?').get(candidateId);
   if (!cand) throw new HttpError(404, 'Candidate not found.');
   requireTeam(user, cand.team);
@@ -163,7 +163,7 @@ export function listCandidateCommunications(db, user, candidateId) {
  * Sends a communication to a candidate using a validated template or custom message.
  */
 export async function sendCandidateCommunication(db, user, body, adapter) {
-  permit(user, 'candidates.communications.send', 'recruit');
+  permit(user, 'candidates.communications.send');
   const candidateId = body.candidate_id || body.candidateId;
   if (!candidateId) throw new HttpError(400, 'Candidate ID is required.');
 

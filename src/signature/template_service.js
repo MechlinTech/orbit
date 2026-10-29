@@ -267,7 +267,7 @@ export function seedDefaultTemplatesIfEmpty(db) {
  * Lists offer letter templates with filtering.
  */
 export function listOfferTemplates(db, user, { status = null } = {}) {
-  permit(user, 'offers.templates.read', 'offers.read', 'recruit', 'review', 'admin');
+  permit(user, 'offers.templates.read', 'offers.read');
   let sql = `
     SELECT t.id, t.name, t.description, t.status, t.version, t.is_default,
            t.created_by, t.created_at, t.updated_at,
@@ -303,7 +303,7 @@ export function listOfferTemplates(db, user, { status = null } = {}) {
  * Retrieves a single template by ID with full parsed configurations and sections.
  */
 export function getOfferTemplate(db, user, templateId) {
-  permit(user, 'offers.templates.read', 'offers.read', 'recruit', 'review', 'admin');
+  permit(user, 'offers.templates.read', 'offers.read');
   const t = db.prepare(`
     SELECT t.*, u.name as creator_name
     FROM offer_letter_templates t
@@ -336,7 +336,7 @@ export function getOfferTemplate(db, user, templateId) {
  * Creates a new offer letter template.
  */
 export function createOfferTemplate(db, user, data = {}) {
-  permit(user, 'offers.templates.manage', 'offers.assets.manage', 'recruit', 'admin');
+  permit(user, 'offers.templates.manage', 'offers.assets.manage');
 
   const name = validateText(data.name || 'Untitled Template', 'Template name', 150);
   const description = validateText(data.description || '', 'Description', 1000, true);
@@ -390,7 +390,7 @@ export function createOfferTemplate(db, user, data = {}) {
  * Updates an existing offer letter template.
  */
 export function updateOfferTemplate(db, user, templateId, data = {}) {
-  permit(user, 'offers.templates.manage', 'offers.assets.manage', 'recruit', 'admin');
+  permit(user, 'offers.templates.manage', 'offers.assets.manage');
   const existing = getOfferTemplate(db, user, templateId);
 
   const name = data.name !== undefined ? validateText(data.name, 'Template name', 150) : existing.name;
@@ -453,7 +453,7 @@ export function updateOfferTemplate(db, user, templateId, data = {}) {
  * Duplicates a template into a new Draft template.
  */
 export function duplicateOfferTemplate(db, user, templateId, options = {}) {
-  permit(user, 'offers.templates.manage', 'offers.assets.manage', 'recruit', 'admin');
+  permit(user, 'offers.templates.manage', 'offers.assets.manage');
   const source = getOfferTemplate(db, user, templateId);
 
   const newName = options.name || `${source.name} (Copy)`;
@@ -474,7 +474,7 @@ export function duplicateOfferTemplate(db, user, templateId, options = {}) {
  * Changes status of a template (e.g. publish active, archive, set default).
  */
 export function setOfferTemplateStatus(db, user, templateId, status, isDefault = null) {
-  permit(user, 'offers.templates.manage', 'offers.assets.manage', 'recruit', 'admin');
+  permit(user, 'offers.templates.manage', 'offers.assets.manage');
   const existing = getOfferTemplate(db, user, templateId);
   const nowStr = now();
 
@@ -504,7 +504,7 @@ export function setOfferTemplateStatus(db, user, templateId, status, isDefault =
  * Uploads and stores a company letterhead asset.
  */
 export function uploadLetterheadAsset(db, user, { buffer, filename, format = null, name = null, scaling = null, pageTarget = null } = {}, storage = null) {
-  permit(user, 'offers.templates.manage', 'offers.assets.manage', 'recruit', 'admin');
+  permit(user, 'offers.templates.manage', 'offers.assets.manage');
   if (!buffer || !Buffer.isBuffer(buffer)) {
     throw new HttpError(400, 'Missing or invalid file buffer for letterhead upload.');
   }
@@ -575,7 +575,7 @@ export function uploadLetterheadAsset(db, user, { buffer, filename, format = nul
  * Lists all uploaded company letterhead assets.
  */
 export function listOfferLetterAssets(db, user) {
-  permit(user, 'offers.templates.read', 'offers.read', 'recruit', 'review', 'admin');
+  permit(user, 'offers.templates.read', 'offers.read');
   const rows = db.prepare('SELECT * FROM offer_letter_assets ORDER BY created_at DESC').all();
   return rows.map(r => ({
     id: r.id,
@@ -599,7 +599,7 @@ export function listOfferLetterAssets(db, user) {
  * Deletes a letterhead asset and its physical file on disk.
  */
 export function deleteOfferLetterAsset(db, user, assetId) {
-  permit(user, 'offers.templates.manage', 'offers.assets.manage', 'recruit', 'admin');
+  permit(user, 'offers.templates.manage', 'offers.assets.manage');
   const record = db.prepare('SELECT * FROM offer_letter_assets WHERE id = ?').get(assetId);
   if (!record) throw new HttpError(404, 'Letterhead asset not found.');
 
@@ -622,7 +622,7 @@ export function deleteOfferLetterAsset(db, user, assetId) {
  * Retrieves a letterhead asset buffer from disk.
  */
 export function getLetterheadAssetBuffer(db, user, assetId) {
-  permit(user, 'offers.templates.read', 'offers.read', 'recruit', 'review', 'admin');
+  permit(user, 'offers.templates.read', 'offers.read');
   const record = db.prepare('SELECT * FROM offer_letter_assets WHERE id = ?').get(assetId);
   if (!record) throw new HttpError(404, 'Letterhead asset not found.');
 
@@ -777,7 +777,7 @@ export function previewOfferTemplate(db, user, templateId, {
   footerConfig = null,
   backgroundConfig = null
 } = {}) {
-  permit(user, 'offers.templates.read', 'offers.read', 'recruit', 'review', 'admin');
+  permit(user, 'offers.templates.read', 'offers.read');
   let template = null;
   if (!templateId || templateId === 'preview' || templateId === 'draft') {
     template = {

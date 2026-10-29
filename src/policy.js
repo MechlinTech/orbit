@@ -234,9 +234,14 @@ export function can(user, action) {
   // remain available so existing workflows keep working during migration.
   if (user._grants instanceof Set) {
     if (user._grants.has(action)) return true;
+    // Legacy tokens stay available for compatibility checks such as can(user, 'recruit').
+    // A derived token does not satisfy a different granular permission.
     return Boolean(user._legacy instanceof Set && user._legacy.has(action));
   }
-  return Object.hasOwn(rolePermissions, user.role) && rolePermissions[user.role].includes(action);
+  // Direct calls that have not loaded the saved grant rows still follow the
+  // shipped role catalogue. Request handling hydrates the saved grants first.
+  if (rolePermissions[user.role]?.includes(action)) return true;
+  return Boolean(systemRoleDefinitions[user.role]?.permissions.includes(action));
 }
 export function requirePermission(user, ...actions) {
   if (!actions.some(action => can(user, action))) throw new HttpError(403, 'Your role cannot perform this action.');

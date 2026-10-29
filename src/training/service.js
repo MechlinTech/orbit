@@ -314,7 +314,7 @@ function normalizeUser(db, userOrId) {
  * List all training plan templates with optional status filter and search query.
  */
 export function listTrainingTemplates(db, user, query = {}) {
-  permit(user, 'training.read', 'recruit', 'review', 'admin');
+  permit(user, 'training.read');
   seedDefaultTrainingTemplatesIfEmpty(db);
 
   let sql = 'SELECT * FROM training_plan_templates WHERE 1=1';
@@ -351,7 +351,7 @@ export function getTrainingTemplate(db, arg2, arg3) {
     user = normalizeUser(db, arg2);
     templateId = arg3;
   }
-  permit(user, 'training.read', 'recruit', 'review', 'admin');
+  permit(user, 'training.read');
   seedDefaultTrainingTemplatesIfEmpty(db);
 
   const row = db.prepare('SELECT * FROM training_plan_templates WHERE id = ?').get(templateId);
@@ -374,7 +374,7 @@ export function createTrainingTemplate(db, userOrBody, bodyOrUser = {}) {
     user = normalizeUser(db, userOrBody);
     body = bodyOrUser;
   }
-  permit(user, 'training.manage', 'recruit', 'admin');
+  permit(user, 'training.manage');
 
   const name = validateText(body.name, 'Template name', 150);
   const description = validateText(body.description || '', 'Description', 1000, true);
@@ -476,7 +476,7 @@ export function updateTrainingTemplate(db, arg2, arg3, arg4 = {}) {
     templateId = arg3;
     body = arg4 || {};
   }
-  permit(user, 'training.manage', 'recruit', 'admin');
+  permit(user, 'training.manage');
 
   const existing = db.prepare('SELECT * FROM training_plan_templates WHERE id = ?').get(templateId);
   if (!existing) throw new HttpError(404, 'Training plan template not found.');
@@ -598,7 +598,7 @@ export function duplicateTrainingTemplate(db, arg2, arg3, arg4 = {}) {
     templateId = arg3;
     body = arg4 || {};
   }
-  permit(user, 'training.manage', 'recruit', 'admin');
+  permit(user, 'training.manage');
 
   const source = getTrainingTemplate(db, user, templateId);
   const newName = body.name ? validateText(body.name, 'Template name', 150) : `Copy of ${source.name}`;
@@ -638,7 +638,7 @@ export function setTrainingTemplateStatus(db, arg2, arg3, arg4, arg5) {
       isDefault = arg5;
     }
   }
-  permit(user, 'training.manage', 'recruit', 'admin');
+  permit(user, 'training.manage');
 
   const existing = db.prepare('SELECT * FROM training_plan_templates WHERE id = ?').get(templateId);
   if (!existing) throw new HttpError(404, 'Training plan template not found.');
@@ -884,7 +884,7 @@ export function getOrCreateTrainingDraft(db, arg2, arg3) {
     user = normalizeUser(db, arg2);
     applicationId = arg3;
   }
-  permit(user, 'training.read', 'recruit', 'review', 'admin');
+  permit(user, 'training.read');
   seedDefaultTrainingTemplatesIfEmpty(db);
 
   const ctx = getAuthoritativeCandidateContext(db, applicationId);
@@ -1010,7 +1010,7 @@ export function saveTrainingDraft(db, arg2, arg3, arg4 = {}) {
     applicationId = arg3;
     body = arg4 || {};
   }
-  permit(user, 'training.manage', 'recruit', 'admin');
+  permit(user, 'training.manage');
 
   const existingRow = db.prepare('SELECT * FROM training_plan_drafts WHERE application_id = ?').get(applicationId);
   if (!existingRow) {
@@ -1119,7 +1119,7 @@ export function saveTrainingDraft(db, arg2, arg3, arg4 = {}) {
  * Discards customized draft edits and resets draft from original suggested or selected template.
  */
 export function discardTrainingDraft(db, user, applicationId) {
-  permit(user, 'training.manage', 'recruit', 'admin');
+  permit(user, 'training.manage');
 
   const draftRow = db.prepare('SELECT * FROM training_plan_drafts WHERE application_id = ?').get(applicationId);
   if (!draftRow) throw new HttpError(404, 'Training plan draft not found.');
@@ -1279,7 +1279,7 @@ export function previewTrainingEmail(db, arg2, arg3, arg4 = null) {
     applicationId = arg3;
     customDraftData = arg4;
   }
-  permit(user, 'training.read', 'recruit', 'review', 'admin');
+  permit(user, 'training.read');
 
   const ctx = getAuthoritativeCandidateContext(db, applicationId);
   let draft = customDraftData;
@@ -1311,7 +1311,7 @@ export async function sendTrainingPlan(db, arg2, arg3, arg4 = {}, adapters = {})
     applicationId = arg3;
     options = arg4 || {};
   }
-  permit(user, 'training.manage', 'recruit', 'admin');
+  permit(user, 'training.manage');
 
   if (!options.sendConfirmation && options.confirm !== true) {
     throw new HttpError(400, 'Explicit user send confirmation is required to deliver the training plan email.');
@@ -1490,7 +1490,7 @@ export async function resendTrainingPlan(db, arg2, arg3, arg4 = {}, adapters = {
  * Upload a document or image learning resource.
  */
 export function uploadTrainingAsset(db, user, { buffer, filename, mimeType, title, resourceType = 'document' }) {
-  permit(user, 'training.manage', 'recruit', 'admin');
+  permit(user, 'training.manage');
 
   if (!buffer || !Buffer.isBuffer(buffer) || buffer.length === 0) {
     throw new HttpError(400, 'Asset file buffer is required.');
@@ -1557,7 +1557,7 @@ export function uploadTrainingAsset(db, user, { buffer, filename, mimeType, titl
  * Retrieve uploaded training asset file buffer.
  */
 export function getTrainingAsset(db, user, assetId) {
-  permit(user, 'training.read', 'recruit', 'review', 'admin');
+  permit(user, 'training.read');
 
   const asset = db.prepare('SELECT * FROM training_plan_assets WHERE id = ?').get(assetId);
   if (!asset) throw new HttpError(404, 'Training asset not found.');

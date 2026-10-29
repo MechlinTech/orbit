@@ -10,13 +10,12 @@ import { testIntegrationConnection } from './testing.js';
 import { getRegistryItem } from './registry.js';
 
 /**
- * Enforces integration permissions. System Admin retains access through the
- * legacy admin token for direct service calls; request routes use granular
- * permissions and are authoritative.
+ * Integration routes accept only the granular integration permissions.
+ * A derived admin token does not open this module.
  */
 function requireIntegrationAccess(user, ...permissions) {
   if (!user || user.status !== 'active') throw new HttpError(403, 'Integration access required.');
-  permit(user, ...permissions, 'admin');
+  permit(user, ...permissions);
 }
 
 export function listIntegrationsForAdmin(db, user) {

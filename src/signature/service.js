@@ -236,7 +236,7 @@ export async function dispatchSignatureEmail(db, user, request, signer, options 
  * Resends an invitation email for a pending signature request.
  */
 export async function resendSignatureInvitation(db, user, requestId, signerId = null, options = {}) {
-  permit(user, 'signatures.manage', 'signatures.request', 'recruit', 'admin');
+  permit(user, 'signatures.manage', 'signatures.request');
   const request = db.prepare('SELECT * FROM signature_requests WHERE id = ?').get(requestId);
   if (!request) throw new HttpError(404, 'Signature request not found.');
 
@@ -320,7 +320,7 @@ export async function createSignatureRequest(db, user, {
   templateVariables = {},
   customSections = null
 } = {}, options = {}) {
-  permit(user, 'signatures.request', 'offers.create', 'recruit', 'admin');
+  permit(user, 'signatures.request', 'offers.create');
 
   const safeTitle = validateText(title || 'Employment Offer Letter', 'Title', 200);
   const storage = options.storage || new SignatureStorageManager();
@@ -567,7 +567,7 @@ export function getSignatureRequest(db, user, requestId) {
  * Lists signature requests accessible to the user.
  */
 export function listSignatureRequests(db, user, { candidateId, applicationId, status } = {}) {
-  permit(user, 'signatures.read', 'offers.read', 'recruit', 'review', 'admin');
+  permit(user, 'signatures.read', 'offers.read');
 
   let sql = 'SELECT * FROM signature_requests WHERE 1=1';
   const params = [];
@@ -925,7 +925,7 @@ export function declineSignature(db, rawToken, { reason = '' } = {}) {
  * Cancels a signature request (by recruiter or admin).
  */
 export function cancelSignatureRequest(db, user, requestId, { reason = '' } = {}) {
-  permit(user, 'signatures.manage', 'recruit', 'admin');
+  permit(user, 'signatures.manage');
   const req = db.prepare('SELECT * FROM signature_requests WHERE id = ?').get(requestId);
   if (!req) throw new HttpError(404, 'Signature request not found.');
 

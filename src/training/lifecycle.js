@@ -39,7 +39,7 @@ export function resolveEffectiveTrainingStatus(app) {
  * Starts candidate training with a mandatory start date and end date (deadline).
  */
 export function startTraining(db, user, app, { start_at, end_at, duration_days } = {}) {
-  permit(user, 'training.lifecycle', 'recruit', 'admin');
+  permit(user, 'training.lifecycle');
 
   if (!/pre-onboarding|training/i.test(app.stage)) {
     throw new HttpError(409, 'Candidate must be in Pre-Onboarding Training stage to start training.');
@@ -104,7 +104,7 @@ export function startTraining(db, user, app, { start_at, end_at, duration_days }
  * Extends candidate training deadline while preserving original deadline and audit trail.
  */
 export function extendTrainingDeadline(db, user, app, { new_deadline, reason } = {}) {
-  permit(user, 'training.lifecycle', 'recruit', 'admin');
+  permit(user, 'training.lifecycle');
 
   if (app.offer_status === 'revoked' || app.stage === 'Revoked') {
     throw new HttpError(409, 'Cannot extend deadline for a revoked offer.');
@@ -189,7 +189,7 @@ export function extendTrainingDeadline(db, user, app, { new_deadline, reason } =
  * Increments attempt count and preserves all prior evaluation/extension history.
  */
 export function restartTraining(db, user, app, { start_at, end_at, reason } = {}) {
-  permit(user, 'training.lifecycle', 'recruit', 'admin');
+  permit(user, 'training.lifecycle');
 
   if (app.offer_status === 'revoked' || app.stage === 'Revoked') {
     throw new HttpError(409, 'Cannot restart training for a revoked offer.');
@@ -254,7 +254,7 @@ export function restartTraining(db, user, app, { start_at, end_at, reason } = {}
  * Executes existing offer revocation workflow, records audit, and preserves all training records.
  */
 export function revokeOffer(db, user, app, { reason } = {}, config = null) {
-  permit(user, 'training.lifecycle', 'recruit', 'admin');
+  permit(user, 'training.lifecycle');
 
   if (app.offer_status === 'revoked' || app.stage === 'Revoked') {
     throw new HttpError(409, 'Candidate offer has already been revoked.');
@@ -356,7 +356,7 @@ export function revokeOffer(db, user, app, { reason } = {}, config = null) {
  * - Evaluations link to current attempt number and do not overwrite previous attempts.
  */
 export function evaluateTraining(db, user, app, body = {}, config = null) {
-  permit(user, 'training.lifecycle', 'recruit', 'admin');
+  permit(user, 'training.lifecycle');
 
   if (app.offer_status === 'revoked' || app.stage === 'Revoked') {
     throw new HttpError(409, 'Cannot evaluate an application with a revoked offer.');
@@ -502,7 +502,7 @@ export function evaluateTraining(db, user, app, body = {}, config = null) {
  * Retrieves full audit history of training: attempts, evaluations, and deadline extensions.
  */
 export function getTrainingHistory(db, user, app) {
-  permit(user, 'training.read', 'recruit', 'review', 'admin');
+  permit(user, 'training.read');
 
   const cand = db.prepare('SELECT name, email FROM candidates WHERE id = ?').get(app.candidate_id);
   const req = db.prepare('SELECT title, team FROM requisitions WHERE id = ?').get(app.requisition_id);
