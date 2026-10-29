@@ -114,7 +114,7 @@ export async function syncScheduleMeeting({
   );
 
   if (isDemo && transport === fetch) {
-    const demoMeetingUrl = isPhysical ? null : `https://teams.microsoft.com/l/meetup-join/orbit-demo-meeting-${interviewId}`;
+    const demoMeetingUrl = isPhysical ? null : (existing?.meeting_url || `https://teams.microsoft.com/l/meetup-join/orbit-demo-meeting-${interviewId}`);
     const demoEventId = `teams-evt-demo-${interviewId}`;
     db.prepare(`
       UPDATE interviews
@@ -178,7 +178,7 @@ export async function syncScheduleMeeting({
       transport
     });
 
-    const finalJoinUrl = isPhysical ? null : event.joinUrl;
+    const finalJoinUrl = isPhysical ? null : (existing?.meeting_url || event.joinUrl);
     if (!isPhysical && !finalJoinUrl) {
       throw new Error('Microsoft Graph event was created but failed to return a valid Teams join URL.');
     }
