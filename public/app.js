@@ -2678,8 +2678,6 @@ async function openOfferTemplatePreview(templateId, candId, reqId, appId, salary
     const blobUrl = pdfBase64ToBlobUrl(preview.pdfBase64);
     const fallbackUrl = `/api/offer-templates/${templateId}/preview.pdf?t=${Date.now()}`;
     const pdfUrl = blobUrl || fallbackUrl;
-    const sectionsToRender = preview.sections || customSections || [];
-    const visualHtml = renderSectionsToA4Html(sectionsToRender, preview.variables || {}, preview.headerConfig?.text, preview.footerConfig?.text);
 
     const previewHtml = `
       <div class="a4-preview-modal" style="display:flex;flex-direction:column;gap:12px;">
@@ -2689,10 +2687,6 @@ async function openOfferTemplatePreview(templateId, candId, reqId, appId, salary
             <p class="muted" style="margin:2px 0 0;font-size:0.8rem;">A4 Multi-Page Layout • <strong>${preview.totalPages} page(s)</strong> • ${(preview.pdfSize / 1024).toFixed(1)} KB</p>
           </div>
           <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
-            <div style="display:flex;gap:3px;background:var(--surface-alt);padding:3px;border-radius:6px;border:1px solid var(--line);">
-              <button type="button" class="studio-view-toggle active" id="btn-pv-visual" style="font-size:0.75rem;padding:3px 9px;">Visual Document</button>
-              <button type="button" class="studio-view-toggle" id="btn-pv-pdf" style="font-size:0.75rem;padding:3px 9px;">PDF File</button>
-            </div>
             <a href="${pdfUrl}" target="_blank" class="button secondary" style="font-size:0.75rem;padding:4px 10px;">Open in Tab</a>
             <a href="${pdfUrl}" download="${escape(preview.templateName.replace(/\s+/g, '_'))}.pdf" class="button secondary" style="font-size:0.75rem;padding:4px 10px;">Download PDF</a>
           </div>
@@ -2708,36 +2702,13 @@ async function openOfferTemplatePreview(templateId, candId, reqId, appId, salary
             <div class="validation-item-list">${missing.map(m => `<span class="validation-pill">${escape(m)}</span>`).join('')}</div>
           </div>
         `}
-        <div id="pv-visual-container" class="studio-a4-sheet-container" style="max-height:65vh;overflow-y:auto;display:flex;">
-          ${visualHtml}
-        </div>
-        <div id="pv-pdf-container" style="display:none;width:100%;height:65vh;background:var(--surface-alt);border:1px solid var(--line);border-radius:10px;overflow:hidden;">
+        <div id="pv-pdf-container" style="display:block;width:100%;height:65vh;background:var(--surface-alt);border:1px solid var(--line);border-radius:10px;overflow:hidden;">
           <iframe src="${pdfUrl}" style="width:100%;height:100%;border:none;display:block;" title="A4 Document Preview"></iframe>
         </div>
       </div>
     `;
 
     modal(`Document Preview — ${preview.templateName}`, previewHtml, null);
-
-    const visualBtn = $('#btn-pv-visual');
-    const pdfBtn = $('#btn-pv-pdf');
-    const visualBox = $('#pv-visual-container');
-    const pdfBox = $('#pv-pdf-container');
-
-    if (visualBtn && pdfBtn && visualBox && pdfBox) {
-      visualBtn.onclick = () => {
-        visualBtn.classList.add('active');
-        pdfBtn.classList.remove('active');
-        visualBox.style.display = 'flex';
-        pdfBox.style.display = 'none';
-      };
-      pdfBtn.onclick = () => {
-        pdfBtn.classList.add('active');
-        visualBtn.classList.remove('active');
-        visualBox.style.display = 'none';
-        pdfBox.style.display = 'block';
-      };
-    }
   } catch (err) {
     notice(err.message, 'error');
   }

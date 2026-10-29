@@ -951,15 +951,15 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
         const apps = db.prepare('SELECT a.id, a.candidate_id, a.requisition_id, a.stage, a.created_at, r.title, r.team FROM applications a JOIN requisitions r ON r.id=a.requisition_id WHERE a.candidate_id=? ORDER BY a.created_at ASC').all(key).filter(a => inTeam(user, a.team)).map(a => {
           let hrmsStatus = null;
           try {
-            const l = db.prepare("SELECT action, details, created_at FROM audit_logs WHERE target_id=? AND action IN ('application.hrms_handoff_success', 'application.hrms_handoff_failed') ORDER BY created_at DESC LIMIT 1").get(a.id);
+            const l = db.prepare("SELECT event, detail, at FROM audit WHERE (target=? OR target=?) AND event IN ('application.hrms_handoff_success', 'application.hrms_handoff_failed') ORDER BY at DESC LIMIT 1").get(a.id, a.candidate_id);
             if (l) {
               let details = {};
-              try { details = JSON.parse(l.details); } catch {}
+              try { details = JSON.parse(l.detail); } catch {}
               hrmsStatus = {
-                synced: l.action === 'application.hrms_handoff_success',
+                synced: l.event === 'application.hrms_handoff_success',
                 employeeId: details.employeeId || null,
                 error: details.error || null,
-                createdAt: l.created_at
+                createdAt: l.at
               };
             }
           } catch {}
@@ -1288,33 +1288,30 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
         let hrmsSyncMap = new Map();
         try {
           const hrmsLogs = db.prepare(`
-            SELECT target_id, action, details, created_at
-            FROM audit_logs
-            WHERE action IN ('application.hrms_handoff_success', 'application.hrms_handoff_failed')
-            ORDER BY created_at ASC
+            SELECT target, event, detail, at
+            FROM audit
+            WHERE event IN ('application.hrms_handoff_success', 'application.hrms_handoff_failed')
+            ORDER BY at ASC
           `).all();
           for (const l of hrmsLogs) {
             let details = {};
-            try { details = JSON.parse(l.details); } catch {}
-            if (l.action === 'application.hrms_handoff_success') {
-              hrmsSyncMap.set(l.target_id, {
-                synced: true,
-                employeeId: details.employeeId || null,
-                syncedAt: l.created_at,
-                documentAttached: details.documentAttached,
-                resumeAttached: details.resumeAttached
-              });
-            } else if (l.action === 'application.hrms_handoff_failed') {
-              hrmsSyncMap.set(l.target_id, {
-                synced: false,
-                error: details.error || 'HRMS handoff failed',
-                failedAt: l.created_at
-              });
-            }
+            try { details = JSON.parse(l.detail); } catch {}
+            const info = {
+              synced: l.event === 'application.hrms_handoff_success',
+              employeeId: details.employeeId || null,
+              error: details.error || null,
+              syncedAt: l.at,
+              documentAttached: details.documentAttached,
+              resumeAttached: details.resumeAttached
+            };
+            if (l.target) hrmsSyncMap.set(l.target, info);
+            if (details.candidate_id) hrmsSyncMap.set(details.candidate_id, info);
+            if (details.candidate_email) hrmsSyncMap.set(details.candidate_email.toLowerCase(), info);
+            if (details.email) hrmsSyncMap.set(details.email.toLowerCase(), info);
           }
         } catch {}
         return apps.map(a => {
-          const hrmsStatus = hrmsSyncMap.get(a.id);
+          const hrmsStatus = hrmsSyncMap.get(a.id) || hrmsSyncMap.get(a.candidate_id) || (a.email ? hrmsSyncMap.get(a.email.toLowerCase()) : null) || null;
           const ev = evalMap.get(a.id);
           const dr = draftMap.get(a.id);
           const overdue = isTrainingOverdue(a);
@@ -1592,6 +1589,8 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
         audit(db, user.id, 'application.hrms_handoff_success', key, {
           employeeId: handoffResult.employeeId || handoffResult.providerReference,
           provider: handoffResult.provider || 'hrms',
+          candidate_id: cand?.id,
+          candidate_email: cand?.email,
           documentAttached: Boolean(handoffResult.document),
           resumeAttached: Boolean(handoffResult.resume)
         });
@@ -1904,6 +1903,8 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
                 audit(db, user.id, 'application.hrms_handoff_success', key, {
                   employeeId: handoffResult.employeeId || handoffResult.providerReference,
                   provider: handoffResult.provider || 'hrms',
+                  candidate_id: cand?.id,
+                  candidate_email: cand?.email,
                   documentAttached: Boolean(handoffResult.document),
                   resumeAttached: Boolean(handoffResult.resume)
                 });
@@ -1911,7 +1912,9 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
             } catch (hrmsErr) {
               try {
                 audit(db, user.id, 'application.hrms_handoff_failed', key, {
-                  error: hrmsErr.message
+                  error: hrmsErr.message,
+                  candidate_id: cand?.id,
+                  candidate_email: cand?.email
                 });
               } catch {}
             }

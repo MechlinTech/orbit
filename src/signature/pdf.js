@@ -884,12 +884,50 @@ ET
     : new Date().toISOString().split('T')[0];
   const primarySigId = primarySigner?.id ? primarySigner.id.slice(0, 8) : 'verified';
 
-  let page1SigStream = '';
-  const page1Images = [];
+  // Ensure original pages exist; if empty, synthesize the full offer letter
+  if (originalPages.length === 0) {
+    const fallbackOffer = generateOfferLetterPdf({
+      candidateName: primarySigner?.name || 'Candidate',
+      requisitionTitle: (request?.title || 'Employment Position').replace(/ Offer Letter$/i, ''),
+      team: 'Dev',
+      salary: '120,000',
+      currency: 'USD'
+    });
+    originalPages.push(...extractPagesFromPdf(fallbackOffer));
+  }
+
+  // Detect which page and coordinates the signature should be placed on
+  let targetPageIndex = -1;
+  let sigCoords = null;
+
+  for (let i = 0; i < originalPages.length; i++) {
+    const text = originalPages[i].streamText;
+    const matchAgreed = text.match(/(\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)\s+Td[\r\n\s]*\(Accepted and Agreed:\)/);
+    if (matchAgreed) {
+      targetPageIndex = i;
+      const x = parseFloat(matchAgreed[1]);
+      const y = parseFloat(matchAgreed[2]);
+      sigCoords = { x, y: y - 45 + 2, isBlock: true };
+      break;
+    }
+    if (text.includes('CANDIDATE ACCEPTANCE') || text.includes('Signer: ___') || text.includes('Signer:')) {
+      targetPageIndex = i;
+      sigCoords = { x: 95, y: 142, isBlock: false };
+      break;
+    }
+  }
+
+  if (targetPageIndex === -1) {
+    targetPageIndex = originalPages.length > 1 ? originalPages.length - 1 : 0;
+    sigCoords = { x: 95, y: 142, isBlock: false };
+  }
+
+  let sigStream = '';
+  const targetPageImages = [];
+  const p1ImgName = 'Page1SigImg'; // Preserve name for test compatibility
 
   if (primaryImg) {
-    const p1ImgName = 'Page1SigImg';
-    const maxW = 160;
+    const maxW = sigCoords.isBlock ? 180 : 160;
     const maxH = 34;
     const aspect = (primaryImg.width && primaryImg.height) ? (primaryImg.width / primaryImg.height) : 3;
     let drawW = maxW;
@@ -903,12 +941,28 @@ ET
       drawH = Math.round(drawW / aspect);
     }
 
-    page1Images.push({
+    targetPageImages.push({
       name: p1ImgName,
       ...primaryImg
     });
 
-    page1SigStream = `
+    if (sigCoords.isBlock) {
+      sigStream = `
+q
+${drawW} 0 0 ${drawH} ${sigCoords.x} ${sigCoords.y} cm
+/${p1ImgName} Do
+Q
+
+BT
+/F1 7 Tf
+0.35 0.35 0.35 rg
+${sigCoords.x} ${sigCoords.y - 28} Td
+(Digitally verified · Orbit ATS ID: ${escapePdfText(primarySigId)} · ${escapePdfText(signedDateStr)}) Tj
+0 0 0 rg
+ET
+`;
+    } else {
+      sigStream = `
 q
 ${drawW} 0 0 ${drawH} 95 142 cm
 /${p1ImgName} Do
@@ -926,6 +980,7 @@ BT
 (Digitally verified · Orbit ATS ID: ${escapePdfText(primarySigId)}) Tj
 ET
 `;
+    }
   } else if (primarySigner) {
     const sigText = primarySigner.signature_data || primarySigner.name;
     const style = primarySigner.signature_style || 'cursive';
@@ -935,7 +990,26 @@ ET
     else if (style === 'handwritten') fontTag = '/F6 14 Tf';
     else if (style === 'clean') fontTag = '/F5 14 Tf';
 
-    page1SigStream = `
+    if (sigCoords.isBlock) {
+      sigStream = `
+BT
+${fontTag}
+0.08 0.18 0.35 rg
+${sigCoords.x} ${sigCoords.y + 6} Td
+(${escapePdfText(sigText)}) Tj
+0 0 0 rg
+ET
+
+BT
+/F1 7 Tf
+0.35 0.35 0.35 rg
+${sigCoords.x} ${sigCoords.y - 28} Td
+(Digitally verified · Orbit ATS ID: ${escapePdfText(primarySigId)} · ${escapePdfText(signedDateStr)}) Tj
+0 0 0 rg
+ET
+`;
+    } else {
+      sigStream = `
 BT
 ${fontTag}
 0.08 0.18 0.35 rg
@@ -956,33 +1030,24 @@ BT
 (Digitally verified · Orbit ATS ID: ${escapePdfText(primarySigId)}) Tj
 ET
 `;
-  }
-
-  // Ensure original pages exist; if empty, synthesize the full offer letter
-  if (originalPages.length === 0) {
-    const fallbackOffer = generateOfferLetterPdf({
-      candidateName: primarySigner?.name || 'Candidate',
-      requisitionTitle: (request?.title || 'Employment Position').replace(/ Offer Letter$/i, ''),
-      team: 'Dev',
-      salary: '120,000',
-      currency: 'USD'
-    });
-    originalPages.push(...extractPagesFromPdf(fallbackOffer));
+    }
   }
 
   const finalPages = [];
 
   for (let i = 0; i < originalPages.length; i++) {
-    if (i === 0) {
-      finalPages.push({
-        streamText: originalPages[i].streamText + page1SigStream,
-        images: page1Images
-      });
-    } else {
-      finalPages.push({
-        streamText: originalPages[i].streamText
-      });
+    const pageImages = Array.isArray(originalPages[i].images) ? [...originalPages[i].images] : [];
+    let streamText = originalPages[i].streamText;
+
+    if (i === targetPageIndex) {
+      streamText += sigStream;
+      pageImages.push(...targetPageImages);
     }
+
+    finalPages.push({
+      streamText,
+      images: pageImages
+    });
   }
 
   finalPages.push({
@@ -994,55 +1059,176 @@ ET
 }
 
 /**
- * Extracts content stream texts from an unencrypted PDF buffer.
- * Supports CRLF and LF newlines and filters out Image XObject streams.
+ * Extracts content stream texts and embedded image XObjects from an unencrypted PDF buffer.
+ * Preserves page order, letterhead graphics, and content streams.
  */
 export function extractPagesFromPdf(pdfBuffer) {
   const pages = [];
   if (!pdfBuffer || !Buffer.isBuffer(pdfBuffer)) return pages;
+
+  // 1. Scan and index all objects in the PDF
+  const objects = new Map();
   let pos = 0;
   while (pos < pdfBuffer.length) {
-    let streamIdx = pdfBuffer.indexOf(Buffer.from('stream\n'), pos);
-    let headerLen = 7;
-    const crlfIdx = pdfBuffer.indexOf(Buffer.from('stream\r\n'), pos);
-    if (crlfIdx !== -1 && (streamIdx === -1 || crlfIdx < streamIdx)) {
-      streamIdx = crlfIdx;
-      headerLen = 8;
-    }
-    if (streamIdx === -1) break;
+    const objMatch = pdfBuffer.subarray(pos).toString('latin1').match(/^(\d+)\s+0\s+obj/);
+    if (objMatch) {
+      const objId = parseInt(objMatch[1], 10);
+      const startObj = pos;
+      const endObj = pdfBuffer.indexOf(Buffer.from('endobj'), pos);
+      if (endObj === -1) break;
 
-    const dataStart = streamIdx + headerLen;
-    const streamEnd = pdfBuffer.indexOf(Buffer.from('endstream'), dataStart);
-    if (streamEnd === -1) break;
-
-    let actualEnd = streamEnd;
-    if (actualEnd > dataStart && pdfBuffer[actualEnd - 1] === 0x0a) actualEnd--;
-    if (actualEnd > dataStart && pdfBuffer[actualEnd - 1] === 0x0d) actualEnd--;
-
-    const streamSlice = pdfBuffer.subarray(dataStart, actualEnd);
-
-    // Check if the preceding dictionary marks this stream as an Image
-    const dictStart = Math.max(0, streamIdx - 300);
-    const dictSlice = pdfBuffer.subarray(dictStart, streamIdx).toString('latin1');
-    const isImage = dictSlice.includes('/Subtype /Image') || dictSlice.includes('/Subtype/Image');
-
-    if (!isImage) {
-      let decompressed = null;
-      try {
-        decompressed = zlib.inflateSync(streamSlice).toString('utf8');
-      } catch {
-        try {
-          const raw = streamSlice.toString('utf8');
-          if (raw.includes('BT') && raw.includes('ET')) decompressed = raw;
-        } catch {}
+      const objBytes = pdfBuffer.subarray(startObj, endObj + 6);
+      const str = objBytes.toString('latin1');
+      const streamIdx = objBytes.indexOf(Buffer.from('stream\n'));
+      let streamStart = streamIdx !== -1 ? streamIdx + 7 : -1;
+      if (streamIdx === -1) {
+        const streamCrlf = objBytes.indexOf(Buffer.from('stream\r\n'));
+        if (streamCrlf !== -1) streamStart = streamCrlf + 8;
       }
 
-      if (decompressed && (decompressed.includes('BT') || decompressed.includes('Tj') || decompressed.includes('ET'))) {
-        pages.push({ streamText: decompressed });
+      let dict = str;
+      let streamData = null;
+      if (streamStart !== -1) {
+        const streamEnd = objBytes.indexOf(Buffer.from('endstream'), streamStart);
+        let actualEnd = streamEnd;
+        if (actualEnd > streamStart && objBytes[actualEnd - 1] === 0x0a) actualEnd--;
+        if (actualEnd > streamStart && objBytes[actualEnd - 1] === 0x0d) actualEnd--;
+        streamData = objBytes.subarray(streamStart, actualEnd);
+        dict = objBytes.subarray(0, streamStart).toString('latin1');
       }
-    }
 
-    pos = streamEnd + 9;
+      objects.set(objId, { id: objId, dict, streamData });
+      pos = endObj + 6;
+    } else {
+      pos++;
+    }
   }
+
+  // 2. Scan for /Type /Page objects following the /Pages /Kids array
+  let pageObjIds = [];
+  for (const obj of objects.values()) {
+    if (obj.dict.includes('/Type /Pages') || obj.dict.includes('/Type/Pages')) {
+      const kidsMatch = obj.dict.match(/\/Kids\s*\[\s*([\s\S]*?)\]/);
+      if (kidsMatch) {
+        const refs = kidsMatch[1].match(/(\d+)\s+0\s+R/g);
+        if (refs) {
+          pageObjIds = refs.map(r => parseInt(r.match(/(\d+)/)[1], 10));
+          break;
+        }
+      }
+    }
+  }
+
+  if (pageObjIds.length === 0) {
+    for (const [id, obj] of objects.entries()) {
+      if (/\/Type\s*\/Page\b/.test(obj.dict)) pageObjIds.push(id);
+    }
+  }
+
+  for (const pId of pageObjIds) {
+    const pageObj = objects.get(pId);
+    if (!pageObj) continue;
+
+    const contentsMatch = pageObj.dict.match(/\/Contents\s+(\d+)\s+0\s+R/);
+    let streamText = '';
+    if (contentsMatch) {
+      const cObj = objects.get(parseInt(contentsMatch[1], 10));
+      if (cObj?.streamData) {
+        try { streamText = zlib.inflateSync(cObj.streamData).toString('utf8'); } catch {
+          try { streamText = cObj.streamData.toString('utf8'); } catch {}
+        }
+      }
+    }
+
+    const images = [];
+    const xobjMatch = pageObj.dict.match(/\/XObject\s*<<\s*([\s\S]*?)>>/);
+    if (xobjMatch) {
+      const entries = xobjMatch[1].match(/\/([^\s]+)\s+(\d+)\s+0\s+R/g);
+      if (entries) {
+        for (const entry of entries) {
+          const m = entry.match(/\/([^\s]+)\s+(\d+)\s+0\s+R/);
+          if (m) {
+            const imgName = m[1];
+            const imgObjId = parseInt(m[2], 10);
+            const imgObj = objects.get(imgObjId);
+            if (imgObj && (imgObj.dict.includes('/Subtype /Image') || imgObj.dict.includes('/Subtype/Image'))) {
+              const wMatch = imgObj.dict.match(/\/Width\s+(\d+)/);
+              const hMatch = imgObj.dict.match(/\/Height\s+(\d+)/);
+              const csMatch = imgObj.dict.match(/\/ColorSpace\s*\/([^\s>]+)/);
+              const filterMatch = imgObj.dict.match(/\/Filter\s*\/([^\s>]+)/);
+              const smaskMatch = imgObj.dict.match(/\/SMask\s+(\d+)\s+0\s+R/);
+
+              let smaskData = null;
+              if (smaskMatch) {
+                const smaskObj = objects.get(parseInt(smaskMatch[1], 10));
+                if (smaskObj?.streamData) smaskData = smaskObj.streamData;
+              }
+
+              images.push({
+                name: imgName,
+                width: wMatch ? parseInt(wMatch[1], 10) : 100,
+                height: hMatch ? parseInt(hMatch[1], 10) : 100,
+                colorSpace: csMatch ? csMatch[1] : 'DeviceRGB',
+                filter: filterMatch ? filterMatch[1] : 'FlateDecode',
+                data: imgObj.streamData,
+                smaskData
+              });
+            }
+          }
+        }
+      }
+    }
+
+    if (streamText) {
+      pages.push({ streamText, images });
+    }
+  }
+
+  // Fallback if object parsing found nothing
+  if (pages.length === 0) {
+    let p = 0;
+    while (p < pdfBuffer.length) {
+      let streamIdx = pdfBuffer.indexOf(Buffer.from('stream\n'), p);
+      let headerLen = 7;
+      const crlfIdx = pdfBuffer.indexOf(Buffer.from('stream\r\n'), p);
+      if (crlfIdx !== -1 && (streamIdx === -1 || crlfIdx < streamIdx)) {
+        streamIdx = crlfIdx;
+        headerLen = 8;
+      }
+      if (streamIdx === -1) break;
+
+      const dataStart = streamIdx + headerLen;
+      const streamEnd = pdfBuffer.indexOf(Buffer.from('endstream'), dataStart);
+      if (streamEnd === -1) break;
+
+      let actualEnd = streamEnd;
+      if (actualEnd > dataStart && pdfBuffer[actualEnd - 1] === 0x0a) actualEnd--;
+      if (actualEnd > dataStart && pdfBuffer[actualEnd - 1] === 0x0d) actualEnd--;
+
+      const streamSlice = pdfBuffer.subarray(dataStart, actualEnd);
+      const dictStart = Math.max(0, streamIdx - 300);
+      const dictSlice = pdfBuffer.subarray(dictStart, streamIdx).toString('latin1');
+      const isImg = dictSlice.includes('/Subtype /Image') || dictSlice.includes('/Subtype/Image');
+
+      if (!isImg) {
+        let decomp = null;
+        try {
+          decomp = zlib.inflateSync(streamSlice).toString('utf8');
+        } catch {
+          try {
+            const raw = streamSlice.toString('utf8');
+            if (raw.includes('BT') && raw.includes('ET')) decomp = raw;
+          } catch {}
+        }
+
+        if (decomp && (decomp.includes('BT') || decomp.includes('Tj') || decomp.includes('ET'))) {
+          pages.push({ streamText: decomp, images: [] });
+        }
+      }
+
+      p = streamEnd + 9;
+    }
+  }
+
   return pages;
 }
