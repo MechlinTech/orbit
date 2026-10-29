@@ -972,4 +972,71 @@ test('Priority Test 9: Adding candidate with requisition auto-advances to Applie
   }
 });
 
+test('Signed PDF preserves letterhead background images and positions signature on signature block page', async () => {
+  const { db, admin, recruiter } = fixture();
+  const storage = new SignatureStorageManager('data/test_signatures_lh');
+  try {
+    const { uploadLetterheadAsset, getOfferTemplate, seedDefaultTemplatesIfEmpty } = await import('../src/signature/template_service.js');
+    seedDefaultTemplatesIfEmpty(db);
+
+    const pngBuf = makeTestPng(12, 12, false);
+    const asset = uploadLetterheadAsset(db, admin, { buffer: pngBuf, filename: 'company_letterhead.png' }, storage);
+
+    const defaultTpl = db.prepare("SELECT id FROM offer_letter_templates WHERE is_default = 1").get();
+    const tpl = getOfferTemplate(db, admin, defaultTpl.id);
+    db.prepare('UPDATE offer_letter_templates SET background_config = ? WHERE id = ?').run(
+      JSON.stringify({ assetId: asset.id, firstPageAssetId: asset.id, continuationAssetId: asset.id }),
+      defaultTpl.id
+    );
+
+    const cand = service(db, recruiter, 'POST', 'candidates', candidateBody);
+    const req = service(db, recruiter, 'POST', 'requisitions', reqBody);
+    db.prepare("UPDATE requisitions SET status='open' WHERE id=?").run(req.id);
+    const app = service(db, recruiter, 'POST', 'applications', { candidate_id: cand.id, requisition_id: req.id });
+    service(db, recruiter, 'POST', `applications/${app.id}/stage`, { stage: 'Offer' });
+
+    const sigReq = await createSignatureRequest(db, recruiter, {
+      title: 'Executive Employment Offer Letter',
+      candidateId: cand.id,
+      applicationId: app.id,
+      requisitionId: req.id,
+      templateId: defaultTpl.id,
+      signers: [{ name: cand.name, email: cand.email, role: 'Candidate' }]
+    }, { storage });
+
+    const token = sigReq.signers[0].token;
+    assert.ok(token);
+
+    const signResult = await submitSignature(db, token, {
+      signatureType: 'typed',
+      signatureData: cand.name,
+      signatureStyle: 'cursive',
+      consent: true,
+      ipAddress: '192.168.1.50'
+    }, { storage });
+
+    assert.equal(signResult.status, 'completed');
+
+    const signedDoc = downloadSignatureDocument(db, token, sigReq.id, 'signed', { storage });
+    assert.ok(signedDoc.buffer && signedDoc.buffer.length > 2000);
+
+    const { extractPagesFromPdf } = await import('../src/signature/pdf.js');
+    const signedPages = extractPagesFromPdf(signedDoc.buffer);
+    assert.ok(signedPages.length >= 3, 'Must have original offer pages plus certificate');
+
+    // Verify letterhead images are preserved on all original pages
+    for (let i = 0; i < signedPages.length - 1; i++) {
+      assert.ok(signedPages[i].images.length > 0, `Page ${i + 1} must preserve letterhead image`);
+    }
+
+    // Verify signature was stamped on Page 2 (where signature block is), NOT misplaced on Page 1
+    assert.ok(!signedPages[0].streamText.includes('Digitally verified'), 'Page 1 must NOT have misplaced signature');
+    assert.ok(signedPages[1].streamText.includes('Digitally verified'), 'Page 2 must have digitally verified signature block');
+    assert.ok(signedPages[1].streamText.includes('Accepted and Agreed:'), 'Page 2 contains the acceptance block');
+  } finally {
+    db.close();
+    try { rmSync('data/test_signatures_lh', { recursive: true, force: true }); } catch {}
+  }
+});
+
 
