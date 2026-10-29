@@ -1070,6 +1070,45 @@ test('interviewer can add/remove competencies when submitting scorecard and when
   assert.equal(parsedRatings['Culture Fit'], 5);
   assert.equal(parsedRatings.Communication, 5);
   assert.equal(parsedRatings.Architecture, undefined);
+  f.db.close();
+});
+
+test('interview scheduling allows same-day scheduling and scheduling 2 minutes from now while rejecting past dates', () => {
+  const f = hiringFixture();
+  // 1. Scheduling 2 minutes from now succeeds
+  const twoMinutesFromNow = new Date(Date.now() + 2 * 60 * 1000).toISOString();
+  const i1 = call(f, f.recruiter, 'POST', 'interviews', {
+    application_id: f.app.id,
+    interviewer_id: f.interviewer.id,
+    scheduled_at: twoMinutesFromNow,
+    competencies: ['Technical']
+  });
+  assert.equal(i1.scheduled_at, twoMinutesFromNow);
+
+  // 2. Scheduling same day succeeds even if time is earlier today (same day validation removed)
+  const earlierToday = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+  const i2 = call(f, f.recruiter, 'PUT', `interviews/${i1.id}`, {
+    scheduled_at: earlierToday
+  });
+  assert.equal(i2.scheduled_at, earlierToday);
+
+  // 3. Scheduling a date prior to today (yesterday) fails
+  const yesterday = new Date(Date.now() - 86400000 * 2).toISOString();
+  assert.throws(
+    () => call(f, f.recruiter, 'POST', 'interviews', {
+      application_id: f.app.id,
+      interviewer_id: f.interviewer.id,
+      scheduled_at: yesterday,
+      competencies: ['Technical']
+    }),
+    e => e.status === 400 && e.message.includes('future interview date')
+  );
+  assert.throws(
+    () => call(f, f.recruiter, 'PUT', `interviews/${i1.id}`, {
+      scheduled_at: yesterday
+    }),
+    e => e.status === 400 && e.message.includes('future interview date')
+  );
 
   f.db.close();
 });

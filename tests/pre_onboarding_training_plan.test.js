@@ -128,6 +128,25 @@ test('A1. Template Management: Create, edit, duplicate, preview, activate, deact
   assert.equal(duplicate.status, 'draft');
   assert.equal(duplicate.sections.length, 2);
 
+  // Subsequent duplicates should not accumulate "Copy of Copy of"
+  const duplicate2 = duplicateTrainingTemplate(f.db, created.id, f.admin.id);
+  assert.equal(duplicate2.name, `Copy of ${updated.name} (2)`);
+
+  // Duplicating an already duplicated plan should also increment counter rather than prepending "Copy of"
+  const duplicateOfCopy = duplicateTrainingTemplate(f.db, duplicate.id, f.admin.id);
+  assert.equal(duplicateOfCopy.name, `Copy of ${updated.name} (3)`);
+
+  // Duplicating a legacy template with accumulated "Copy of Copy of" cleans up the name
+  const legacyPlan = createTrainingTemplate(f.db, {
+    name: 'Copy of Copy of Copy of Legacy Track',
+    subject: 'Legacy Track Subject',
+    positions: ['All / General'],
+    departments: ['All Depts'],
+    status: 'draft'
+  }, f.admin.id);
+  const cleanDuplicate = duplicateTrainingTemplate(f.db, legacyPlan.id, f.admin.id);
+  assert.equal(cleanDuplicate.name, 'Copy of Legacy Track');
+
   // Activate template
   const activated = setTrainingTemplateStatus(f.db, created.id, { status: 'active' }, f.admin.id);
   assert.equal(activated.status, 'active');

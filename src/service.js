@@ -88,6 +88,26 @@ function getDbSkills(db) {
 }
 
 
+export function isPastInterviewDate(date) {
+  if (!date || !Number.isFinite(date.getTime())) return true;
+  const istFormatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  });
+  const todayIST = istFormatter.format(new Date());
+  const dateIST = istFormatter.format(date);
+  if (dateIST >= todayIST) return false;
+  const localToday = new Date();
+  localToday.setHours(0, 0, 0, 0);
+  if (date.getTime() >= localToday.getTime()) return false;
+  const todayUTC = new Date().toISOString().slice(0, 10);
+  const dateUTC = date.toISOString().slice(0, 10);
+  if (dateUTC >= todayUTC) return false;
+  return true;
+}
+
 const get = (db, table, key) => {
   const row = db.prepare(`SELECT * FROM ${table} WHERE id=?`).get(key);
   if (!row) throw new HttpError(404, 'Record not found.');
@@ -277,9 +297,10 @@ function referralView(db, user, row) {
 }
 function appContext(db, user, aid, interviewer = false) {
   const app = get(db, 'applications', aid), req = get(db, 'requisitions', app.requisition_id);
-  if (interviewer && (user._scope === 'assigned' || user.role === 'Interviewer')) {
+  const isProxyEvaluator = can(user, 'interviews.proxy_evaluate') || can(user, 'system.override');
+  if (interviewer && !isProxyEvaluator && (user._scope === 'assigned' || user.role === 'Interviewer')) {
     if (!db.prepare('SELECT id FROM interviews WHERE application_id=? AND interviewer_id=?').get(aid,user.id)) throw new HttpError(403,'You are not assigned to this interview.');
-  } else requireTeam(user, req.team);
+  } else if (!isProxyEvaluator || user._scope !== 'assigned') requireTeam(user, req.team);
   return { app, req };
 }
 /**
@@ -634,19 +655,25 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
   }
   if (parts[0] === 'requisitions') {
     if (method === 'GET') {
-      permit(user,'jobs.read','requisitions.read');
-      const openOnly = !can(user, 'requisitions.read');
+      permit(user,'jobs.read','requisitions.read','requisitions.approve_manager','requisitions.approve_finance');
+      const canApprove = can(user, 'requisitions.approve_manager') || can(user, 'requisitions.approve_finance');
+      const openOnly = !can(user, 'requisitions.read') && !canApprove;
+      const canFinanceApprove = can(user, 'requisitions.approve_finance');
       const redactCompensation = !can(user, 'requisitions.compensation.read');
       if (key) {
         const r = get(db, 'requisitions', key);
-        if (r.deleted_at || !inTeam(user, r.team) || (openOnly && r.status !== 'open')) {
+        const canAccessTeam = inTeam(user, r.team) || (canFinanceApprove && (r.status === 'pending_finance' || user._scope === 'organization' || user.role === 'Finance Approver'));
+        if (r.deleted_at || !canAccessTeam || (openOnly && r.status !== 'open')) {
           throw new HttpError(404, 'Requisition not found.');
         }
         const output = { ...r, skills: JSON.parse(r.skills) };
         if (redactCompensation) { delete output.salary_min; delete output.salary_max; delete output.currency; }
         return output;
       }
-      return db.prepare('SELECT * FROM requisitions WHERE deleted_at IS NULL ORDER BY created_at DESC').all().filter(r => inTeam(user,r.team) && (!openOnly || r.status === 'open')).map(r => {
+      return db.prepare('SELECT * FROM requisitions WHERE deleted_at IS NULL ORDER BY created_at DESC').all().filter(r => {
+        const canAccessTeam = inTeam(user, r.team) || (canFinanceApprove && (r.status === 'pending_finance' || user._scope === 'organization' || user.role === 'Finance Approver'));
+        return canAccessTeam && (!openOnly || r.status === 'open' || (r.status.startsWith('pending') && canApprove));
+      }).map(r => {
         const output = {...r,skills:JSON.parse(r.skills)};
         if (redactCompensation) { delete output.salary_min; delete output.salary_max; delete output.currency; }
         return output;
@@ -747,7 +774,10 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
     if (method === 'POST' && key && action) {
       const req = get(db,'requisitions',key);
       if (req.deleted_at) throw new HttpError(404, 'Requisition not found.');
-      requireTeam(user,req.team);
+      const isFinanceApproval = (action === 'approve' || action === 'reject') && req.status === 'pending_finance' && can(user, 'requisitions.approve_finance');
+      if (!isFinanceApproval) {
+        requireTeam(user,req.team);
+      }
       let status;
       if (action === 'submit') {
         permit(user,'requisitions.submit'); if (req.status !== 'draft') throw new HttpError(409,'Only drafts can be submitted.'); status = 'pending_manager';
@@ -1846,7 +1876,12 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       return { configured, status: configured ? 'active' : 'not_configured' };
     }
     if (method === 'GET' && !key) return db.prepare(`SELECT i.*,a.candidate_id,c.name,r.title,r.team,u.name interviewer FROM interviews i
-      JOIN applications a ON a.id=i.application_id JOIN candidates c ON c.id=a.candidate_id JOIN requisitions r ON r.id=a.requisition_id JOIN users u ON u.id=i.interviewer_id`).all().filter(i => (user._scope === 'assigned' || user.role === 'Interviewer') ? i.interviewer_id === user.id : inTeam(user,i.team));
+      JOIN applications a ON a.id=i.application_id JOIN candidates c ON c.id=a.candidate_id JOIN requisitions r ON r.id=a.requisition_id JOIN users u ON u.id=i.interviewer_id`).all().filter(i => {
+        if (!can(user, 'interviews.proxy_evaluate') && !can(user, 'system.override') && (user._scope === 'assigned' || user.role === 'Interviewer')) {
+          return i.interviewer_id === user.id;
+        }
+        return inTeam(user, i.team) || (user._scope === 'assigned' && (!user.team || teamsEquivalent(user.team, i.team)));
+      });
     if (method === 'GET' && key && !action) {
       const interview = get(db, 'interviews', key);
       appContext(db, user, interview.application_id, true);
@@ -1856,7 +1891,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
       permit(user,'interviews.schedule'); const {app,req} = appContext(db,user,body.application_id), interviewer = get(db,'users',body.interviewer_id);
       if (['Hired','Rejected'].includes(app.stage)) throw new HttpError(409,'Cannot interview a closed application.');
       if (interviewer.status !== 'active' || !['Interviewer','Hiring Manager','Recruiter','TA Manager','TA Director','System Admin'].includes(interviewer.role) || !inTeam(interviewer,req.team)) throw new HttpError(400,'Choose an active interviewer who can access this team.');
-      const scheduled = new Date(body.scheduled_at); if (!Number.isFinite(scheduled.getTime()) || scheduled.getTime() < Date.now()) throw new HttpError(400,'Enter a future interview date.');
+      const scheduled = new Date(body.scheduled_at); if (!Number.isFinite(scheduled.getTime()) || isPastInterviewDate(scheduled)) throw new HttpError(400,'Enter a future interview date.');
       const competencies = list(body.competencies,'Competencies',25); if (!competencies.length) throw new HttpError(400,'At least one competency is required.');
       const duration = body.duration_minutes !== undefined ? integer(body.duration_minutes, 'Duration', 15, 480) : 45;
       const timezone = body.timezone ? text(body.timezone, 'Timezone', 100, false) : 'Asia/Kolkata';
@@ -1970,7 +2005,7 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
         assignedInterviewer = interviewer;
       }
       const scheduled = new Date(body.scheduled_at);
-      if (!Number.isFinite(scheduled.getTime()) || scheduled.getTime() < Date.now()) {
+      if (!Number.isFinite(scheduled.getTime()) || isPastInterviewDate(scheduled)) {
         throw new HttpError(400, 'Enter a future interview date.');
       }
       let competencies = JSON.parse(interview.competencies);
