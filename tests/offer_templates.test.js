@@ -412,6 +412,22 @@ test('Offer Letter Module: HTTP service API endpoints for variables, templates, 
   assert.ok(preview.totalPages >= 1);
   assert.ok(preview.pdfBase64);
 
+  // 7b. Dynamic live preview reflects custom margins and shifts content
+  const previewWithMargins = await service(db, recruiter, 'POST', `offer-templates/${created.id}/preview`, {
+    pageConfig: { margins: { top: 140, left: 90, right: 60, bottom: 60 } }
+  });
+  assert.ok(previewWithMargins.pdfBase64);
+  assert.notEqual(previewWithMargins.pdfBase64, preview.pdfBase64);
+
+  // 7c. Template update with custom margins persists both flat and nested margins
+  const updatedWithMargins = await service(db, recruiter, 'PUT', `offer-templates/${created.id}`, {
+    page_config: { margins: { top: 140, left: 90, right: 60, bottom: 60 } }
+  });
+  assert.equal(updatedWithMargins.page_config.marginTop, 140);
+  assert.equal(updatedWithMargins.page_config.marginLeft, 90);
+  assert.equal(updatedWithMargins.page_config.margins.top, 140);
+  assert.equal(updatedWithMargins.page_config.margins.left, 90);
+
   // 8. POST /offer-letter-assets
   const asset = await service(db, recruiter, 'POST', 'offer-letter-assets', {
     name: 'PNG Logo Header',
