@@ -410,6 +410,20 @@ export class HrmsAdapter {
         }
       }
 
+      const validAuthProviders = ['manual', 'microsoft', 'google'];
+      let authProvider = String(approvedFields.auth_provider || 'manual').toLowerCase();
+      if (!validAuthProviders.includes(authProvider)) {
+        authProvider = 'manual';
+      }
+
+      const providerUserId = String(
+        approvedFields.provider_user_id ||
+        hireId ||
+        candidate.id ||
+        email ||
+        `orbit_${Date.now()}`
+      );
+
       const userRow = {
         full_name: fullName,
         email: email,
@@ -418,9 +432,9 @@ export class HrmsAdapter {
         position: position,
         designation_offer_letter: designationOfferLetter,
         status: approvedFields.status || 'active',
-        auth_provider: approvedFields.auth_provider || 'manual',
+        auth_provider: authProvider,
         role_id: approvedFields.role_id || '743fe423-7695-46c5-a6dc-19d0636add9b',
-        provider_user_id: String(hireId || candidate.id || `orbit_${Date.now()}`)
+        provider_user_id: providerUserId
       };
       if (resolvedDeptId) userRow.department_id = resolvedDeptId;
       if (managerId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(managerId))) {
@@ -482,12 +496,43 @@ export class HrmsAdapter {
         createdUser = Array.isArray(createdData) ? (createdData[0] || {}) : createdData;
         const employeeId = createdUser.id || null;
 
-        // If signed document URL is available, attach to employee_documents
-        const docUrl = offer.signed_document_url || approvedFields.signed_document_url;
+        // If offer letter binary or storage path is available, upload to Supabase Storage
+        let offerFileUrl = offer.signed_document_url || approvedFields.signed_document_url || null;
+        const offerDocName = approvedFields.document_name || offer.document_name || offer.filename || 'Signed Offer Letter';
+
+        if (offer.buffer || (offer.storage_path && existsSync(offer.storage_path))) {
+          try {
+            const offerBuf = offer.buffer || readFileSync(offer.storage_path);
+            const folderName = String(fullName || 'employee').replace(/[^a-zA-Z0-9_-]/g, '_');
+            const cleanFileName = String(offer.filename || 'Signed_Offer_Letter.pdf').replace(/[^a-zA-Z0-9._-]/g, '_');
+            const storagePath = `${folderName}/${cleanFileName}`;
+            const storageUploadUrl = `${cleanBase}/storage/v1/object/employee-documents/${storagePath}`;
+
+            const upRes = await this.transport(storageUploadUrl, {
+              method: 'POST',
+              headers: {
+                'apikey': this.apiKey,
+                'Authorization': `Bearer ${this.apiKey}`,
+                'Content-Type': offer.mime_type || 'application/pdf',
+                'x-upsert': 'true'
+              },
+              body: offerBuf,
+              signal: AbortSignal.timeout(this.timeoutMs)
+            });
+
+            if (upRes.ok) {
+              offerFileUrl = `${cleanBase}/storage/v1/object/public/employee-documents/${storagePath}`;
+            }
+          } catch (upErr) {
+            console.error('Supabase offer storage upload error:', upErr.message);
+          }
+        }
+
+        // Attach offer letter to employee_documents
         let attachedDocument = null;
-        if (employeeId && docUrl) {
+        if (employeeId && offerFileUrl) {
           const docTypeId = approvedFields.document_type_id || offer.document_type_id || 'eff934e6-8951-4912-b065-f7056352f394';
-          const docName = approvedFields.document_name || offer.document_name || 'Signed Offer Letter';
+          const docName = approvedFields.document_name || offer.document_name || offerDocName;
           try {
             const docRes = await this.transport(documentsUrl, {
               method: 'POST',
@@ -496,7 +541,7 @@ export class HrmsAdapter {
                 employee_id: employeeId,
                 document_type_id: docTypeId,
                 document_name: docName,
-                file_url: docUrl,
+                file_url: offerFileUrl,
                 status: 'uploaded'
               }),
               signal: AbortSignal.timeout(this.timeoutMs)

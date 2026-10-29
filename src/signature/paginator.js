@@ -96,11 +96,23 @@ export function paginateDocument({
   const pageWidth = Number(pageConfig.width) || A4_WIDTH_PT;
   const pageHeight = Number(pageConfig.height) || A4_HEIGHT_PT;
 
+  const parseMargin = (v1, v2, fb = 54) => {
+    if (v1 !== undefined && v1 !== null && v1 !== '') {
+      const n = Number(v1);
+      if (!isNaN(n) && n >= 0) return n;
+    }
+    if (v2 !== undefined && v2 !== null && v2 !== '') {
+      const n = Number(v2);
+      if (!isNaN(n) && n >= 0) return n;
+    }
+    return fb;
+  };
+
   const margins = {
-    top: Number(pageConfig.marginTop) || 54,
-    bottom: Number(pageConfig.marginBottom) || 54,
-    left: Number(pageConfig.marginLeft) || 54,
-    right: Number(pageConfig.marginRight) || 54
+    top: parseMargin(pageConfig.marginTop, pageConfig.margins?.top, 54),
+    bottom: parseMargin(pageConfig.marginBottom, pageConfig.margins?.bottom, 54),
+    left: parseMargin(pageConfig.marginLeft, pageConfig.margins?.left, 54),
+    right: parseMargin(pageConfig.marginRight, pageConfig.margins?.right, 54)
   };
 
   const printableWidth = pageWidth - margins.left - margins.right;
