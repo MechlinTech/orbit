@@ -452,11 +452,52 @@ export function updateOfferTemplate(db, user, templateId, data = {}) {
 /**
  * Duplicates a template into a new Draft template.
  */
+/**
+ * Strips accumulated copy prefixes and suffixes to return the clean base offer template name.
+ */
+export function extractBaseOfferTemplateName(name) {
+  let clean = String(name || '').trim();
+
+  while (/^copy(\s*\(\d+\))?\s+of\s+/i.test(clean)) {
+    clean = clean.replace(/^copy(\s*\(\d+\))?\s+of\s+/i, '').trim();
+  }
+  clean = clean.replace(/\s*\(\d{1,3}\)$/, '').trim();
+  clean = clean.replace(/(\s*[-—–]?\s*\(?copy(\s*\d+)?\)?)$/i, '').trim();
+
+  return clean || 'Offer Template';
+}
+
+/**
+ * Generates a clean duplicate name for offer templates (e.g. "<Base Name> (Copy 2)").
+ */
+export function generateDuplicateOfferTemplateName(db, sourceName) {
+  let baseName = extractBaseOfferTemplateName(sourceName);
+
+  if (baseName.length > 120) {
+    baseName = baseName.slice(0, 120).trim();
+  }
+
+  const primaryName = `${baseName} (Copy)`;
+  const rows = db.prepare('SELECT name FROM offer_letter_templates WHERE name LIKE ?').all(`${baseName} (Copy%`);
+  const existingLower = new Set(rows.map(r => String(r.name).trim().toLowerCase()));
+
+  if (!existingLower.has(primaryName.toLowerCase())) {
+    return primaryName;
+  }
+
+  let counter = 2;
+  while (existingLower.has(`${baseName} (Copy ${counter})`.toLowerCase())) {
+    counter++;
+  }
+
+  return `${baseName} (Copy ${counter})`;
+}
+
 export function duplicateOfferTemplate(db, user, templateId, options = {}) {
   permit(user, 'offers.templates.manage', 'offers.assets.manage');
   const source = getOfferTemplate(db, user, templateId);
 
-  const newName = options.name || `${source.name} (Copy)`;
+  const newName = options.name || generateDuplicateOfferTemplateName(db, source.name);
   return createOfferTemplate(db, user, {
     name: newName,
     description: source.description,

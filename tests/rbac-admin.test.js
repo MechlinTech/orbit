@@ -242,3 +242,86 @@ test('granular action permissions work without broad module grants', async () =>
   assert.equal(visible.salary, undefined, 'offer compensation must stay redacted on candidate offers');
   f.db.close();
 });
+
+
+test('RBAC: custom proxy scorecard evaluation, cross-team finance approval and manager approval rules', () => {
+  const f = fixture();
+  // 1. Create a Lead Interviewer role with interviews.proxy_evaluate
+  const proxyRole = call(f, f.admin, 'POST', 'admin/roles', {
+    name: 'Lead Interviewer',
+    scope: 'team',
+    permissions: ['jobs.read', 'interviews.read', 'interviews.evaluate', 'interviews.proxy_evaluate', 'candidates.personal.read']
+  });
+  const proxyUserTarget = user(f.db, 'Employee/Referral', 'Engineering');
+  call(f, f.admin, 'POST', `admin/users/${proxyUserTarget.id}/update`, { role: 'Lead Interviewer', team: 'Engineering' });
+  const proxyEvaluator = activeUser(f, proxyUserTarget.id);
+
+  // Setup candidate and application
+  const req = call(f, f.recruiter, 'POST', 'requisitions', reqBody);
+  call(f, f.recruiter, 'POST', `requisitions/${req.id}/submit`, {});
+  call(f, f.manager, 'POST', `requisitions/${req.id}/approve`, { note: 'Manager approval' });
+  call(f, f.finance, 'POST', `requisitions/${req.id}/approve`, { note: 'Finance approval' });
+  const candidate = call(f, f.recruiter, 'POST', 'candidates', candidateBody);
+  const application = call(f, f.recruiter, 'POST', 'applications', { candidate_id: candidate.id, requisition_id: req.id });
+
+  // Schedule interview assigned to f.interviewer
+  const interview = call(f, f.recruiter, 'POST', 'interviews', {
+    application_id: application.id,
+    interviewer_id: f.interviewer.id,
+    scheduled_at: new Date(Date.now() + 86400000).toISOString(),
+    competencies: ['Architecture', 'Communication']
+  });
+  // Make scheduled time past so feedback can be submitted
+  f.db.prepare('UPDATE interviews SET scheduled_at=? WHERE id=?').run(new Date(Date.now() - 60000).toISOString(), interview.id);
+
+  // Verify proxyEvaluator can list the interview
+  const interviewList = call(f, proxyEvaluator, 'GET', 'interviews');
+  assert.ok(interviewList.some(i => i.id === interview.id), 'Proxy evaluator should see team interviews to evaluate');
+
+  // Verify proxy scorecard submission succeeds with reason
+  const proxyResult = call(f, proxyEvaluator, 'POST', `interviews/${interview.id}/scorecards`, {
+    proxy_reason: 'Assigned interviewer had connectivity outage during final debrief',
+    ratings: { Architecture: 4, Communication: 5 },
+    recommendation: 'Yes',
+    notes: 'Strong system design skills demonstrated.'
+  });
+  assert.ok(proxyResult.id);
+  assert.equal(proxyResult.proxy_for, f.interviewer.id);
+
+  // 2. Cross-team finance approval:
+  // Create finance approver whose team is 'Finance'
+  const financeUser = user(f.db, 'Finance Approver', 'Finance');
+  const engReq = call(f, f.recruiter, 'POST', 'requisitions', reqBody); // team is 'Engineering'
+  call(f, f.recruiter, 'POST', `requisitions/${engReq.id}/submit`, {});
+  call(f, f.manager, 'POST', `requisitions/${engReq.id}/approve`, { note: 'Manager approved' });
+
+  // Verify finance user in team 'Finance' can see and approve the Engineering requisition in pending_finance
+  const pendingReqs = call(f, financeUser, 'GET', 'requisitions');
+  assert.ok(pendingReqs.some(r => r.id === engReq.id), 'Finance approver on Finance team should see Engineering requisition in pending_finance');
+  const approvedFinance = call(f, financeUser, 'POST', `requisitions/${engReq.id}/approve`, { note: 'Headcount and budget approved' });
+  assert.equal(approvedFinance.status, 'open', 'Finance approver successfully approved cross-team requisition');
+
+  // 3. Manager self-approval restriction (Separation of duties)
+  const managerCreatedReq = call(f, f.manager, 'POST', 'requisitions', reqBody);
+  call(f, f.manager, 'POST', `requisitions/${managerCreatedReq.id}/submit`, {});
+  assert.throws(
+    () => call(f, f.manager, 'POST', `requisitions/${managerCreatedReq.id}/approve`, { note: 'Self approval' }),
+    e => e.status === 403 && /Requester and each approver must be different people/.test(e.message),
+    'Manager cannot self-approve requisition they personally created'
+  );
+
+  // Another user with requisitions.approve_manager can approve it
+  const secondManagerRole = call(f, f.admin, 'POST', 'admin/roles', {
+    name: 'Peer Manager',
+    scope: 'team',
+    permissions: ['jobs.read', 'requisitions.read', 'requisitions.approve_manager']
+  });
+  const peerTarget = user(f.db, 'Employee/Referral', 'Engineering');
+  call(f, f.admin, 'POST', `admin/users/${peerTarget.id}/update`, { role: 'Peer Manager', team: 'Engineering' });
+  const peerManager = activeUser(f, peerTarget.id);
+
+  const peerApproved = call(f, peerManager, 'POST', `requisitions/${managerCreatedReq.id}/approve`, { note: 'Peer manager approved' });
+  assert.equal(peerApproved.status, 'pending_finance', 'Peer manager successfully approved requisition');
+
+  f.db.close();
+});

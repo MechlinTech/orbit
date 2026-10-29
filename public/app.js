@@ -21,7 +21,7 @@ const getNavList = () => {
   if (!grants.length) {
     return [
       ...(allows('analytics') || allows('analytics.read') ? ['Overview'] : []),
-      ...(allows('jobs') || allows('jobs.read') ? ['Requisitions'] : []),
+      ...(allows('jobs') || allows('jobs.read') || allows('requisitions.read') || allows('requisitions.approve_manager') || allows('requisitions.approve_finance') ? ['Requisitions'] : []),
       ...(allows('review') || allows('recruit') || allows('candidates.read') || allows('applications.read') ? ['Candidates', 'Pipeline'] : []),
       ...(allows('review') || allows('recruit') || allows('interview') || allows('interviews.read') ? ['Interviews'] : []),
       ...(allows('refer') || allows('referrals.read') ? ['Referrals'] : []),
@@ -33,7 +33,7 @@ const getNavList = () => {
   }
   return [
     ...(allows('analytics.read') ? ['Overview'] : []),
-    ...(allows('jobs.read') || allows('requisitions.read') ? ['Requisitions'] : []),
+    ...(allows('jobs.read') || allows('requisitions.read') || allows('requisitions.approve_manager') || allows('requisitions.approve_finance') || allows('requisitions.create') || allows('requisitions.update') ? ['Requisitions'] : []),
     ...(allows('candidates.read') ? ['Candidates'] : []),
     ...(allows('applications.read') ? ['Pipeline'] : []),
     ...(allows('interviews.read') || allows('interviews.evaluate') ? ['Interviews'] : []),
@@ -723,6 +723,19 @@ const getLocalDateString = (d = new Date()) => {
   return `${p.year}-${p.month}-${p.day}`;
 };
 const getLocalTodayMin = () => `${getLocalDateString()}T00:00`;
+const isPastInterviewDate = (date) => {
+  if (!date || !Number.isFinite(date.getTime())) return true;
+  const todayIST = getLocalDateString(new Date());
+  const dateIST = getLocalDateString(date);
+  if (dateIST >= todayIST) return false;
+  const localToday = new Date();
+  localToday.setHours(0, 0, 0, 0);
+  if (date.getTime() >= localToday.getTime()) return false;
+  const todayUTC = new Date().toISOString().slice(0, 10);
+  const dateUTC = date.toISOString().slice(0, 10);
+  if (dateUTC >= todayUTC) return false;
+  return true;
+};
 const checkEmail = v => { const s = String(v ?? '').trim(); return (!s || s.length > 254 || !/^[^\s@.]+(?:\.[^\s@.]+)*@[^\s@]+\.[^\s@]+$/.test(s)) ? 'Enter a valid email address.' : ''; };
 const checkPhone = v => { const s = String(v ?? '').trim(); if (!s) return ''; const d = s.replace(/\D/g, ''); return ((!/^\+?[0-9\s\-().–—]+$/.test(s) && !/^\([+]?[0-9]+\)[\s0-9\-().–—]+$/.test(s)) || d.length < 7 || d.length > 15) ? 'Enter a valid phone number.' : ''; };
 const paginate = (items, page = 1, pageSize = 10) => { const total = items.length, totalPages = Math.max(1, Math.ceil(total / pageSize)), cur = Math.min(Math.max(1, page), totalPages), start = (cur - 1) * pageSize; return { paged: items.slice(start, start + pageSize), page: cur, totalPages, total, start }; };
@@ -995,7 +1008,7 @@ function openRoleModal(role = null, readOnly = false, duplicate = false) {
   const selected = duplicate && me?.role !== 'System Admin'
     ? (source.permissions || []).filter(permission => grants.includes(permission))
     : (source.permissions || []);
-  const name = duplicate ? `${source.name} copy` : (source.name || '');
+  const name = duplicate ? `${source.name.replace(/(\s+copy(\s+\d+)?|\s*\(\d+\))$/i, '')} copy` : (source.name || '');
   const description = source.description || '';
   const canUseOrganizationScope = me?.role === 'System Admin';
   const requestedScope = source.scope || 'team';
@@ -1017,7 +1030,7 @@ function openRoleModal(role = null, readOnly = false, duplicate = false) {
   }).join('')}</div></fieldset><p class="full muted scope-note">${policyNote}</p>`;
   const html = `<div class="form-grid role-form"><label class="full">Role name<input name="name" value="${escape(name)}" maxlength="80" required ${identityLocked ? 'readonly' : ''}></label><label class="full">Description<textarea name="description" rows="2" maxlength="500" ${identityLocked ? 'readonly' : ''}>${escape(description)}</textarea></label>${scopeField}${rolePermissionEditor(selected, !permissionsEditable)}</div>`;
   if (!permissionsEditable) {
-    modal(readOnly ? 'Role permissions' : 'Protected system role', html, null, { actions: `<div class="form-actions form-actions-end"><button type="button" class="secondary" data-action="close-modal">Close</button></div>` });
+    modal(readOnly ? 'Role permissions' : 'Protected system role', html, null);
     bindRolePermissionEditor();
     return;
   }
@@ -1264,7 +1277,11 @@ async function render() {
     }
     if(current==='Overview') {
       const [stats,reqs]=await Promise.all([api('analytics'),api('requisitions')]);
-      html=heading(`Welcome back, ${escape(me.name.split(' ')[0])}. Let’s move great people forward.`,allowAction('candidates.create','recruit')?button('+ Add candidate','new-candidate'):'')+`<div class="metrics">${[['Open requisitions',stats.openRequisitions,'Requisitions','Ready for your next hire'],['Approved headcount',stats.approvedHeadcount,'Referrals','Positions approved to fill'],['Candidates',stats.candidates,'Candidates','People in your talent pool'],['Awaiting approval',stats.pendingApprovals,'Administration','Requisitions awaiting a decision']].map(([label,count,i,note],n)=>`<div class="metric metric-${n}"><div class="metric-top"><span>${label}</span><span class="metric-icon">${icon(i)}</span></div><strong>${count}</strong><small>${note}</small></div>`).join('')}</div><div class="split"><section class="panel"><div class="panel-head"><div><h2>Hiring momentum</h2><p class="muted">A snapshot of your recruitment pipeline</p></div><span class="subtle-label">Current applications</span></div>${Object.entries(stats.stageCounts).map(([stage,count],n)=>`<div class="bar-row stage-${n}"><span>${escape(stage)}</span><progress value="${count}" max="${Math.max(1,...Object.values(stats.stageCounts))}" aria-label="${escape(stage)}"></progress><strong>${count}</strong></div>`).join('')}</section><section class="panel panel-attention"><div class="panel-head"><div><h2>Needs your attention</h2><p class="muted">Keep the next hire moving</p></div><span class="count-pill">${stats.pendingApprovals}</span></div><div class="attention-list" id="attention-list">${reqs.filter(r=>r.status.startsWith('pending')).map(r=>`<div class="attention-card"><div class="attention-title">${icon('Requisitions')}<strong>${escape(r.title)}</strong></div><p class="muted">${escape(r.team)} · ${r.headcount} opening(s)</p><div class="attention-bottom">${badge(r.status)}${button('View role','req-details',r.id,'class="text-button"')}</div></div>`).join('')||empty('All caught up. No pending requisitions.')}</div><p class="panel-footnote">Approvals keep hiring aligned with your team’s plans.</p></section></div><section class="panel"><div class="panel-head"><div><h2>Recent requisitions</h2><p class="muted">The roles shaping your next chapter</p></div>${button('View all roles','navigate','','class="text-button" data-view="Requisitions"')}</div>${reqTable(reqs.slice(0,5))}</section>`;
+      html=heading(`Welcome back, ${escape(me.name.split(' ')[0])}. Let’s move great people forward.`,allowAction('candidates.create','recruit')?button('+ Add candidate','new-candidate'):'')+`<div class="metrics">${[['Open requisitions',stats.openRequisitions,'Requisitions','Ready for your next hire'],['Approved headcount',stats.approvedHeadcount,'Referrals','Positions approved to fill'],['Candidates',stats.candidates,'Candidates','People in your talent pool'],['Awaiting approval',stats.pendingApprovals,'Administration','Requisitions awaiting a decision']].map(([label,count,i,note],n)=>`<div class="metric metric-${n}"><div class="metric-top"><span>${label}</span><span class="metric-icon">${icon(i)}</span></div><strong>${count}</strong><small>${note}</small></div>`).join('')}</div><div class="split"><section class="panel"><div class="panel-head"><div><h2>Hiring momentum</h2><p class="muted">A snapshot of your recruitment pipeline</p></div><span class="subtle-label">Current applications</span></div>${Object.entries(stats.stageCounts).map(([stage,count],n)=>`<div class="bar-row stage-${n}"><span>${escape(stage)}</span><progress value="${count}" max="${Math.max(1,...Object.values(stats.stageCounts))}" aria-label="${escape(stage)}"></progress><strong>${count}</strong></div>`).join('')}</section><section class="panel panel-attention"><div class="panel-head"><div><h2>Needs your attention</h2><p class="muted">Keep the next hire moving</p></div><span class="count-pill">${stats.pendingApprovals}</span></div><div class="attention-list" id="attention-list">${reqs.filter(r=>r.status.startsWith('pending')).map(r=>{
+        const isSelfRestricted = r.created_by === me?.id && !allows('requisitions.override') && !allows('system.override');
+        const canRev = ((r.status === 'pending_manager' && allowAction('requisitions.approve_manager','approve_manager')) || (r.status === 'pending_finance' && allowAction('requisitions.approve_finance','approve_finance'))) && !isSelfRestricted;
+        return `<div class="attention-card"><div class="attention-title">${icon('Requisitions')}<strong>${escape(r.title)}</strong></div><p class="muted">${escape(r.team)} · ${r.headcount} opening(s)</p><div class="attention-bottom">${badge(r.status)}${button('View role','req-details',r.id,'class="text-button"')}${canRev ? button('Review','approve-req',r.id,'class="secondary" style="font-size:0.75rem;padding:2px 8px;"') : ''}</div></div>`;
+      }).join('')||empty('All caught up. No pending requisitions.')}</div><p class="panel-footnote">Approvals keep hiring aligned with your team’s plans.</p></section></div><section class="panel"><div class="panel-head"><div><h2>Recent requisitions</h2><p class="muted">The roles shaping your next chapter</p></div>${button('View all roles','navigate','','class="text-button" data-view="Requisitions"')}</div>${reqTable(reqs.slice(0,5))}</section>`;
     }
     if(current==='Requisitions') {
       const reqs=await api('requisitions');
@@ -2105,9 +2122,15 @@ async function render() {
   }catch(e){if(me)$('#main').innerHTML=`<section class="panel"><h1>Could not load this view</h1><p class="error">${escape(e.message)}</p>${button('Try again','refresh')}</section>`;}
 }
 function reqTable(reqs) {return table(['Position','Team','Headcount','Status','Actions'],reqs.map(r=>{
-  const canReviewManager = r.status==='pending_manager' && allowAction('requisitions.approve_manager','approve_manager') && (r.created_by !== me?.id || allows('requisitions.override') || allows('system.override'));
-  const canReviewFinance = r.status==='pending_finance' && allowAction('requisitions.approve_finance','approve_finance') && (r.created_by !== me?.id || allows('requisitions.override') || allows('system.override'));
-  return `<tr><td><strong>${escape(r.title)}</strong><small>${escape(r.skills.join(', '))}</small></td><td>${escape(r.team)}</td><td>${r.headcount}</td><td>${badge(r.status)}</td><td><div class="actions">${button('Details','req-details',r.id,'class="secondary"')}${['draft','open'].includes(r.status)&&allowAction('requisitions.update','requisition','recruit')?button('Edit','edit-req',r.id,'class="secondary"'):''}${r.status==='draft'&&allowAction('requisitions.submit','requisition','recruit')?button('Submit','submit-req',r.id):''}${(canReviewManager||canReviewFinance)?button('Review','approve-req',r.id):''}</div></td></tr>`;
+  const isCreator = r.created_by === me?.id;
+  const hasOverride = allows('requisitions.override') || allows('system.override');
+  const isSelfApprovalRestricted = isCreator && !hasOverride;
+  const canReviewManager = r.status==='pending_manager' && allowAction('requisitions.approve_manager','approve_manager') && !isSelfApprovalRestricted;
+  const canReviewFinance = r.status==='pending_finance' && allowAction('requisitions.approve_finance','approve_finance') && !isSelfApprovalRestricted;
+  const selfApprovalBlocked = (r.status === 'pending_manager' && allowAction('requisitions.approve_manager','approve_manager') && isSelfApprovalRestricted)
+    || (r.status === 'pending_finance' && allowAction('requisitions.approve_finance','approve_finance') && isSelfApprovalRestricted);
+  const selfBadge = selfApprovalBlocked ? `<span class="badge" title="Separation of duties: The creator of a requisition cannot approve their own requisition. Another approver must review or an emergency override is required." style="background:#fffbeb;color:#92400e;border:1px solid #fde68a;font-size:0.72rem;padding:2px 6px;border-radius:4px;white-space:nowrap;">Self-approval restricted</span>` : '';
+  return `<tr><td><strong>${escape(r.title)}</strong><small>${escape(r.skills.join(', '))}</small></td><td>${escape(r.team)}</td><td>${r.headcount}</td><td>${badge(r.status)}</td><td><div class="actions">${button('Details','req-details',r.id,'class="secondary"')}${['draft','open'].includes(r.status)&&allowAction('requisitions.update','requisition','recruit')?button('Edit','edit-req',r.id,'class="secondary"'):''}${r.status==='draft'&&allowAction('requisitions.submit','requisition','recruit')?button('Submit','submit-req',r.id):''}${(canReviewManager||canReviewFinance)?button('Review','approve-req',r.id):''}${selfBadge}</div></td></tr>`;
 }),'requisitions-table');}
 const requisitionSectionHeadings=new Set(['purpose','role overview','about the role','required skills','required skills and experience','responsibilities','key responsibilities','what success looks like','interview process','accessibility']);
 const requisitionHeading=line=>{const label=line.trim().replace(/\s*:\s*$/,'');return requisitionSectionHeadings.has(label.toLowerCase())?label:null;};
@@ -2129,9 +2152,21 @@ function requisitionDescription(value='') {
   return html;
 }
 function requisitionDetail(r,{readOnly=false}={}) {
+  const isCreator = r.created_by === me?.id;
+  const hasOverride = allows('requisitions.override') || allows('system.override');
+  const isSelfApprovalRestricted = isCreator && !hasOverride;
+  const canReviewManager = r.status==='pending_manager' && allowAction('requisitions.approve_manager','approve_manager') && !isSelfApprovalRestricted;
+  const canReviewFinance = r.status==='pending_finance' && allowAction('requisitions.approve_finance','approve_finance') && !isSelfApprovalRestricted;
+  const selfApprovalBlocked = (r.status === 'pending_manager' && allowAction('requisitions.approve_manager','approve_manager') && isSelfApprovalRestricted)
+    || (r.status === 'pending_finance' && allowAction('requisitions.approve_finance','approve_finance') && isSelfApprovalRestricted);
   const canEdit=!readOnly&&((['draft','open'].includes(r.status)||((allows('requisitions.override')||allows('system.override'))&&['pending_manager','pending_finance'].includes(r.status)))&&allowAction('requisitions.update','requisition','recruit'));
   const skillsList=Array.isArray(r.skills)?r.skills:[];
-  return `<div class="requisition-detail"><p class="detail-meta">${badge(r.status)} · ${escape(r.team)} · ${r.headcount} opening(s)</p>${r.salary_min!==undefined?`<p class="detail-salary">${r.salary_min}–${r.salary_max} ${escape(r.currency)}</p>`:''}${requisitionDescription(r.description)}${skillsList.length?`<h3 class="detail-section-title">Required skills</h3><div class="skill-list">${skillsList.map(s=>`<span class="skill-chip">${escape(s)}</span>`).join('')}</div>`:''}${readOnly?`<p class="read-only-note" role="status">${icon('Administration')}<span>Read-only view. Editing is available from the Requisitions page for authorized users.</span></p>`:''}${canEdit?`<div class="actions detail-actions">${button('Edit','edit-req',r.id)}</div>`:''}</div>`;
+  const selfNotice = selfApprovalBlocked ? `
+    <div class="notice-inline" style="margin-top:12px;border-left-color:var(--warning,#d97706);background:var(--warning-bg,#fffbeb);color:var(--warning,#92400e);font-size:0.83rem;">
+      <strong>Separation of duties policy:</strong> You created this requisition and cannot approve your own request. Another approver must review, or an authorized administrator can apply an override.
+    </div>` : '';
+  const reviewBtn = (canReviewManager || canReviewFinance) ? button('Review requisition', 'approve-req', r.id, 'class="primary"') : '';
+  return `<div class="requisition-detail"><p class="detail-meta">${badge(r.status)} · ${escape(r.team)} · ${r.headcount} opening(s)</p>${r.salary_min!==undefined?`<p class="detail-salary">${r.salary_min}–${r.salary_max} ${escape(r.currency)}</p>`:''}${requisitionDescription(r.description)}${skillsList.length?`<h3 class="detail-section-title">Required skills</h3><div class="skill-list">${skillsList.map(s=>`<span class="skill-chip">${escape(s)}</span>`).join('')}</div>`:''}${selfNotice}${readOnly?`<p class="read-only-note" role="status">${icon('Administration')}<span>Read-only view. Editing is available from the Requisitions page for authorized users.</span></p>`:''}<div class="actions detail-actions">${reviewBtn}${canEdit?button('Edit','edit-req',r.id):''}</div></div>`;
 }
 function candidateStatusCell(c){
   if(!c.applications||!c.applications.length)return '<span class="muted">No applications</span>';
@@ -2660,7 +2695,6 @@ async function openOfferTemplatePreview(templateId, candId, reqId, appId, salary
             </div>
             <a href="${pdfUrl}" target="_blank" class="button secondary" style="font-size:0.75rem;padding:4px 10px;">Open in Tab</a>
             <a href="${pdfUrl}" download="${escape(preview.templateName.replace(/\s+/g, '_'))}.pdf" class="button secondary" style="font-size:0.75rem;padding:4px 10px;">Download PDF</a>
-            <button type="button" class="secondary" data-action="close-modal" style="font-size:0.75rem;padding:4px 10px;">Close</button>
           </div>
         </div>
         ${valid ? `
@@ -3031,7 +3065,6 @@ async function openOfferTemplateEditor(templateId) {
             <button type="button" class="secondary" id="btn-studio-clause-lib" style="font-size:0.8rem;padding:6px 12px;">Clause Library</button>
             <button type="button" class="secondary" id="btn-studio-refresh-preview" style="font-size:0.8rem;padding:6px 12px;">Refresh Preview</button>
             <button type="button" id="btn-studio-save-tpl" style="font-size:0.8rem;padding:6px 16px;">${templateId ? 'Save Changes' : 'Create Template'}</button>
-            <button type="button" class="secondary" data-action="close-modal" id="btn-studio-header-close" style="font-size:0.8rem;padding:6px 14px;">Close</button>
           </div>
         </div>
 
@@ -3877,7 +3910,7 @@ async function openTrainingTemplateEditor(templateId = null) {
           </div>
           <div class="training-studio-header-actions">
             <button type="button" id="btn-save-tpl" class="primary" style="font-size:0.8rem;padding:6px 16px;">${templateId ? 'Save Changes' : 'Create Plan'}</button>
-            <button type="button" class="secondary" data-action="close-modal" style="font-size:0.8rem;padding:6px 14px;">Cancel</button>
+
           </div>
         </div>
         <div class="training-studio-layout">
@@ -4140,7 +4173,7 @@ async function openTrainingTemplatePreview(templateId) {
       <div style="max-height:80vh;overflow-y:auto;padding:12px 0;">
         ${renderTrainingPlanPreviewHtml(testVars, tpl.sections, tpl.learning_links, tpl.support_contact)}
       </div>
-    `, null, { actions: `<div class="form-actions"><button type="button" class="secondary" data-action="close-modal">Close</button></div>` });
+    `, null);
   } catch (err) {
     notice(err.message, 'error');
   }
@@ -4190,7 +4223,6 @@ async function openTrainingPlanReviewModal(applicationId) {
             <button type="button" id="btn-save-draft" class="secondary" style="font-size:0.8rem;padding:6px 14px;">Save Draft</button>
             <button type="button" id="btn-discard-draft" class="secondary text-button" style="font-size:0.78rem;padding:6px 10px;color:var(--negative);">Reset Edits</button>
             <button type="button" id="btn-open-send-confirm" class="primary" style="font-size:0.8rem;padding:6px 16px;">${currentDraft.status === 'sent' ? 'Resend Plan...' : 'Send Training Plan...'}</button>
-            <button type="button" class="secondary" data-action="close-modal" style="font-size:0.8rem;padding:6px 14px;">Close</button>
           </div>
         </div>
 
@@ -4693,7 +4725,7 @@ document.addEventListener('click',async event=>{
       const reqs = await api('requisitions');
       const r = reqs.find(item => item.id === id) || await api(`requisitions/${id}`);
       if(r && r.created_by === me?.id && !isAdmin){
-        throw new Error('Requester and each approver must be different people.');
+        throw new Error('Requester and each approver must be different people. The creator of a requisition cannot approve their own requisition (Separation of duties policy).');
       }
       if(!r || !['pending_manager','pending_finance'].includes(r.status)){
         throw new Error('Requisition is not awaiting approval.');
@@ -5589,9 +5621,9 @@ document.addEventListener('click',async event=>{
         const users = await api('interviewers');
         if(!users.length) throw new Error('No active interviewers found in this team. Add or activate an interviewer first.');
         const todayMin = getLocalTodayMin();
-        const tomorrow = new Date(Date.now() + 86400000);
-        tomorrow.setHours(10, 0, 0, 0);
-        const defaultScheduled = `${getLocalDateString(tomorrow)}T10:00`;
+
+
+        const defaultScheduled = toISTDateTimeInput(new Date(Date.now() + 2 * 60 * 1000));
         const defaultInterviewer = users.some(u => u.id === me.id) ? me.id : (users[0]?.id || '');
         let defaultComps = 'Role knowledge, Problem solving';
         if (app.skills) {
@@ -5627,7 +5659,7 @@ document.addEventListener('click',async event=>{
           </div>
         `, async v => {
           const scheduledDate = parseISTDateTime(v.scheduled_at);
-          if (!scheduledDate || !Number.isFinite(scheduledDate.getTime()) || scheduledDate.getTime() < Date.now()) {
+          if (!scheduledDate || !Number.isFinite(scheduledDate.getTime()) || isPastInterviewDate(scheduledDate)) {
             throw new Error('Enter a future interview date.');
           }
           const sErr = checkSkills(v.competencies);
@@ -6415,11 +6447,12 @@ document.addEventListener('click',async event=>{
       const active=apps.filter(a=>!['Hired','Rejected'].includes(a.stage));
       if(!active.length||!users.length)throw new Error('An active application and interviewer are required.');
       const todayMin=getLocalTodayMin();
+      const defaultScheduled=toISTDateTimeInput(new Date(Date.now() + 2 * 60 * 1000));
       modal('Plan interview',`<div class="form-grid">
         ${select('Application','application_id',active.map(a=>[a.id,`${a.name} · ${a.title}`]))}
         ${select('Interview Format','interview_type',[['virtual','Virtual / Online (Microsoft Teams / Video Call)'],['in_person','In-Person / Physical (Office / On-Site)']],'virtual')}
         ${select('Interviewer','interviewer_id',users.map(u=>[u.id,u.name]))}
-        ${field('Date and time (IST)','scheduled_at','datetime-local','',true,`min="${todayMin}"`)}
+        ${field('Date and time (IST)','scheduled_at','datetime-local',defaultScheduled,true,`min="${todayMin}"`)}
         ${select('Duration','duration_minutes',[['30','30 minutes'],['45','45 minutes (Standard)'],['60','60 minutes'],['90','90 minutes']],'45',false)}
         <div id="row-meeting-url" class="full">
           ${field('Meeting link / Video URL (Optional)','meeting_url','url','',false,'placeholder="Auto-generated via Teams when connected, or paste Google Meet / Zoom link"')}
@@ -6432,7 +6465,7 @@ document.addEventListener('click',async event=>{
         <p class="full status-note" id="interview-format-note">This schedules the interview and creates a Microsoft Teams meeting and candidate invite when configured.</p>
       </div>`,async v=>{
         const scheduledDate=parseISTDateTime(v.scheduled_at);
-        if(!scheduledDate||!Number.isFinite(scheduledDate.getTime())||scheduledDate.getTime()<Date.now()){
+        if(!scheduledDate||!Number.isFinite(scheduledDate.getTime())||isPastInterviewDate(scheduledDate)){
           throw new Error('Enter a future interview date.');
         }
         const isPhysical=v.interview_type==='in_person';
@@ -6466,6 +6499,7 @@ document.addEventListener('click',async event=>{
         interviewerOptions.unshift([i.interviewer_id, `${i.interviewer || 'Assigned interviewer'} (Current)`]);
       }
       const todayMin=getLocalTodayMin();
+      const defaultScheduled=toISTDateTimeInput(new Date(Date.now() + 2 * 60 * 1000));
       const currentType = i.interview_type === 'in_person' ? 'in_person' : 'virtual';
       const currentLocation = i.location || 'Mechlin Technologies — Corporate HQ, Mohali';
       modal('Edit interview',`<div class="form-grid">
@@ -6485,7 +6519,7 @@ document.addEventListener('click',async event=>{
         <p class="full status-note" id="interview-format-note">${currentType === 'in_person' ? 'This is an in-person interview. No virtual meeting link is used.' : 'This updates the scheduled interview date and time and synchronizes with Microsoft Teams when configured.'}</p>
       </div>`,async v=>{
         const scheduledDate=parseISTDateTime(v.scheduled_at);
-        if(!scheduledDate||!Number.isFinite(scheduledDate.getTime())||scheduledDate.getTime()<Date.now()){
+        if(!scheduledDate||!Number.isFinite(scheduledDate.getTime())||isPastInterviewDate(scheduledDate)){
           throw new Error('Enter a future interview date.');
         }
         let updatedComps;
