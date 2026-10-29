@@ -204,6 +204,44 @@ export const DEFAULT_PAGE_CONFIG = {
   fontFamily: 'Helvetica'
 };
 
+export function normalizePageConfig(raw = {}, fallback = DEFAULT_PAGE_CONFIG) {
+  const parseVal = (v1, v2, fb) => {
+    if (v1 !== undefined && v1 !== null && v1 !== '') {
+      const n = Number(v1);
+      if (!isNaN(n) && n >= 0) return n;
+    }
+    if (v2 !== undefined && v2 !== null && v2 !== '') {
+      const n = Number(v2);
+      if (!isNaN(n) && n >= 0) return n;
+    }
+    return fb;
+  };
+
+  const top = parseVal(raw.marginTop, raw.margins?.top, fallback?.marginTop ?? DEFAULT_PAGE_CONFIG.marginTop);
+  const bottom = parseVal(raw.marginBottom, raw.margins?.bottom, fallback?.marginBottom ?? DEFAULT_PAGE_CONFIG.marginBottom);
+  const left = parseVal(raw.marginLeft, raw.margins?.left, fallback?.marginLeft ?? DEFAULT_PAGE_CONFIG.marginLeft);
+  const right = parseVal(raw.marginRight, raw.margins?.right, fallback?.marginRight ?? DEFAULT_PAGE_CONFIG.marginRight);
+
+  return {
+    ...DEFAULT_PAGE_CONFIG,
+    ...fallback,
+    ...raw,
+    width: Number(raw.width) || fallback?.width || DEFAULT_PAGE_CONFIG.width,
+    height: Number(raw.height) || fallback?.height || DEFAULT_PAGE_CONFIG.height,
+    marginTop: top,
+    marginBottom: bottom,
+    marginLeft: left,
+    marginRight: right,
+    margins: {
+      top,
+      bottom,
+      left,
+      right
+    }
+  };
+}
+
+
 export const DEFAULT_HEADER_CONFIG = {
   enabled: true,
   showOnFirstPage: false,
@@ -343,7 +381,7 @@ export function createOfferTemplate(db, user, data = {}) {
   const status = ['draft', 'active', 'archived'].includes(data.status) ? data.status : 'draft';
   const isDefault = Boolean(data.is_default);
 
-  const pageConfig = { ...DEFAULT_PAGE_CONFIG, ...(data.page_config || {}) };
+  const pageConfig = normalizePageConfig(data.page_config || data.pageConfig || {});
   const headerConfig = { ...DEFAULT_HEADER_CONFIG, ...(data.header_config || {}) };
   const footerConfig = { ...DEFAULT_FOOTER_CONFIG, ...(data.footer_config || {}) };
   const backgroundConfig = { ...DEFAULT_BACKGROUND_CONFIG, ...(data.background_config || {}) };
@@ -398,7 +436,8 @@ export function updateOfferTemplate(db, user, templateId, data = {}) {
   const status = ['draft', 'active', 'archived'].includes(data.status) ? data.status : existing.status;
   const isDefault = data.is_default !== undefined ? Boolean(data.is_default) : existing.is_default;
 
-  const pageConfig = data.page_config !== undefined ? { ...existing.page_config, ...data.page_config } : existing.page_config;
+  const incomingPageConfig = data.page_config !== undefined ? data.page_config : data.pageConfig;
+  const pageConfig = incomingPageConfig !== undefined ? normalizePageConfig(incomingPageConfig, existing.page_config) : existing.page_config;
   const headerConfig = data.header_config !== undefined ? { ...existing.header_config, ...data.header_config } : existing.header_config;
   const footerConfig = data.footer_config !== undefined ? { ...existing.footer_config, ...data.footer_config } : existing.footer_config;
   const backgroundConfig = data.background_config !== undefined ? { ...existing.background_config, ...data.background_config } : existing.background_config;
@@ -820,13 +859,14 @@ export function previewOfferTemplate(db, user, templateId, {
 } = {}) {
   permit(user, 'offers.templates.read', 'offers.read');
   let template = null;
+  const incomingPageConfig = pageConfig || null;
   if (!templateId || templateId === 'preview' || templateId === 'draft') {
     template = {
       id: templateId || 'preview',
       name: 'Document Preview',
       version: 1,
       sections: customSections || DEFAULT_TEMPLATE_SECTIONS,
-      page_config: pageConfig || DEFAULT_PAGE_CONFIG,
+      page_config: normalizePageConfig(incomingPageConfig || {}),
       header_config: headerConfig || DEFAULT_HEADER_CONFIG,
       footer_config: footerConfig || DEFAULT_FOOTER_CONFIG,
       background_config: backgroundConfig || DEFAULT_BACKGROUND_CONFIG
@@ -834,7 +874,7 @@ export function previewOfferTemplate(db, user, templateId, {
   } else {
     template = getOfferTemplate(db, user, templateId);
     if (customSections) template.sections = customSections;
-    if (pageConfig) template.page_config = pageConfig;
+    if (incomingPageConfig) template.page_config = normalizePageConfig(incomingPageConfig, template.page_config);
     if (headerConfig) template.header_config = headerConfig;
     if (footerConfig) template.footer_config = footerConfig;
     if (backgroundConfig) template.background_config = backgroundConfig;
