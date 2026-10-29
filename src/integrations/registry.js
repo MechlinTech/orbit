@@ -727,7 +727,7 @@ export const INTEGRATION_REGISTRY = [
         key: 'syncEnabled',
         label: 'Enable Automated Handoff on Candidate Hire',
         type: 'checkbox',
-        default: false
+        default: true
       }
     ],
     envFallback: {

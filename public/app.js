@@ -1528,11 +1528,26 @@ async function render() {
                 actionsHtml += button('Rate & Next', 'rate-training', a.id, 'class="primary training-rate-btn"');
               }
 
+              let hrmsChip = '';
+              if (stage === 'Hired') {
+                if (a.hrms_synced) {
+                  const empText = a.hrms_employee_id ? ` (ID: ${escape(String(a.hrms_employee_id).slice(0, 8))}...)` : '';
+                  hrmsChip = `<div class="hrms-card-chip" style="margin-top:4px;"><span class="badge completed" style="font-size:0.72rem;background:#ecfdf5;color:#065f46;border:1px solid #a7f3d0;" title="Employee provisioning and documents synced to HRMS${a.hrms_employee_id ? ' (' + escape(String(a.hrms_employee_id)) + ')' : ''}">✓ Synced to HRMS${empText}</span></div>`;
+                } else if (a.hrms_sync_status?.error) {
+                  hrmsChip = `<div class="hrms-card-chip" style="margin-top:4px;"><span class="badge rejected" style="font-size:0.72rem;" title="${escape(a.hrms_sync_status.error)}">⚠ HRMS Sync Failed</span></div>`;
+                } else {
+                  hrmsChip = `<div class="hrms-card-chip" style="margin-top:4px;"><span class="badge pending" style="font-size:0.72rem;background:#fef3c7;color:#92400e;border:1px solid #fde68a;" title="Handoff to HRMS pending dispatch">⏳ HRMS Sync Pending</span></div>`;
+                }
+                if (allowAction('applications.hrms_handoff', 'admin', 'recruit') || allows('system.override')) {
+                  actionsHtml += button(a.hrms_synced ? 'Re-sync HRMS' : 'Send to HRMS', 'hrms-handoff', a.id, 'class="secondary" style="font-size:0.75rem;padding:4px 8px;"');
+                }
+              }
+
               const headerTitle = trainingStatusBadge
                 ? `<div style="display:flex;align-items:center;justify-content:space-between;gap:6px;flex-wrap:wrap;margin-bottom:2px;"><h3>${escape(a.name)}</h3>${trainingStatusBadge}</div>`
                 : `<h3>${escape(a.name)}</h3>`;
 
-              return `<article class="card">${headerTitle}<p class="muted card-role" title="${escape(a.title)}">${escape(a.title)}</p>${evalChip}${planChip}${interviewChip}${trainingBoxHtml}<div class="actions">${actionsHtml}</div></article>`;
+              return `<article class="card">${headerTitle}<p class="muted card-role" title="${escape(a.title)}">${escape(a.title)}</p>${evalChip}${planChip}${interviewChip}${hrmsChip}${trainingBoxHtml}<div class="actions">${actionsHtml}</div></article>`;
             }).join('')||'<p class="muted column-empty">No applications</p>'}</div></section>`;
         }).join('')}</div>`+
         `<div class="pipeline-scroll-bar pipeline-scroll-bottom" id="pipeline-bottom-scroll" aria-label="Horizontal scroll sticky at bottom of screen"><div class="pipeline-scroll-track"></div></div>`+
@@ -2122,15 +2137,9 @@ async function render() {
   }catch(e){if(me)$('#main').innerHTML=`<section class="panel"><h1>Could not load this view</h1><p class="error">${escape(e.message)}</p>${button('Try again','refresh')}</section>`;}
 }
 function reqTable(reqs) {return table(['Position','Team','Headcount','Status','Actions'],reqs.map(r=>{
-  const isCreator = r.created_by === me?.id;
-  const hasOverride = allows('requisitions.override') || allows('system.override');
-  const isSelfApprovalRestricted = isCreator && !hasOverride;
-  const canReviewManager = r.status==='pending_manager' && allowAction('requisitions.approve_manager','approve_manager') && !isSelfApprovalRestricted;
-  const canReviewFinance = r.status==='pending_finance' && allowAction('requisitions.approve_finance','approve_finance') && !isSelfApprovalRestricted;
-  const selfApprovalBlocked = (r.status === 'pending_manager' && allowAction('requisitions.approve_manager','approve_manager') && isSelfApprovalRestricted)
-    || (r.status === 'pending_finance' && allowAction('requisitions.approve_finance','approve_finance') && isSelfApprovalRestricted);
-  const selfBadge = selfApprovalBlocked ? `<span class="badge" title="Separation of duties: The creator of a requisition cannot approve their own requisition. Another approver must review or an emergency override is required." style="background:#fffbeb;color:#92400e;border:1px solid #fde68a;font-size:0.72rem;padding:2px 6px;border-radius:4px;white-space:nowrap;">Self-approval restricted</span>` : '';
-  return `<tr><td><strong>${escape(r.title)}</strong><small>${escape(r.skills.join(', '))}</small></td><td>${escape(r.team)}</td><td>${r.headcount}</td><td>${badge(r.status)}</td><td><div class="actions">${button('Details','req-details',r.id,'class="secondary"')}${['draft','open'].includes(r.status)&&allowAction('requisitions.update','requisition','recruit')?button('Edit','edit-req',r.id,'class="secondary"'):''}${r.status==='draft'&&allowAction('requisitions.submit','requisition','recruit')?button('Submit','submit-req',r.id):''}${(canReviewManager||canReviewFinance)?button('Review','approve-req',r.id):''}${selfBadge}</div></td></tr>`;
+  const canReviewManager = r.status==='pending_manager' && allowAction('requisitions.approve_manager','approve_manager');
+  const canReviewFinance = r.status==='pending_finance' && allowAction('requisitions.approve_finance','approve_finance');
+  return `<tr><td><strong>${escape(r.title)}</strong><small>${escape(r.skills.join(', '))}</small></td><td>${escape(r.team)}</td><td>${r.headcount}</td><td>${badge(r.status)}</td><td><div class="actions">${button('Details','req-details',r.id,'class="secondary"')}${['draft','open'].includes(r.status)&&allowAction('requisitions.update','requisition','recruit')?button('Edit','edit-req',r.id,'class="secondary"'):''}${r.status==='draft'&&allowAction('requisitions.submit','requisition','recruit')?button('Submit','submit-req',r.id):''}${(canReviewManager||canReviewFinance)?button('Review','approve-req',r.id):''}</div></td></tr>`;
 }),'requisitions-table');}
 const requisitionSectionHeadings=new Set(['purpose','role overview','about the role','required skills','required skills and experience','responsibilities','key responsibilities','what success looks like','interview process','accessibility']);
 const requisitionHeading=line=>{const label=line.trim().replace(/\s*:\s*$/,'');return requisitionSectionHeadings.has(label.toLowerCase())?label:null;};
@@ -2152,21 +2161,12 @@ function requisitionDescription(value='') {
   return html;
 }
 function requisitionDetail(r,{readOnly=false}={}) {
-  const isCreator = r.created_by === me?.id;
-  const hasOverride = allows('requisitions.override') || allows('system.override');
-  const isSelfApprovalRestricted = isCreator && !hasOverride;
-  const canReviewManager = r.status==='pending_manager' && allowAction('requisitions.approve_manager','approve_manager') && !isSelfApprovalRestricted;
-  const canReviewFinance = r.status==='pending_finance' && allowAction('requisitions.approve_finance','approve_finance') && !isSelfApprovalRestricted;
-  const selfApprovalBlocked = (r.status === 'pending_manager' && allowAction('requisitions.approve_manager','approve_manager') && isSelfApprovalRestricted)
-    || (r.status === 'pending_finance' && allowAction('requisitions.approve_finance','approve_finance') && isSelfApprovalRestricted);
+  const canReviewManager = r.status==='pending_manager' && allowAction('requisitions.approve_manager','approve_manager');
+  const canReviewFinance = r.status==='pending_finance' && allowAction('requisitions.approve_finance','approve_finance');
   const canEdit=!readOnly&&((['draft','open'].includes(r.status)||((allows('requisitions.override')||allows('system.override'))&&['pending_manager','pending_finance'].includes(r.status)))&&allowAction('requisitions.update','requisition','recruit'));
   const skillsList=Array.isArray(r.skills)?r.skills:[];
-  const selfNotice = selfApprovalBlocked ? `
-    <div class="notice-inline" style="margin-top:12px;border-left-color:var(--warning,#d97706);background:var(--warning-bg,#fffbeb);color:var(--warning,#92400e);font-size:0.83rem;">
-      <strong>Separation of duties policy:</strong> You created this requisition and cannot approve your own request. Another approver must review, or an authorized administrator can apply an override.
-    </div>` : '';
   const reviewBtn = (canReviewManager || canReviewFinance) ? button('Review requisition', 'approve-req', r.id, 'class="primary"') : '';
-  return `<div class="requisition-detail"><p class="detail-meta">${badge(r.status)} · ${escape(r.team)} · ${r.headcount} opening(s)</p>${r.salary_min!==undefined?`<p class="detail-salary">${r.salary_min}–${r.salary_max} ${escape(r.currency)}</p>`:''}${requisitionDescription(r.description)}${skillsList.length?`<h3 class="detail-section-title">Required skills</h3><div class="skill-list">${skillsList.map(s=>`<span class="skill-chip">${escape(s)}</span>`).join('')}</div>`:''}${selfNotice}${readOnly?`<p class="read-only-note" role="status">${icon('Administration')}<span>Read-only view. Editing is available from the Requisitions page for authorized users.</span></p>`:''}<div class="actions detail-actions">${reviewBtn}${canEdit?button('Edit','edit-req',r.id):''}</div></div>`;
+  return `<div class="requisition-detail"><p class="detail-meta">${badge(r.status)} · ${escape(r.team)} · ${r.headcount} opening(s)</p>${r.salary_min!==undefined?`<p class="detail-salary">${r.salary_min}–${r.salary_max} ${escape(r.currency)}</p>`:''}${requisitionDescription(r.description)}${skillsList.length?`<h3 class="detail-section-title">Required skills</h3><div class="skill-list">${skillsList.map(s=>`<span class="skill-chip">${escape(s)}</span>`).join('')}</div>`:''}${readOnly?`<p class="read-only-note" role="status">${icon('Administration')}<span>Read-only view. Editing is available from the Requisitions page for authorized users.</span></p>`:''}<div class="actions detail-actions">${reviewBtn}${canEdit?button('Edit','edit-req',r.id):''}</div></div>`;
 }
 function candidateStatusCell(c){
   if(!c.applications||!c.applications.length)return '<span class="muted">No applications</span>';
@@ -3022,9 +3022,22 @@ async function openOfferTemplateEditor(templateId) {
     let lastActiveField = null;
     let activeStudioTab = 'sections';
 
-    let pageConfig = tpl?.page_config || {
+    let pageConfig = tpl?.page_config ? {
       size: 'A4', orientation: 'portrait',
-      margins: { top: 36, bottom: 36, left: 40, right: 40 }
+      marginTop: tpl.page_config.marginTop ?? tpl.page_config.margins?.top ?? 60,
+      marginBottom: tpl.page_config.marginBottom ?? tpl.page_config.margins?.bottom ?? 60,
+      marginLeft: tpl.page_config.marginLeft ?? tpl.page_config.margins?.left ?? 54,
+      marginRight: tpl.page_config.marginRight ?? tpl.page_config.margins?.right ?? 54,
+      margins: {
+        top: tpl.page_config.marginTop ?? tpl.page_config.margins?.top ?? 60,
+        bottom: tpl.page_config.marginBottom ?? tpl.page_config.margins?.bottom ?? 60,
+        left: tpl.page_config.marginLeft ?? tpl.page_config.margins?.left ?? 54,
+        right: tpl.page_config.marginRight ?? tpl.page_config.margins?.right ?? 54
+      }
+    } : {
+      size: 'A4', orientation: 'portrait',
+      marginTop: 60, marginBottom: 60, marginLeft: 54, marginRight: 54,
+      margins: { top: 60, bottom: 60, left: 54, right: 54 }
     };
     let headerConfig = tpl?.header_config || {
       enabled: true, text: '{{company.name}} • Confidential Offer of Employment', showOnFirstPage: false
@@ -3104,10 +3117,10 @@ async function openOfferTemplateEditor(templateId) {
               <div class="form-grid">
                 <div class="full" style="display:grid;grid-template-columns:repeat(4, 1fr);gap:10px;background:var(--surface-alt);padding:12px 14px;border-radius:8px;border:1px solid var(--line);">
                   <strong class="full" style="font-size:0.82rem;grid-column:1/-1;">Page Margins (Points, A4 = 595 × 842 pt)</strong>
-                  <label><span class="label-heading">Top</span><input type="number" id="cfg-margin-top" value="${pageConfig?.margins?.top ?? 36}"></label>
-                  <label><span class="label-heading">Bottom</span><input type="number" id="cfg-margin-bottom" value="${pageConfig?.margins?.bottom ?? 36}"></label>
-                  <label><span class="label-heading">Left</span><input type="number" id="cfg-margin-left" value="${pageConfig?.margins?.left ?? 40}"></label>
-                  <label><span class="label-heading">Right</span><input type="number" id="cfg-margin-right" value="${pageConfig?.margins?.right ?? 40}"></label>
+                  <label><span class="label-heading">Top</span><input type="number" id="cfg-margin-top" min="0" max="350" step="2" value="${pageConfig?.marginTop ?? pageConfig?.margins?.top ?? 60}"></label>
+                  <label><span class="label-heading">Bottom</span><input type="number" id="cfg-margin-bottom" min="0" max="350" step="2" value="${pageConfig?.marginBottom ?? pageConfig?.margins?.bottom ?? 60}"></label>
+                  <label><span class="label-heading">Left</span><input type="number" id="cfg-margin-left" min="0" max="250" step="2" value="${pageConfig?.marginLeft ?? pageConfig?.margins?.left ?? 54}"></label>
+                  <label><span class="label-heading">Right</span><input type="number" id="cfg-margin-right" min="0" max="250" step="2" value="${pageConfig?.marginRight ?? pageConfig?.margins?.right ?? 54}"></label>
                 </div>
 
                 <div class="full" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;background:var(--surface-alt);padding:12px 14px;border-radius:8px;border:1px solid var(--line);">
@@ -3225,13 +3238,23 @@ async function openOfferTemplateEditor(templateId) {
         }
       });
 
+      const mTop = Math.max(0, Number($('#cfg-margin-top')?.value) || 0);
+      const mBottom = Math.max(0, Number($('#cfg-margin-bottom')?.value) || 0);
+      const mLeft = Math.max(0, Number($('#cfg-margin-left')?.value) || 0);
+      const mRight = Math.max(0, Number($('#cfg-margin-right')?.value) || 0);
+
       pageConfig = {
+        ...pageConfig,
         size: 'A4', orientation: 'portrait',
+        marginTop: mTop,
+        marginBottom: mBottom,
+        marginLeft: mLeft,
+        marginRight: mRight,
         margins: {
-          top: Number($('#cfg-margin-top')?.value) || 36,
-          bottom: Number($('#cfg-margin-bottom')?.value) || 36,
-          left: Number($('#cfg-margin-left')?.value) || 40,
-          right: Number($('#cfg-margin-right')?.value) || 40
+          top: mTop,
+          bottom: mBottom,
+          left: mLeft,
+          right: mRight
         }
       };
 
@@ -3259,7 +3282,9 @@ async function openOfferTemplateEditor(templateId) {
       previewDebounce = setTimeout(triggerLivePreview, delay);
     };
 
+    let previewSequence = 0;
     const triggerLivePreview = async () => {
+      const currentSeq = ++previewSequence;
       syncSectionsFromDom();
       const metaEl = $('#studio-preview-meta');
       const valEl = $('#studio-preview-validation');
@@ -3274,9 +3299,13 @@ async function openOfferTemplateEditor(templateId) {
         const previewData = await api(`offer-templates/${templateId || 'preview'}/preview`, 'POST', {
           customSections: currentSections,
           pageConfig,
+          page_config: pageConfig,
           headerConfig,
+          header_config: headerConfig,
           footerConfig,
+          footer_config: footerConfig,
           backgroundConfig,
+          background_config: backgroundConfig,
           offerData: {
             salary: simSalary,
             currency: simCurr,
@@ -3302,6 +3331,7 @@ async function openOfferTemplateEditor(templateId) {
           }
         }
 
+        if (typeof currentSeq !== 'undefined' && currentSeq !== previewSequence) return;
         if (iframe && previewData.pdfBase64) {
           if (iframe._currentBlobUrl) {
             try { URL.revokeObjectURL(iframe._currentBlobUrl); } catch {}
@@ -3309,7 +3339,7 @@ async function openOfferTemplateEditor(templateId) {
           const blobUrl = pdfBase64ToBlobUrl(previewData.pdfBase64);
           iframe._currentBlobUrl = blobUrl;
           const targetUrl = blobUrl || `data:application/pdf;base64,${previewData.pdfBase64}`;
-          iframe.src = targetUrl;
+          iframe.src = targetUrl + '#toolbar=0&navpanes=0';
           if (openLink) openLink.href = targetUrl;
           const dlLink = $('#btn-studio-download-pdf');
           if (dlLink) dlLink.href = targetUrl;
@@ -3668,10 +3698,10 @@ async function openOfferTemplateEditor(templateId) {
       });
     };
 
-    wireInstantInput('#cfg-margin-top');
-    wireInstantInput('#cfg-margin-bottom');
-    wireInstantInput('#cfg-margin-left');
-    wireInstantInput('#cfg-margin-right');
+    wireInstantInput('#cfg-margin-top', true);
+    wireInstantInput('#cfg-margin-bottom', true);
+    wireInstantInput('#cfg-margin-left', true);
+    wireInstantInput('#cfg-margin-right', true);
     wireInstantInput('#cfg-header-text');
     wireInstantInput('#cfg-footer-text');
     wireInstantInput('#cfg-header-first-page', true);
@@ -4724,9 +4754,7 @@ document.addEventListener('click',async event=>{
       const isAdmin = allows('requisitions.override') || allows('system.override');
       const reqs = await api('requisitions');
       const r = reqs.find(item => item.id === id) || await api(`requisitions/${id}`);
-      if(r && r.created_by === me?.id && !isAdmin){
-        throw new Error('Requester and each approver must be different people. The creator of a requisition cannot approve their own requisition (Separation of duties policy).');
-      }
+      
       if(!r || !['pending_manager','pending_finance'].includes(r.status)){
         throw new Error('Requisition is not awaiting approval.');
       }
@@ -4939,7 +4967,24 @@ document.addEventListener('click',async event=>{
         limitedView ? Promise.resolve(null) : api(`candidates/${id}/fraud-review`).catch(() => null),
         limitedView ? Promise.resolve([]) : api(`candidates/${id}/signatures`).catch(() => [])
       ]);
-      const appsHtml=(c.applications&&c.applications.length)?`<h3>Applications & Status</h3><div class="candidate-status-list" style="margin-bottom:14px;">${c.applications.map(app=>{const title=escape(app.title||'General Application');return `<div class="candidate-status-pair"><span class="candidate-status-role" title="${title}">${title}</span> <span class="status-sep" aria-hidden="true">—</span> ${badge(app.stage||'Applied')}</div>`;}).join('')}</div>`:'';
+      const appsHtml=(c.applications&&c.applications.length)?`<h3>Applications & Status</h3><div class="candidate-status-list" style="margin-bottom:14px;">${c.applications.map(app=>{
+        const title=escape(app.title||'General Application');
+        const isHired = app.stage === 'Hired';
+        let hrmsInfo = '';
+        if (isHired) {
+          const synced = Boolean(app.hrms_synced);
+          const badgeHtml = synced
+            ? `<span class="badge completed" style="font-size:0.72rem;background:#ecfdf5;color:#065f46;border:1px solid #a7f3d0;margin-left:6px;" title="Synced to HRMS${app.hrms_employee_id ? ' (' + escape(String(app.hrms_employee_id)) + ')' : ''}">✓ HRMS Synced</span>`
+            : (app.hrms_sync_status?.error
+              ? `<span class="badge rejected" style="font-size:0.72rem;margin-left:6px;" title="${escape(app.hrms_sync_status.error)}">⚠ HRMS Failed</span>`
+              : `<span class="badge pending" style="font-size:0.72rem;background:#fef3c7;color:#92400e;border:1px solid #fde68a;margin-left:6px;">⏳ HRMS Pending</span>`);
+          const actionBtn = (allowAction('applications.hrms_handoff', 'admin', 'recruit') || allows('system.override'))
+            ? `<button type="button" class="button secondary" data-action="hrms-handoff" data-id="${app.id}" style="font-size:0.72rem;padding:2px 8px;margin-left:6px;">${synced ? 'Re-sync HRMS' : 'Send to HRMS'}</button>`
+            : '';
+          hrmsInfo = `${badgeHtml}${actionBtn}`;
+        }
+        return `<div class="candidate-status-pair"><span class="candidate-status-role" title="${title}">${title}</span> <span class="status-sep" aria-hidden="true">—</span> ${badge(app.stage||'Applied')}${hrmsInfo}</div>`;
+      }).join('')}</div>`:'';
 
       // Pre-Onboarding Training Evaluation block if present
       let trainingEvalHtml = '';
@@ -6002,10 +6047,39 @@ document.addEventListener('click',async event=>{
           return;
         }
       }
-      modal('Change application stage',`<p>Move this application to <strong>${escape(stage)}</strong>?</p><p class="muted" style="font-size:0.82rem;margin-top:6px;">A status update email will be automatically sent to the candidate.</p>`,async ()=>{
-        await api(`applications/${id}/stage`,'POST',{stage});
-        return stage==='Rejected'?'Application rejected. Status update email sent.':`Application moved to ${stage} successfully. Status update email sent.`;
-      },{saveLabel:stage==='Rejected'?'Reject & Notify':'Move & Notify'});
+      const moveNotice = stage === 'Hired'
+        ? `<p>Move this application to <strong>Hired</strong>?</p><p class="muted" style="font-size:0.82rem;margin-top:6px;">A status update email will be sent to the candidate, and employee provisioning with signed offer documents will be automatically dispatched to HRMS.</p>`
+        : `<p>Move this application to <strong>${escape(stage)}</strong>?</p><p class="muted" style="font-size:0.82rem;margin-top:6px;">A status update email will be automatically sent to the candidate.</p>`;
+      modal('Change application stage', moveNotice, async () => {
+        await api(`applications/${id}/stage`, 'POST', { stage });
+        return stage === 'Rejected'
+          ? 'Application rejected. Status update email sent.'
+          : (stage === 'Hired'
+            ? 'Candidate hired successfully! Status email sent and automated HRMS handoff dispatched.'
+            : `Application moved to ${stage} successfully. Status update email sent.`);
+      }, { saveLabel: stage === 'Rejected' ? 'Reject & Notify' : 'Move & Notify' });
+    }
+
+    if (a === 'hrms-handoff') {
+      const origText = b.textContent;
+      b.disabled = true;
+      b.textContent = 'Syncing...';
+      try {
+        const res = await api(`applications/${id}/hrms-handoff`, 'POST');
+        const empId = res.employeeId || res.providerReference || '';
+        notice(`Successfully synced to HRMS!${empId ? ' (Employee ID: ' + empId + ')' : ''}`, 'success');
+        if (current === 'Pipeline') {
+          await render();
+        } else if (current === 'Candidates') {
+          await render();
+        }
+      } catch (err) {
+        notice(`HRMS handoff failed: ${err.message}`, 'error');
+      } finally {
+        b.disabled = false;
+        b.textContent = origText;
+      }
+      return;
     }
 
     if(a==='move'||a==='reject-app'){

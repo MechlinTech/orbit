@@ -8,7 +8,7 @@ const call=(f,u,m,p,b)=>service(f.db,u,m,p,b);
 const markInterviewReady=(f,interview)=>f.db.prepare('UPDATE interviews SET scheduled_at=? WHERE id=?').run(new Date(Date.now()-60000).toISOString(),interview.id);
 function hiringFixture(){const f=fixture();f.req=call(f,f.recruiter,'POST','requisitions',reqBody);call(f,f.recruiter,'POST',`requisitions/${f.req.id}/submit`);call(f,f.manager,'POST',`requisitions/${f.req.id}/approve`,{});call(f,f.finance,'POST',`requisitions/${f.req.id}/approve`,{});f.candidate=call(f,f.recruiter,'POST','candidates',candidateBody);f.app=call(f,f.recruiter,'POST','applications',{candidate_id:f.candidate.id,requisition_id:f.req.id});return f;}
 test('requester, manager and finance approval sequence opens headcount',()=>{const f=fixture();const req=call(f,f.recruiter,'POST','requisitions',reqBody);assert.equal(req.status,'draft');assert.throws(()=>call(f,f.recruiter,'POST',`requisitions/${req.id}/approve`));call(f,f.recruiter,'POST',`requisitions/${req.id}/submit`);assert.throws(()=>call(f,f.finance,'POST',`requisitions/${req.id}/approve`,{}));assert.equal(call(f,f.manager,'POST',`requisitions/${req.id}/approve`,{}).status,'pending_finance');assert.equal(call(f,f.finance,'POST',`requisitions/${req.id}/approve`,{}).status,'open');assert.equal(f.db.prepare('SELECT count(*) n FROM approvals').get().n,2);f.db.close();});
-test('self approval and same person at both steps are forbidden even for admin',()=>{const f=fixture();const r=call(f,f.admin,'POST','requisitions',reqBody);call(f,f.admin,'POST',`requisitions/${r.id}/submit`);assert.throws(()=>call(f,f.admin,'POST',`requisitions/${r.id}/approve`,{}));const r2=call(f,f.recruiter,'POST','requisitions',reqBody);call(f,f.recruiter,'POST',`requisitions/${r2.id}/submit`);call(f,f.admin,'POST',`requisitions/${r2.id}/approve`,{});assert.throws(()=>call(f,f.admin,'POST',`requisitions/${r2.id}/approve`,{}));f.db.close();});
+test('self approval is allowed when permission is granted, but same person at both steps is forbidden without override',()=>{const f=fixture();const r=call(f,f.admin,'POST','requisitions',reqBody);call(f,f.admin,'POST',`requisitions/${r.id}/submit`);const app1=call(f,f.admin,'POST',`requisitions/${r.id}/approve`,{});assert.equal(app1.status,'pending_finance');assert.throws(()=>call(f,f.admin,'POST',`requisitions/${r.id}/approve`,{}),e=>e.status===403);f.db.close();});
 test('rejected requisition cannot receive applications',()=>{const f=fixture();const r=call(f,f.recruiter,'POST','requisitions',reqBody);call(f,f.recruiter,'POST',`requisitions/${r.id}/submit`);call(f,f.manager,'POST',`requisitions/${r.id}/reject`,{note:'Budget unavailable'});const c=call(f,f.recruiter,'POST','candidates',candidateBody);assert.throws(()=>call(f,f.recruiter,'POST','applications',{candidate_id:c.id,requisition_id:r.id}));f.db.close();});
 test('candidate duplicates are case insensitive and safe against SQL injection',()=>{const f=fixture();call(f,f.recruiter,'POST','candidates',candidateBody);assert.throws(()=>call(f,f.recruiter,'POST','candidates',{...candidateBody,email:'AVERY@EXAMPLE.COM'}));const c=call(f,f.recruiter,'POST','candidates',{...candidateBody,email:'second@example.com',name:"Robert'); DROP TABLE users;--"});assert.ok(c.id);assert.ok(f.db.prepare('SELECT count(*) n FROM users').get().n>0);f.db.close();});
 test('team isolation protects reads, writes and record IDs',()=>{const f=hiringFixture(),other=user(f.db,'Recruiter','Sales');assert.equal(call(f,other,'GET','candidates').length,0);assert.equal(call(f,other,'GET','applications').length,0);assert.throws(()=>call(f,other,'POST',`applications/${f.app.id}/stage`,{stage:'Screening'}));assert.throws(()=>call(f,other,'POST','candidates',candidateBody));f.db.close();});
@@ -591,7 +591,11 @@ test('System Admin permission enhancements, overrides, proxy scorecard, and team
   // 5. Emergency approval override
   const reqOverride = call(f.admin, 'POST', 'requisitions', { ...reqBody, team: 'Dev' });
   call(f.admin, 'POST', `requisitions/${reqOverride.id}/submit`);
-  // Requester cannot approve normally
+  // Requester with permission can self-approve at manager step
+  const approvedManager = call(f.admin, 'POST', `requisitions/${reqOverride.id}/approve`, { note: 'Manager self-approval' });
+  assert.equal(approvedManager.status, 'pending_finance');
+
+  // Same approver cannot approve finance stage without emergency override (same approver at both steps)
   assert.throws(
     () => call(f.admin, 'POST', `requisitions/${reqOverride.id}/approve`, {}),
     e => e.status === 403 && e.message.includes('Requester and each approver must be different people')
@@ -606,29 +610,17 @@ test('System Admin permission enhancements, overrides, proxy scorecard, and team
     () => call(f.admin, 'POST', `requisitions/${reqOverride.id}/approve`, { emergency_override: true, override_reason: '' }),
     e => e.status === 400 && e.message.includes('reason')
   );
-  // Emergency override with reason succeeds
-  const approvedManager = call(f.admin, 'POST', `requisitions/${reqOverride.id}/approve`, {
-    emergency_override: true,
-    override_reason: 'Executive exception for immediate engineering hiring need'
-  });
-  assert.equal(approvedManager.status, 'pending_finance');
-  const emAudit1 = f.db.prepare("SELECT * FROM audit WHERE event='admin.emergency_approval_override' AND target=?").get(reqOverride.id);
-  assert.ok(emAudit1);
-  const detail1 = JSON.parse(emAudit1.detail);
-  assert.equal(detail1.step, 'manager');
-  assert.equal(detail1.bypassed_rule, 'requester_self_approval');
-
-  // Same admin approving finance stage (normal approval would be forbidden)
-  assert.throws(
-    () => call(f.admin, 'POST', `requisitions/${reqOverride.id}/approve`, {}),
-    e => e.status === 403
-  );
   // Emergency override succeeds for finance stage
   const approvedFinance = call(f.admin, 'POST', `requisitions/${reqOverride.id}/approve`, {
     emergency_override: true,
     override_reason: 'Finance Director on medical leave, overriding per authorized procedure'
   });
   assert.equal(approvedFinance.status, 'open');
+  const emAudit1 = f.db.prepare("SELECT * FROM audit WHERE event='admin.emergency_approval_override' AND target=?").get(reqOverride.id);
+  assert.ok(emAudit1);
+  const detail1 = JSON.parse(emAudit1.detail);
+  assert.equal(detail1.step, 'finance');
+  assert.equal(detail1.bypassed_rule, 'same_approver_both_steps');
 
   // 6. Proxy scorecard submission & feedback unblinding
   const cand2 = call(f.admin, 'POST', 'candidates', { ...candidateBody, email: 'cand2@example.com', team: 'Dev' });
@@ -971,21 +963,21 @@ test('TA Manager can reject a requisition awaiting manager approval', () => {
   f.db.close();
 });
 
-test('TA Manager cannot approve a requisition they personally created (separation of duties)', () => {
+test('TA Manager can approve a requisition they personally created (self-approval allowed with permission)', () => {
   const f = fixture();
   const taManager = user(f.db, 'TA Manager', 'Engineering');
-  const secondTAManager = user(f.db, 'TA Manager', 'Engineering');
 
   // TA Manager has 'recruit' permission, so they can create a requisition
   const req = call(f, taManager, 'POST', 'requisitions', reqBody);
   call(f, taManager, 'POST', `requisitions/${req.id}/submit`);
 
-  // TA Manager tries to self-approve: must be rejected
-  assert.throws(() => call(f, taManager, 'POST', `requisitions/${req.id}/approve`, {}), e => e.status === 403 && /different people/i.test(e.message));
-
-  // A different TA Manager in the same team CAN approve it
-  const approved = call(f, secondTAManager, 'POST', `requisitions/${req.id}/approve`, { note: 'Peer manager approval' });
+  // TA Manager has requisitions.approve_manager permission: self-approval succeeds
+  const approved = call(f, taManager, 'POST', `requisitions/${req.id}/approve`, { note: 'Self manager approval' });
   assert.equal(approved.status, 'pending_finance');
+
+  // User without approval permission cannot approve
+  const employee = user(f.db, 'Employee/Referral', 'Engineering');
+  assert.throws(() => call(f, employee, 'POST', `requisitions/${req.id}/approve`, {}), e => e.status === 403);
 
   f.db.close();
 });

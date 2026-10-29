@@ -1,3 +1,4 @@
+import { resolve } from 'node:path';
 /**
  * In-House E-Signature Service for Orbit ATS
  * Handles signature requests, signer token authentication, typed/uploaded/drawn
@@ -1193,13 +1194,16 @@ export function verifyApplicationOfferSignature(db, applicationId, candidateId =
  */
 export function getAuthoritativeOfferDetails(db, applicationId, candidateId = null, requisitionId = null, fallbackReq = null) {
   const completedOffer = db.prepare(`
-    SELECT r.id AS request_id, r.signed_document_id, r.salary, r.currency, r.start_date,
-           d.storage_path, d.sha256_hash AS doc_hash
+    SELECT r.id AS request_id, r.signed_document_id, r.document_id, r.salary, r.currency, r.start_date,
+           COALESCE(d.storage_path, orig_d.storage_path) AS storage_path,
+           COALESCE(d.sha256_hash, orig_d.sha256_hash) AS doc_hash,
+           COALESCE(d.filename, orig_d.filename) AS filename
     FROM signature_requests r
     LEFT JOIN signature_documents d ON d.id = r.signed_document_id
+    LEFT JOIN signature_documents orig_d ON orig_d.id = r.document_id
     WHERE (r.application_id = ? OR (r.application_id IS NULL AND r.candidate_id = ? AND (r.requisition_id = ? OR r.requisition_id IS NULL)))
-      AND r.status = 'completed'
-    ORDER BY r.updated_at DESC, r.created_at DESC
+      AND r.status IN ('completed', 'signed', 'pending')
+    ORDER BY CASE WHEN r.status = 'completed' THEN 1 WHEN r.status = 'signed' THEN 2 ELSE 3 END, r.updated_at DESC, r.created_at DESC
     LIMIT 1
   `).get(applicationId, candidateId, requisitionId);
 
@@ -1207,9 +1211,12 @@ export function getAuthoritativeOfferDetails(db, applicationId, candidateId = nu
   let rawStartDate = completedOffer?.start_date || null;
   let rawCurrency = completedOffer?.currency || null;
 
-  if ((!rawSalary || !rawStartDate || !rawCurrency) && completedOffer?.storage_path && existsSync(completedOffer.storage_path)) {
+  const resolvedStoragePath = completedOffer?.storage_path ? resolve(completedOffer.storage_path) : null;
+  const storageExists = Boolean(resolvedStoragePath && existsSync(resolvedStoragePath));
+
+  if ((!rawSalary || !rawStartDate || !rawCurrency) && storageExists) {
     try {
-      const pdfBuf = readFileSync(completedOffer.storage_path);
+      const pdfBuf = readFileSync(resolvedStoragePath);
       let pdfContent = pdfBuf.toString('utf8');
       let idx = 0;
       while ((idx = pdfBuf.indexOf('stream', idx)) !== -1) {
@@ -1247,7 +1254,8 @@ export function getAuthoritativeOfferDetails(db, applicationId, candidateId = nu
     currencyCode: finalCurrency,
     joiningDate,
     rawStartDate,
-    storagePath: completedOffer?.storage_path || null,
+    storagePath: storageExists ? resolvedStoragePath : (completedOffer?.storage_path || null),
+    filename: completedOffer?.filename || 'Signed_Offer_Letter.pdf',
     requestId: completedOffer?.request_id || null,
     signedDocId: completedOffer?.signed_document_id || null
   };
