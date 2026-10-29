@@ -193,7 +193,7 @@ export const systemRoleDefinitions = Object.freeze({
     'training.read',
     'referrals.read','referrals.read_all','referrals.create','referrals.update','referrals.withdraw') }),
   'Interviewer': Object.freeze({ scope: 'team', description: 'Conducts assigned interviews and submits structured feedback.', permissions: grants('jobs.read','interviews.read','interviews.evaluate','candidates.assigned.read','candidates.personal.read') }),
-  'Finance Approver': Object.freeze({ scope: 'team', description: 'Reviews headcount and compensation at the finance stage.', permissions: grants('jobs.read','requisitions.read','requisitions.approve_finance','requisitions.compensation.read') }),
+  'Finance Approver': Object.freeze({ scope: 'organization', description: 'Reviews headcount and compensation at the finance stage.', permissions: grants('jobs.read','requisitions.read','requisitions.approve_finance','requisitions.compensation.read') }),
   'Employee/Referral': Object.freeze({ scope: 'team', description: 'Submits and tracks their own employee referrals.', permissions: grants('jobs.read','referrals.read','referrals.create','referrals.update','referrals.withdraw','referrals.delete') }),
   'Agency': Object.freeze({ scope: 'none', description: 'Reserved external agency identity; no internal ATS access.', permissions: grants() }),
   'Agency Admin': Object.freeze({ scope: 'none', description: 'Reserved external agency administrator; no internal ATS access.', permissions: grants() }),
@@ -318,7 +318,7 @@ export function inTeam(user, team) {
     }
     return false;
   }
-  const isOrg = ['System Admin','TA Director'].includes(user.role);
+  const isOrg = ['System Admin','TA Director','Finance Approver'].includes(user.role);
   if (isOrg) return true;
   if (!user.team || !normTarget) return false;
   const targetLower = normTarget.toLowerCase();

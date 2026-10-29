@@ -585,6 +585,51 @@ export function updateTrainingTemplate(db, arg2, arg3, arg4 = {}) {
 }
 
 /**
+ * Strips accumulated "Copy of", "Copy (N) of", and trailing copy counters
+ * to return the original clean base template name.
+ */
+export function extractBaseTrainingTemplateName(name) {
+  let clean = String(name || '').trim();
+
+  while (/^copy(\s*\(\d+\))?\s+of\s+/i.test(clean)) {
+    clean = clean.replace(/^copy(\s*\(\d+\))?\s+of\s+/i, '').trim();
+  }
+
+  clean = clean.replace(/\s*\(\d{1,3}\)$/, '').trim();
+  clean = clean.replace(/(\s*[-—–]?\s*\(?copy(\s*\d+)?\)?)$/i, '').trim();
+
+  return clean || 'Training Plan';
+}
+
+/**
+ * Generates a clean, non-accumulating duplicate name for training plan templates.
+ * Avoids redundant "Copy of Copy of ..." and numbers duplicates cleanly: "Copy of <Name> (2)".
+ */
+export function generateDuplicateTrainingTemplateName(db, sourceName) {
+  let baseName = extractBaseTrainingTemplateName(sourceName);
+
+  if (baseName.length > 120) {
+    baseName = baseName.slice(0, 120).trim();
+  }
+
+  const primaryName = `Copy of ${baseName}`;
+
+  const rows = db.prepare('SELECT name FROM training_plan_templates WHERE name LIKE ?').all(`Copy of ${baseName}%`);
+  const existingLower = new Set(rows.map(r => String(r.name).trim().toLowerCase()));
+
+  if (!existingLower.has(primaryName.toLowerCase())) {
+    return primaryName;
+  }
+
+  let counter = 2;
+  while (existingLower.has(`Copy of ${baseName} (${counter})`.toLowerCase())) {
+    counter++;
+  }
+
+  return `Copy of ${baseName} (${counter})`;
+}
+
+/**
  * Duplicate an existing training plan template.
  */
 export function duplicateTrainingTemplate(db, arg2, arg3, arg4 = {}) {
@@ -601,7 +646,9 @@ export function duplicateTrainingTemplate(db, arg2, arg3, arg4 = {}) {
   permit(user, 'training.manage');
 
   const source = getTrainingTemplate(db, user, templateId);
-  const newName = body.name ? validateText(body.name, 'Template name', 150) : `Copy of ${source.name}`;
+  const newName = body.name
+    ? validateText(body.name, 'Template name', 150)
+    : generateDuplicateTrainingTemplateName(db, source.name);
 
   return createTrainingTemplate(db, user, {
     ...source,
