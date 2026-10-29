@@ -672,6 +672,17 @@ test('Stage transition to Hired dispatches automated HRMS handoff when syncEnabl
   assert.equal(manualResult.ok, true);
   assert.equal(manualResult.provider, 'supabase');
 
+  // Verify GET applications and GET candidates/:id reflect synced status
+  const appList = await call(f, f.recruiter, 'GET', 'applications');
+  const foundApp = appList.find(a => a.id === app.id);
+  assert.equal(foundApp.hrms_synced, true);
+  assert.equal(foundApp.hrms_employee_id, 'user_hire_sync_1');
+
+  const candDetails = await call(f, f.recruiter, 'GET', `candidates/${cand.id}`);
+  const candApp = candDetails.applications.find(a => a.id === app.id);
+  assert.equal(candApp.hrms_synced, true);
+  assert.equal(candApp.hrms_employee_id, 'user_hire_sync_1');
+
   f.db.close();
 });
 

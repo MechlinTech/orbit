@@ -528,6 +528,17 @@ try {
   await click("document.querySelector('#close-modal')");
   await waitFor("!document.querySelector('dialog').open");
 
+  // Document preview modal shows PDF iframe directly without visual view toggle
+  const firstTpl = await evaluate("api('offer-templates').then(list => list[0])");
+  if (firstTpl) {
+    await evaluate(`(async () => { await openOfferTemplatePreview("${firstTpl.id}"); })()`);
+    await waitFor("document.querySelector('dialog').open && Boolean(document.querySelector('.a4-preview-modal'))");
+    check('Document preview shows PDF iframe directly', await evaluate("Boolean(document.querySelector('#pv-pdf-container iframe')) && !document.querySelector('#pv-visual-container')"));
+    check('Document preview visual toggle buttons are removed', await evaluate("!document.querySelector('#btn-pv-visual') && !document.querySelector('#btn-pv-pdf')"));
+    await click("document.querySelector('#close-modal')");
+    await waitFor("!document.querySelector('dialog').open");
+  }
+
   // Training Plans Toolbar layout alignment check
   await evaluate(`(async () => {
     location.hash = '#Training Plans';
