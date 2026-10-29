@@ -854,19 +854,65 @@ function permissionActionBucket(id) {
 function rolePermissionEditor(selected, readOnly) {
   const selectedSet = new Set(selected || []);
   const groups = me?.permissionGroups || [];
-  const columns = ['Read', 'Create', 'Edit', 'Delete', 'Other'];
+  const actionOrder = { Read: 1, Create: 2, Edit: 3, Delete: 4, Other: 5 };
+
   const groupHtml = groups.map(group => {
-    const buckets = Object.fromEntries(columns.map(column => [column, []]));
-    group.permissions.forEach(permission => buckets[permissionActionBucket(permission.id)].push(permission));
-    const cells = columns.map(column => {
-      const items = buckets[column];
-      if (!items.length) return '<td class="perm-empty">—</td>';
-      return `<td>${items.map(permission => `<label class="perm-toggle"><input type="checkbox" role="switch" aria-checked="${selectedSet.has(permission.id) ? 'true' : 'false'}" aria-label="${escape(permission.name)}" data-permission value="${escape(permission.id)}" ${selectedSet.has(permission.id) ? 'checked' : ''} ${readOnly ? 'disabled' : ''}><span><span class="perm-name">${escape(permission.name)}</span><small class="perm-desc">${escape(permission.description)}</small></span><span class="perm-switch" aria-hidden="true"><span class="perm-knob"></span></span></label>`).join('')}</td>`;
+    const sortedPerms = [...group.permissions].sort((a, b) => {
+      const bucketA = permissionActionBucket(a.id);
+      const bucketB = permissionActionBucket(b.id);
+      return (actionOrder[bucketA] || 99) - (actionOrder[bucketB] || 99);
+    });
+
+    const activeInGroup = group.permissions.filter(p => selectedSet.has(p.id)).length;
+
+    const cards = sortedPerms.map(p => {
+      const action = permissionActionBucket(p.id);
+      const isChecked = selectedSet.has(p.id);
+      const actionLabel = action === 'Edit' ? 'Write / Edit' : action;
+      return `<label class="perm-card${isChecked ? ' is-checked' : ''}">` +
+        `<div class="perm-card-top">` +
+          `<div class="perm-card-title-group">` +
+            `<span class="perm-name">${escape(p.name)}</span>` +
+            `<span class="perm-badge badge-${action.toLowerCase()}">${escape(actionLabel)}</span>` +
+            `${p.sensitive ? '<span class="perm-sensitive">Sensitive</span>' : ''}` +
+          `</div>` +
+          `<span class="perm-switch" aria-hidden="true"><span class="perm-knob"></span></span>` +
+        `</div>` +
+        `<small class="perm-desc">${escape(p.description)}</small>` +
+        `<input type="checkbox" role="switch" aria-checked="${isChecked ? 'true' : 'false'}" aria-label="${escape(p.name)}" data-permission value="${escape(p.id)}" ${isChecked ? 'checked' : ''} ${readOnly ? 'disabled' : ''}>` +
+      `</label>`;
     }).join('');
-    return `<tr class="permission-group" data-module="${escape(group.module)}"><th scope="row">${escape(group.module)}</th>${cells}</tr>`;
+
+    return `<section class="perm-module-card" data-module="${escape(group.module)}">` +
+      `<div class="perm-module-header">` +
+        `<div class="perm-module-title">` +
+          `<h3>${escape(group.module)}</h3>` +
+          `<span class="perm-module-count">${activeInGroup} of ${group.permissions.length} on</span>` +
+        `</div>` +
+        `${readOnly ? '' : `<div class="perm-module-actions">` +
+          `<button type="button" class="btn-module-select" data-action="select-module">Select all</button>` +
+          `<button type="button" class="btn-module-select" data-action="deselect-module">Deselect all</button>` +
+        `</div>`}` +
+      `</div>` +
+      `<div class="perm-grid">${cards}</div>` +
+    `</section>`;
   }).join('');
-  const cols = `<colgroup><col class="perm-col-group">${columns.map(() => '<col class="perm-col">').join('')}</colgroup>`;
-  return `<div class="permission-editor"><div class="permission-toolbar"><span id="role-permission-count" class="muted">${selectedSet.size} on</span>${readOnly ? '' : '<button type="button" class="secondary text-button" id="permission-clear">Turn all off</button>'}</div><input type="hidden" name="permissions" id="role-permission-values" value="${escape([...selectedSet].join(','))}"><div class="permission-groups"><table class="perm-matrix">${cols}<thead><tr><th scope="col">Group</th>${columns.map(column => `<th scope="col">${column === 'Edit' ? 'Write / Edit' : column}</th>`).join('')}</tr></thead><tbody>${groupHtml}</tbody></table></div><p class="muted perm-note">ON grants the permission. OFF leaves it out. Save stores the selection; Cancel discards it.</p></div>`;
+
+  return `<div class="full permission-editor">` +
+    `<div class="permission-toolbar">` +
+      `<div class="perm-toolbar-left">` +
+        `<div class="perm-search-box">` +
+          `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="perm-search-icon" aria-hidden="true"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>` +
+          `<input type="search" id="perm-search-input" placeholder="Search permissions..." aria-label="Search permissions">` +
+        `</div>` +
+        `<span id="role-permission-count" class="perm-total-badge">${selectedSet.size} on</span>` +
+      `</div>` +
+      `${readOnly ? '' : `<div class="perm-toolbar-actions">` +
+        `<button type="button" class="btn-perm-action" id="permission-select-all">Turn all on</button>` +
+        `<button type="button" class="btn-perm-action" id="permission-clear">Turn all off</button>` +
+      `</div>`}` +
+    `</div>` +
+    `<input type="hidden" name="permissions" id="role-permission-values" value="${escape([...selectedSet].join(','))}"><div class="permission-groups">${groupHtml}</div><p class="muted perm-note">ON grants the permission. OFF leaves it out. Save stores the selection; Cancel discards it.</p></div>`;
 }
 function bindRolePermissionEditor() {
   const holder = $('#modal-body');
@@ -878,7 +924,17 @@ function bindRolePermissionEditor() {
     if (hidden) hidden.value = values.join(',');
     const count = $('#role-permission-count');
     if (count) count.textContent = `${values.length} on`;
-    boxes().forEach(box => box.setAttribute('aria-checked', box.checked ? 'true' : 'false'));
+    boxes().forEach(box => {
+      box.setAttribute('aria-checked', box.checked ? 'true' : 'false');
+      const card = box.closest('.perm-card');
+      if (card) card.classList.toggle('is-checked', box.checked);
+    });
+    holder.querySelectorAll('.perm-module-card').forEach(m => {
+      const total = m.querySelectorAll('[data-permission]').length;
+      const checked = m.querySelectorAll('[data-permission]:checked').length;
+      const countEl = m.querySelector('.perm-module-count');
+      if (countEl) countEl.textContent = `${checked} of ${total} on`;
+    });
   };
   boxes().forEach(box => box.addEventListener('change', sync));
   holder.querySelectorAll('[data-scope]').forEach(button => button.addEventListener('click', () => {
@@ -891,9 +947,43 @@ function bindRolePermissionEditor() {
     });
   }));
   $('#permission-clear')?.addEventListener('click', () => {
-    boxes().forEach(box => { box.checked = false; });
+    boxes().forEach(box => { if (!box.disabled) box.checked = false; });
     sync();
   });
+  $('#permission-select-all')?.addEventListener('click', () => {
+    boxes().forEach(box => { if (!box.disabled) box.checked = true; });
+    sync();
+  });
+  holder.querySelectorAll('[data-action="select-module"]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const card = btn.closest('.perm-module-card');
+      if (!card) return;
+      card.querySelectorAll('[data-permission]:not(:disabled)').forEach(b => { b.checked = true; });
+      sync();
+    });
+  });
+  holder.querySelectorAll('[data-action="deselect-module"]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const card = btn.closest('.perm-module-card');
+      if (!card) return;
+      card.querySelectorAll('[data-permission]:not(:disabled)').forEach(b => { b.checked = false; });
+      sync();
+    });
+  });
+  const searchInput = holder.querySelector('#perm-search-input');
+  if (searchInput) {
+    searchInput.addEventListener('input', () => {
+      const q = searchInput.value.toLowerCase().trim();
+      holder.querySelectorAll('.perm-card').forEach(card => {
+        const text = (card.textContent || '').toLowerCase();
+        card.style.display = (!q || text.includes(q)) ? '' : 'none';
+      });
+      holder.querySelectorAll('.perm-module-card').forEach(m => {
+        const hasVisible = [...m.querySelectorAll('.perm-card')].some(c => c.style.display !== 'none');
+        m.style.display = hasVisible ? '' : 'none';
+      });
+    });
+  }
   sync();
 }
 function openRoleModal(role = null, readOnly = false, duplicate = false) {
