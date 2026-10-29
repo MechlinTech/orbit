@@ -28,7 +28,7 @@ export function validateDemoRoleAndTeam(role, team = '') {
   if (!roles.includes(role)) {
     throw new HttpError(400, 'Select a supported role.');
   }
-  const isOrgRole = ['System Admin', 'TA Director'].includes(role);
+  const isOrgRole = ['System Admin', 'TA Director', 'Finance Approver'].includes(role);
   if (isOrgRole && (!team || team === 'Organization')) {
     return { role, team: '' };
   }
