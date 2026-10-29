@@ -47,7 +47,7 @@ Use `node --env-file=.env src/server.js` locally, systemd `EnvironmentFile`, or 
 | GROK_MODEL | `grok-2-latest` | xAI Grok model identifier |
 | GROK_API_URL | `https://api.x.ai/v1/chat/completions` | xAI Grok completions endpoint |
 | ENABLE_FRAUD_REVIEW | `true` | Set `false` to disable candidate consistency and fraud review signals |
-| INTEGRATION_ENCRYPTION_KEY | empty | Dedicated 256-bit encryption key or passphrase used to encrypt integration secrets at rest via AES-256-GCM. Falls back to `APP_SECRET` if unset. |
+| INTEGRATION_ENCRYPTION_KEY | empty | Dedicated 256-bit encryption key or passphrase used to encrypt integration secrets at rest via AES-256-GCM. Also accepts `APP_SECRET` or `SESSION_SECRET`. Production refuses to encrypt secrets when all three are unset. |
 
 Keep origins consistent: `localhost` and `127.0.0.1` are different origins. Production redirects and mutation requests must use precisely the configured HTTPS hostname. Group IDs are case-normalized; team names are not.
 

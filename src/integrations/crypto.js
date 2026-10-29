@@ -9,7 +9,15 @@ function getEncryptionKey() {
   const master = process.env.INTEGRATION_ENCRYPTION_KEY ||
                  process.env.APP_SECRET ||
                  process.env.SESSION_SECRET ||
-                 'orbit-integration-vault-salt-master-2026';
+                 '';
+  if (!master) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('INTEGRATION_ENCRYPTION_KEY is required in production.');
+    }
+    // Tests and local development only. This value is not secret and must
+    // never be used to protect stored credentials.
+    return scryptSync('dev-only-orbit-vault', 'orbit-vault-salt-v1', 32);
+  }
   return scryptSync(master, 'orbit-vault-salt-v1', 32);
 }
 

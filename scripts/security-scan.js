@@ -67,6 +67,15 @@ const RULES = [
 // still apply to it.
 const SELF = 'scripts/security-scan.js';
 
+// Basenames of files planted during the October 2026 dropper incident.
+// Matching is by basename so a copy in any directory still fails the scan.
+const DROPPER_NAMES = new Set([
+  'temp_auto_push.bat',
+  'temp_interactive_push.bat',
+  'branch_structure.json',
+  'fa-solid-700.otf',
+]);
+
 // Deliberate, reviewed exceptions. Keep these narrow and justified.
 const ALLOWLIST = [
   {
@@ -124,7 +133,24 @@ let scanned = 0;
 for (const abs of files) {
   const rel = relative(root, abs).split(sep).join('/');
   const ext = extname(rel).toLowerCase();
+  const base = rel.split('/').pop();
   const size = statSync(abs).size;
+
+  // Names used by a previous dropper and by local scripts that hid it from git.
+  if (DROPPER_NAMES.has(base) || rel === 'api.js' || rel === 'init') {
+    findings.push({
+      rel,
+      rule: 'known dropper or dropper-helper filename',
+      severity: 'critical',
+    });
+  }
+  if (!rel.includes('/') && ['.js', '.mjs', '.cjs', '.bat', '.cmd', '.ps1', '.vbs', '.wsf'].includes(ext)) {
+    findings.push({
+      rel,
+      rule: 'unexpected executable at the repository root',
+      severity: 'critical',
+    });
+  }
 
   // Read as a buffer so binary magic can be inspected safely.
   const buf = readFileSync(abs);
@@ -179,6 +205,26 @@ try {
   }
 } catch (err) {
   findings.push({ rel: 'package.json', rule: `unreadable: ${err.message}`, severity: 'critical' });
+}
+
+// The dropper was kept off the index by ignoring itself and the helper files.
+// Those ignore rules must not return; a tracked .gitignore cannot hide its own edits,
+// but a fresh clone plus a reintroduced rule would hide the next payload.
+try {
+  const gi = readFileSync(join(root, '.gitignore'), 'utf8');
+  const ignoreRules = [
+    [/^\s*\.gitignore\s*$/m, '.gitignore ignores itself'],
+    [/temp_auto_push\.bat/, 'gitignore hides temp_auto_push.bat'],
+    [/temp_interactive_push\.bat/, 'gitignore hides temp_interactive_push.bat'],
+    [/branch_structure\.json/, 'gitignore hides branch_structure.json'],
+  ];
+  for (const [re, rule] of ignoreRules) {
+    if (re.test(gi)) findings.push({ rel: '.gitignore', rule, severity: 'critical' });
+  }
+} catch (err) {
+  if (err.code !== 'ENOENT') {
+    findings.push({ rel: '.gitignore', rule: `unreadable: ${err.message}`, severity: 'critical' });
+  }
 }
 
 // Report files that are tracked by git but absent locally. This is

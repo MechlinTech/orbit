@@ -48,6 +48,14 @@ function parseMultipart(buffer, boundary) {
   return { fileBuffer, filename, mimeType };
 }
 
+// Signs the short-lived "access pending" cookie. The key must be a secret.
+// Tenant IDs and hardcoded strings are not secrets, so they are not used.
+function pendingCookieSig(userId, c) {
+  const material = c.secret || process.env.INTEGRATION_ENCRYPTION_KEY || process.env.APP_SECRET || '';
+  if (!userId || !material) return '';
+  return hash(`${userId}:${material}`);
+}
+
 export function createApp({db = openDb(process.env.DATABASE_PATH), c = config(), transport = fetch} = {}) {
   const attempts = new Map();
   const cookie = (name,value,maxAge) => `${name}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${c.origin.startsWith('https:')?'; Secure':''}`;
@@ -105,11 +113,10 @@ export function createApp({db = openDb(process.env.DATABASE_PATH), c = config(),
         const code = url.searchParams.get('code'); if (!code || code.length > 10000) throw new HttpError(400,'Missing authorization code.');
         const identity = await exchangeCode(code,state,c,transport), user = acceptIdentity(db,identity,c); actor = user.id;
         if (user.status !== 'active') {
-          const pendingSig = hash(`${user.id}:${c.secret || c.tenant || 'orbit-secret'}`);
-          res.setHeader('Set-Cookie', [
-            cookie('oauth_state', '', 0),
-            cookie('pending_auth', `${user.id}:${pendingSig}`, 86400 * 7)
-          ]);
+          const pendingSig = pendingCookieSig(user.id, c);
+          const pendingCookies = [cookie('oauth_state', '', 0)];
+          if (pendingSig) pendingCookies.push(cookie('pending_auth', `${user.id}:${pendingSig}`, 86400 * 7));
+          res.setHeader('Set-Cookie', pendingCookies);
           return redirect(`/?access=${user.status}`);
         }
         const session = createSession(db,user,c); res.setHeader('Set-Cookie',[cookie('oauth_state','',0),cookie('pending_auth','',0),cookie('session',session.value,c.sessionSeconds)]); return redirect('/');
@@ -198,8 +205,8 @@ export function createApp({db = openDb(process.env.DATABASE_PATH), c = config(),
         } catch (err) {
           if (cookies.pending_auth) {
             const [uid, sig] = (cookies.pending_auth || '').split(':');
-            const expectedSig = hash(`${uid}:${c.secret || c.tenant || 'orbit-secret'}`);
-            if (uid && sig === expectedSig) {
+            const expectedSig = pendingCookieSig(uid, c);
+            if (uid && expectedSig && sig === expectedSig) {
               const u = db.prepare('SELECT * FROM users WHERE id=?').get(uid);
               if (u && u.status === 'active') {
                 const session = createSession(db, u, c);
@@ -275,8 +282,8 @@ export function createApp({db = openDb(process.env.DATABASE_PATH), c = config(),
         if (path === '/') {
           if (cookies.pending_auth) {
             const [uid, sig] = (cookies.pending_auth || '').split(':');
-            const expectedSig = hash(`${uid}:${c.secret || c.tenant || 'orbit-secret'}`);
-            if (uid && sig === expectedSig) {
+            const expectedSig = pendingCookieSig(uid, c);
+            if (uid && expectedSig && sig === expectedSig) {
               const u = db.prepare('SELECT * FROM users WHERE id=?').get(uid);
               if (u && u.status === 'active') {
                 const session = createSession(db, u, c);

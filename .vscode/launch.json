@@ -10,10 +10,7 @@
       "console": "integratedTerminal",
       "skipFiles": ["<node_internals>/**"],
       // sourceMapRenames helps with the loading spinner when debugging and viewing local variables
-      "sourceMapRenames": false,
-      "env": {
-        "AWS_PROFILE": "flo-ct-flo360"
-      }
+      "sourceMapRenames": false
     },
     {
       "name": "Debug Tests - Unit",
@@ -22,10 +19,7 @@
       "runtimeExecutable": "${workspaceRoot}/node_modules/.bin/sst",
       "runtimeArgs": ["bind", "yarn", "\"jest\"", "\"--watch\"", "\"--config\"", "\"./jest.unit.config.cjs\"", "\"${input:scopeTestsFileName}\""],
       "console": "integratedTerminal",
-      "skipFiles": ["<node_internals>/**"],
-      "env": {
-        "AWS_PROFILE": "flo-ct-flo360"
-      },
+      "skipFiles": ["<node_internals>/**"]
     },
     {
       "name": "Debug Tests - E2E",
@@ -34,10 +28,7 @@
       "runtimeExecutable": "${workspaceRoot}/node_modules/.bin/sst",
       "runtimeArgs": ["bind", "yarn", "\"vitest\"", "\"--config\"", "\"./vitest.e2e.config.ts\"", "\"${input:scopeTestsFileName}\""],
       "console": "integratedTerminal",
-      "skipFiles": ["<node_internals>/**"],
-      "env": {
-        "AWS_PROFILE": "flo-ct-flo360"
-      },
+      "skipFiles": ["<node_internals>/**"]
     },
   ],
   "inputs": [
