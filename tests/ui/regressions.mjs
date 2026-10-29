@@ -580,6 +580,42 @@ try {
   check('Training plans table action buttons do not overlap updated date column',
     Boolean(tableCheck && tableCheck.noOverlap));
 
+  const chipsCheck = await evaluate(`(() => {
+    const table = document.querySelector('.training-plans-table');
+    if (!table) return null;
+    const popoverFooters = table.querySelectorAll('.plan-chips-popover-footer');
+    const popovers = Array.from(table.querySelectorAll('.plan-chips-popover'));
+    const hasClickToView = popovers.some(p => p.textContent.includes('Click to view'));
+    const rows = Array.from(table.querySelectorAll('tbody tr.training-plan-row'));
+    let chipsDoNotOverlap = true;
+    for (const r of rows) {
+      const posCell = r.children[1];
+      const deptCell = r.children[2];
+      const durationCell = r.children[3];
+      const posCloud = posCell?.querySelector('.chips-cloud');
+      const deptCloud = deptCell?.querySelector('.chips-cloud');
+      if (posCloud && deptCell) {
+        const posRect = posCloud.getBoundingClientRect();
+        const deptRect = deptCell.getBoundingClientRect();
+        if (posRect.right > deptRect.left + 2) chipsDoNotOverlap = false;
+      }
+      if (deptCloud && durationCell) {
+        const deptRect = deptCloud.getBoundingClientRect();
+        const durationRect = durationCell.getBoundingClientRect();
+        if (deptRect.right > durationRect.left + 2) chipsDoNotOverlap = false;
+      }
+    }
+    return {
+      noFooter: popoverFooters.length === 0,
+      noClickToView: !hasClickToView,
+      chipsDoNotOverlap
+    };
+  })()`);
+  check('Training plans popover does not contain click to view button or footer',
+    Boolean(chipsCheck && chipsCheck.noFooter && chipsCheck.noClickToView));
+  check('Training plans position and department chips do not overlap adjacent columns',
+    Boolean(chipsCheck && chipsCheck.chipsDoNotOverlap));
+
   await evaluate(`(async () => {
     location.hash = '#Candidates';
     await render();
