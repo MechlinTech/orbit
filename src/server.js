@@ -1,3 +1,4 @@
+try { process.loadEnvFile?.(); } catch {}
 import http from 'node:http';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
