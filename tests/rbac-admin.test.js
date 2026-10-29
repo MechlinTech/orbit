@@ -301,16 +301,21 @@ test('RBAC: custom proxy scorecard evaluation, cross-team finance approval and m
   const approvedFinance = call(f, financeUser, 'POST', `requisitions/${engReq.id}/approve`, { note: 'Headcount and budget approved' });
   assert.equal(approvedFinance.status, 'open', 'Finance approver successfully approved cross-team requisition');
 
-  // 3. Manager self-approval restriction (Separation of duties)
+  // 3. Manager self-approval permitted when permission is granted
   const managerCreatedReq = call(f, f.manager, 'POST', 'requisitions', reqBody);
   call(f, f.manager, 'POST', `requisitions/${managerCreatedReq.id}/submit`, {});
+  const selfApproved = call(f, f.manager, 'POST', `requisitions/${managerCreatedReq.id}/approve`, { note: 'Self approval' });
+  assert.equal(selfApproved.status, 'pending_finance', 'Manager can self-approve requisition when permission is granted');
+
+  // User without requisitions.approve_manager cannot approve
+  const unprivilegedEmployee = user(f.db, 'Employee/Referral', 'Engineering');
   assert.throws(
-    () => call(f, f.manager, 'POST', `requisitions/${managerCreatedReq.id}/approve`, { note: 'Self approval' }),
-    e => e.status === 403 && /Requester and each approver must be different people/.test(e.message),
-    'Manager cannot self-approve requisition they personally created'
+    () => call(f, unprivilegedEmployee, 'POST', `requisitions/${managerCreatedReq.id}/approve`, { note: 'Unprivileged approval' }),
+    e => e.status === 403,
+    'User without approval permission cannot approve'
   );
 
-  // Another user with requisitions.approve_manager can approve it
+  // Another user with requisitions.approve_manager can also approve
   const secondManagerRole = call(f, f.admin, 'POST', 'admin/roles', {
     name: 'Peer Manager',
     scope: 'team',
@@ -320,7 +325,9 @@ test('RBAC: custom proxy scorecard evaluation, cross-team finance approval and m
   call(f, f.admin, 'POST', `admin/users/${peerTarget.id}/update`, { role: 'Peer Manager', team: 'Engineering' });
   const peerManager = activeUser(f, peerTarget.id);
 
-  const peerApproved = call(f, peerManager, 'POST', `requisitions/${managerCreatedReq.id}/approve`, { note: 'Peer manager approved' });
+  const req2 = call(f, f.recruiter, 'POST', 'requisitions', { ...reqBody, title: 'Peer Test Req' });
+  call(f, f.recruiter, 'POST', `requisitions/${req2.id}/submit`, {});
+  const peerApproved = call(f, peerManager, 'POST', `requisitions/${req2.id}/approve`, { note: 'Peer manager approved' });
   assert.equal(peerApproved.status, 'pending_finance', 'Peer manager successfully approved requisition');
 
   f.db.close();
