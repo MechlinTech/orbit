@@ -138,12 +138,12 @@ export const DEFAULT_TEMPLATE_SECTIONS = [
     id: 'sec_acceptance_heading',
     type: 'heading',
     level: 2,
-    text: '5. Offer Acceptance & Execution'
+    text: '5. Terms of Acceptance & Execution'
   },
   {
     id: 'sec_acceptance_text',
     type: 'paragraph',
-    text: '{{offer.acceptance_instructions}}\n\nThis offer remains valid until {{offer.expiry_date}}. Please review the terms herein and execute your electronic signature below. Upon your execution, this document constitutes a binding agreement between you and {{company.name}}.',
+    text: 'Terms of Acceptance: {{offer.acceptance_instructions}}\n\nThis offer remains valid until {{offer.expiry_date}}. Please review the terms herein and execute your electronic signature below. Upon your execution, this document constitutes a binding agreement between you and {{company.name}}.\n\nCANDIDATE ACCEPTANCE AND SIGNATURE:',
     fontSize: 9,
     marginBottom: 18
   },

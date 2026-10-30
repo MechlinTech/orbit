@@ -15,7 +15,7 @@ import { getOrRunFraudReview, resolveFraudReview } from './fraud/service.js';
 import { draftJobDescription } from './ai/draft.js';
 import { getAvailableAiProviders } from './ai/provider.js';
 import {
-  createSignatureRequest, getSignatureRequest, listSignatureRequests,
+  createSignatureRequest, getSignatureRequest, listSignatureRequests, syncOfferRequestsForTemplate,
   cancelSignatureRequest, downloadSignatureDocument, resendSignatureInvitation,
   verifyApplicationOfferSignature, getAuthoritativeOfferDetails
 } from './signature/service.js';
@@ -2673,7 +2673,9 @@ export function service(db, user, method, path, body = {}, query = new URLSearch
     }
     if (key && !action && method === 'PUT') {
       permit(user, 'offers.templates.manage');
-      return updateOfferTemplate(db, user, key, body);
+      const updated = updateOfferTemplate(db, user, key, body);
+      try { syncOfferRequestsForTemplate(db, key); } catch {}
+      return updated;
     }
     if (key && action === 'duplicate' && method === 'POST') {
       permit(user, 'offers.templates.manage');
