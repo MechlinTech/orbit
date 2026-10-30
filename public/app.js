@@ -5768,7 +5768,7 @@ document.addEventListener('click',async event=>{
         const [apps, reqs, templates] = await Promise.all([
           api('applications'),
           api('requisitions'),
-          api('offer-templates?status=active').catch(() => [])
+          api('offer-templates?status=active').catch(() => api('offer-templates').catch(() => []))
         ]);
         const app = apps.find(x => x.id === id);
         if(!app) throw new Error('Application not found.');
@@ -5840,7 +5840,7 @@ document.addEventListener('click',async event=>{
             candidate_id: app.candidate_id,
             application_id: app.id,
             requisition_id: app.requisition_id || undefined,
-            template_id: v.template_id || undefined,
+            template_id: v.template_id || templates.find(t => t.is_default)?.id || templates[0]?.id || undefined,
             salary: v.salary?.trim() || defaultSalary,
             currency: v.currency?.trim()?.toUpperCase() || defaultCurrency,
             start_date: v.start_date?.trim() || 'Two weeks following signature acceptance',
@@ -6880,7 +6880,7 @@ document.addEventListener('click',async event=>{
       if (!eligibility.eligible) throw new Error(eligibility.reason);
       const [reqs, templates] = await Promise.all([
         api('requisitions'),
-        api('offer-templates?status=active').catch(() => [])
+        api('offer-templates?status=active').catch(() => api('offer-templates').catch(() => []))
       ]);
       const activeApps = eligibility.applications;
       const reqOptions = activeApps.map(app => [app.requisition_id, `${app.title} (${app.stage})`]);
@@ -6951,7 +6951,7 @@ document.addEventListener('click',async event=>{
           candidate_id: cand.id,
           application_id: matchedApp?.id || undefined,
           requisition_id: v.requisition_id || undefined,
-          template_id: v.template_id || undefined,
+          template_id: v.template_id || templates.find(t => t.is_default)?.id || templates[0]?.id || undefined,
           salary: v.salary?.trim() || initialSalary,
           currency: targetCurrency,
           start_date: v.start_date?.trim(),
